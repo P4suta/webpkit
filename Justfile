@@ -15,7 +15,8 @@ cov_exclude := '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-cli|webpkit-sam
 # test-harness crates are never mutated.
 mut_packages := "-p webpkit"
 # Declared MSRV, verified by `just msrv` / the CI msrv gate. Keep == Cargo.toml.
-msrv := "1.96"
+# Floor pinned by let-chains, `is_multiple_of`, and the optional `image` dep (all 1.88).
+msrv := "1.88"
 
 default:
     @just --list
@@ -238,9 +239,13 @@ mutants-diff base="origin/main":
     git diff "{{base}}...HEAD" > target/mutants-diff.patch
     cargo mutants --in-diff target/mutants-diff.patch {{mut_packages}} --test-tool nextest
 
-# Verify the declared MSRV (Cargo.toml `rust-version`) still builds.
+# Verify the declared MSRV over the consumer surface of the published crates
+# (default / feature opt-ins / no_std). Not `--all-targets`: dev/tooling deps
+# (e.g. cargo-platform) need a newer rustc and no consumer builds them.
 msrv:
-    cargo +{{msrv}} check --workspace --all-targets
+    cargo +{{msrv}} check -p webpkit -p webpkit-cli --locked
+    cargo +{{msrv}} check -p webpkit --features rayon,image --locked
+    cargo +{{msrv}} check -p webpkit --no-default-features --features alloc --locked
 
 # Build the product crate as a no_std library (host + bare-metal) to prove no
 # accidental `std::` use crept into production code.

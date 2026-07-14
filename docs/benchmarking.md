@@ -15,8 +15,8 @@ adding a perf number, a gate, or a benchmark.
 The **deterministic ledgers** are the load-bearing regression signal. Every
 field is an integer (no float), so `serde_json` renders identical bytes on every
 platform and the committed file is a pure textual diff of a fresh run — exactly
-like `conformance-results-*.json`. They are reproduced on the pinned MSRV
-(**1.96**) toolchain (see the memory note below).
+like `conformance-results-*.json`. They are reproduced on a pinned toolchain
+(**1.96**, independent of the MSRV) (see the memory note below).
 
 - `corpus/metrics.json` — per-`(sample, method)` encoded size + integer
   compression ratio + peak encode/decode memory over the synthetic corpus.
@@ -85,7 +85,7 @@ Both recipes pin the toolchain with `cargo +1.96` and build `--release`:
 - **`--release`** — the encode-heavy `Best` search is ~13× faster than debug
   (~42s vs ~570s), keeping the run inside its budget. Encoded sizes are
   deterministic and profile-independent, so the release gate matches any run.
-- **`+1.96` (MSRV pin)** — matches CI *and* pins the peak-memory fields, which
+- **`+1.96` (pinned toolchain)** — matches CI *and* pins the peak-memory fields, which
   are toolchain-sensitive (allocation patterns can shift between compiler
   versions). The committed `encode_peak_bytes` / `decode_peak_bytes` are
   reproducible only on this exact compiler.
@@ -110,7 +110,7 @@ per `(sample, method, quality)` over the sample matrix x `Fast`/`Balanced`/`Best
 oracle), **`sse`** (integer sum-of-squared-error of *our* decode vs the source —
 the deterministic reconstruction-quality field; the human-facing dB is derivable
 and stays in the print-only `metrics --lossy --vs-libwebp` aid, never committed),
-and `encode_peak_bytes` / `decode_peak_bytes`. Same `--release` + MSRV `+1.96`
+and `encode_peak_bytes` / `decode_peak_bytes`. Same `--release` + `+1.96`
 pin as `metrics` (the peak-memory fields are toolchain-sensitive). Field-level
 diff via `cargo run -p xtask -- metrics --lossy --explain`; it ends with a
 byte-invariance verdict (did the encoded bytes / `sse` move, or only peak

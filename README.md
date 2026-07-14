@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/P4suta/webpkit/actions/workflows/ci.yml/badge.svg)](https://github.com/P4suta/webpkit/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![MSRV 1.96](https://img.shields.io/badge/MSRV-1.96-blue.svg)](rust-toolchain.toml)
+[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-blue.svg)](#minimum-supported-rust-version)
 [![unsafe: forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance/)
 
 A pure-Rust WebP codec — **VP8L** (lossless) and **VP8** (lossy), decode and
@@ -77,6 +77,12 @@ Still to come: encoder size/speed tuning and broader real-image benchmarking.
 | `rayon`  | no      | encoder parallelism                                          |
 | `image`  | no      | `TryFrom` interop with the [`image`](https://crates.io/crates/image) crate |
 | `oracle` | no      | **dev/test only** — links `libwebp-sys` for differential tests |
+
+## Minimum Supported Rust Version
+
+MSRV is **1.88** (the `image` feature also requires 1.88). It is held until a
+feature genuinely needs a newer toolchain; a raise is treated as a minor version
+bump. CI verifies it over the published crates' consumer surface.
 
 ## Library quick start
 
