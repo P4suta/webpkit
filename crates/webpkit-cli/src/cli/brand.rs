@@ -402,7 +402,7 @@ fn info(args: &InfoArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Summary lines for a still image, labelling the codec from the container's
+/// Summary lines for a still image, labeling the codec from the container's
 /// image chunk (`VP8L` lossless vs `VP8 ` lossy).
 fn still_lines(bytes: &[u8], image: &webpkit::lossless::Image) -> Vec<String> {
     let format = if bytes.windows(4).any(|w| w == b"VP8L") {

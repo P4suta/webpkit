@@ -956,9 +956,9 @@ mod tests {
         // stats[plane][band 0][c][0][1] where c = (top-nz + left-nz) is that block's
         // non-zero context. The MB is i4×4 (luma plane 3, no Y2; chroma plane 2), so
         // every block is non-zero and its context is fully determined by its
-        // neighbours: an interior block sees two non-zero neighbours (c = 2), an
+        // neighbors: an interior block sees two non-zero neighbors (c = 2), an
         // edge block sees the input top/left context bits. An independent
-        // neighbour-grid reference computes the exact per-(plane, c) event
+        // neighbor-grid reference computes the exact per-(plane, c) event
         // distribution; any mutation to the context derivation — the input masks
         // (`& 0x0f`), the `l + top` sum, or the chroma `4 + ch` offset — moves an
         // event into the wrong [c] bin.
@@ -982,9 +982,9 @@ mod tests {
         ctx.left = left_nz_in;
         count_mb_residuals(&mut stats, &mb, &mut ctx, 0);
 
-        // Independent reference: every block is non-zero, so the top neighbour of an
-        // interior row is 1 and the left neighbour of an interior column is 1; edge
-        // neighbours come from the input context bits.
+        // Independent reference: every block is non-zero, so the top neighbor of an
+        // interior row is 1 and the left neighbor of an interior column is 1; edge
+        // neighbors come from the input context bits.
         let bit = |word: u32, i: u32| (word >> i) & 1 == 1;
         let mut expected = [[0u64; 3]; 4]; // [plane][c]
         // Luma (plane 3): 4×4 grid, top bits = mb_nz[0..4], left bits = left_nz[0..4].
@@ -1024,7 +1024,7 @@ mod tests {
             }
         }
         // Non-vacuity: the interior blocks must populate the c == 2 bin in both
-        // planes, so the `l + top` sum and the neighbour bits are actually exercised.
+        // planes, so the `l + top` sum and the neighbor bits are actually exercised.
         assert!(
             expected[3][2] > 0 && expected[2][2] > 0,
             "interior blocks should reach context 2"

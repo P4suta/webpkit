@@ -905,7 +905,7 @@ mod tests {
         // (`mb_w == 1`), so every skip is at column 0: a `-=` underflows `0usize`
         // and panics immediately (a wider frame could instead spin re-decoding a
         // non-skipped column 0 forever), and there is always at least one skip since
-        // an interior row predicts from its flat, already-reconstructed neighbour.
+        // an interior row predicts from its flat, already-reconstructed neighbor.
         let (w, h) = (16u32, 48u32);
         let rgba = rgba_image(w, h, |_, _| [128, 128, 128]);
         let payload = encode_payload(&rgba, w, h, Effort::Balanced, 90);

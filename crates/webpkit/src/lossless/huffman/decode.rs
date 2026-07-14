@@ -420,7 +420,7 @@ mod tests {
         // Guards `low` starting at -1 (not 1). A single length-1 leaf takes half
         // the code space and leaves the build key at exactly 1 entering the
         // second level, so the first length-9 code has `key & root_mask == 1`.
-        // Were `low` initialised to 1, that first comparison would suppress the
+        // Were `low` initialized to 1, that first comparison would suppress the
         // sub-table and symbol 1 would mis-decode (it resolves to 2 instead).
         let mut lengths = vec![0u32; 257];
         lengths[0] = 1; // length-1 leaf: 1/2 of the space

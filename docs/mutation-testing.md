@@ -76,7 +76,7 @@ recording:
   each of which deletes a struct field whose value the `..Default::default()`
   spread — or, for `skip`, `resolve_finfo`'s `(non_zero_y | non_zero_uv) == 0`
   fallback — already supplies. They are **provably value-preserving equivalents,
-  not a coverage gap**. cargo-mutants 27.1.0 does not honour `exclude_re` for the
+  not a coverage gap**. cargo-mutants 27.1.0 does not honor `exclude_re` for the
   `StructField` genre (verified: even the exact mutant name does not match), so
   they cannot be filtered like the other equivalents; the fields are kept
   explicit in the source for readability and decoder-mirroring, so they are left

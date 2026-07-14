@@ -15,6 +15,10 @@ ALPH = "ALPH"
 WHT = "WHT"
 wht = "wht"
 iwht = "iwht"
+# `mis-` is a valid English prefix (mis-decode, mis-read), not a misspelling.
+mis = "mis"
+# `ba` occurs inside committed hex digests (e.g. `7ffbbd64ba73c260`), not as a word.
+ba = "ba"
 
 # Local variables in the `select` predictor: byte arrays of a/b/c.
 [default.extend-identifiers]
