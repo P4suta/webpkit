@@ -28,6 +28,13 @@ just test     # cargo nextest (falls back to cargo test) + cargo test --doc
 just doc      # rustdoc under -D warnings
 ```
 
+## MSRV
+
+MSRV is **1.88**, declared in `Cargo.toml` (`rust-version`) and mirrored in the
+`Justfile` `msrv` variable and the CI `msrv` gate. Before using a newer `std` or
+language feature, run `just msrv`; if the feature is needed, raise all three in
+lockstep and treat the bump as a minor version bump.
+
 ## Verification methodology
 
 webpkit follows an external-verification discipline:

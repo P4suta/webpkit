@@ -133,20 +133,20 @@ jobs:
     # and gates the committed lossless `corpus/metrics.json` AND lossy
     # `corpus/metrics-lossy.json` against a fresh run. Encoded sizes/sse are
     # integer-deterministic and profile-independent, so ubuntu-only is sufficient
-    # (no libwebp binaries). Pinned to the MSRV (1.96) toolchain so both ledgers'
-    # peak-memory fields are reproducible on this exact compiler; built --release so
+    # (no libwebp binaries). Pinned to a fixed toolchain (1.96, independent of the
+    # MSRV) so both ledgers' peak-memory fields are reproducible; built --release so
     # the encode-heavy searches stay inside the runtime budget (lossless 54 cases
     # incl. Best@512, plus lossy methods x qualities with Best capped to edge<=256).
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: install the declared MSRV toolchain
+      - name: install the metrics reproducibility toolchain
         run: rustup toolchain install 1.96 --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: metrics ledger drift gate (release, MSRV-pinned)
+      - name: metrics ledger drift gate (release, pinned toolchain)
         run: cargo +1.96 run --locked --release --quiet -p xtask -- metrics
-      - name: lossy metrics ledger drift gate (release, MSRV-pinned)
+      - name: lossy metrics ledger drift gate (release, pinned toolchain)
         run: cargo +1.96 run --locked --release --quiet -p xtask -- metrics --lossy
 
   work:
@@ -246,16 +246,21 @@ jobs:
           /tmp/yamlfmt -lint .
 
   msrv:
-    name: msrv (1.96)
+    name: msrv (1.88)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: install the declared MSRV toolchain
-        run: rustup toolchain install 1.96 --profile minimal --no-self-update
+        run: rustup toolchain install 1.88 --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - name: cargo check on MSRV
-        run: cargo +1.96 check --workspace --all-targets --locked
+      # Consumer surface of the published crates only. Not `--all-targets`: dev/
+      # tooling deps (e.g. cargo-platform) need a newer rustc and no consumer builds them.
+      - name: cargo check on MSRV (consumer surface)
+        run: |
+          cargo +1.88 check -p webpkit -p webpkit-cli --locked
+          cargo +1.88 check -p webpkit --features rayon,image --locked
+          cargo +1.88 check -p webpkit --no-default-features --features alloc --locked
 
   no-std:
     name: no-std (alloc, bare-metal)
