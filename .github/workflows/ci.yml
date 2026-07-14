@@ -395,7 +395,7 @@ jobs:
             echo "::group::fuzz ${target}"
             mkdir -p "crates/webpkit-lossless-fuzz/corpus/${target}"
             cp crates/webpkit-lossless-fuzz/seeds/"${target}"/* "crates/webpkit-lossless-fuzz/corpus/${target}/"
-            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossless-fuzz --features fuzzing \
+            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossless-fuzz --features fuzzing --target x86_64-unknown-linux-gnu \
               -- -max_total_time=40 -runs=2000000
             echo "::endgroup::"
           done
@@ -406,7 +406,7 @@ jobs:
             echo "::group::webpkit-lossy ${target}"
             mkdir -p "crates/webpkit-lossy-fuzz/corpus/${target}"
             cp crates/webpkit-lossy-fuzz/seeds/"${target}"/* "crates/webpkit-lossy-fuzz/corpus/${target}/"
-            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossy-fuzz --features fuzzing \
+            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossy-fuzz --features fuzzing --target x86_64-unknown-linux-gnu \
               -- -max_total_time=40 -runs=2000000
             echo "::endgroup::"
           done
@@ -417,7 +417,7 @@ jobs:
             echo "::group::webpkit-fuzz ${target}"
             mkdir -p "crates/webpkit-fuzz/corpus/${target}"
             cp crates/webpkit-fuzz/seeds/"${target}"/*.webp "crates/webpkit-fuzz/corpus/${target}/"
-            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-fuzz --features fuzzing \
+            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-fuzz --features fuzzing --target x86_64-unknown-linux-gnu \
               -- -max_total_time=40 -runs=2000000
             echo "::endgroup::"
           done
