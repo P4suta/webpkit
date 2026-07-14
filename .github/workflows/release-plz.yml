@@ -30,6 +30,11 @@ jobs:
   # tokens are scoped there.
   release-plz-release:
     name: release-plz release
+    # crates.io publishing is deferred. Enable it later by injecting
+    # CARGO_REGISTRY_TOKEN into the `release` environment AND setting the repository
+    # variable CRATES_IO_PUBLISH=true (Settings > Secrets and variables > Actions >
+    # Variables). Until then this job is skipped so it can't fail on the missing token.
+    if: ${{ vars.CRATES_IO_PUBLISH == 'true' }}
     runs-on: ubuntu-latest
     environment: release
     permissions:
