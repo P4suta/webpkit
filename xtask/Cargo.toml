@@ -1,0 +1,41 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "webpkit build automation: fixtures, conformance, and the results ledger."
+publish = false
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[features]
+# Enables the deterministic algorithmic-work counters in both codecs and links
+# the shared counter crate, so the `work` command can produce `corpus/work.json`.
+# Off by default so the `metrics` job builds with zero counter code (keeping its
+# toolchain-sensitive peak-memory numbers undisturbed).
+work-count = ["webpkit/work-count"]
+# Forward the encoder's parallel `Method::Best` evaluator so `bench-real` can time
+# the serial-vs-rayon delta the CLI binaries ship with. Output is byte-identical
+# either way (proven by `cargo test -p webpkit-lossless --features rayon`); this
+# only affects wall-clock, never the gated size/work ledgers.
+rayon = ["webpkit/rayon"]
+
+[dependencies]
+anyhow = { workspace = true }
+cargo_metadata = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+webpkit = { path = "../crates/webpkit" }
+webpkit-alloc-count = { path = "../crates/webpkit-alloc-count" }
+webpkit-lossless-conformance = { path = "../crates/webpkit-lossless-conformance" }
+webpkit-samples = { path = "../crates/webpkit-samples" }
+
+[lints]
+workspace = true

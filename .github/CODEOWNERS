@@ -1,0 +1,10 @@
+# Default owner for everything.
+* @P4suta
+
+# Architecture-affecting files require extra scrutiny.
+/Cargo.toml @P4suta
+/Cargo.lock @P4suta
+/rust-toolchain.toml @P4suta
+/.cargo/ @P4suta
+/.github/ @P4suta
+/xtask/ @P4suta

@@ -1,0 +1,5 @@
+width = 15
+height = 9
+frame_count = 3
+quality = 90.0
+note = "libwebp mux WebPAnimEncoder (method 4, alpha_quality=100) -> WebPAnimDecoder composited golden"

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6a10e748f14991118c58f58daae464a5441d693abceae21085635ff2d3fa5c0c # shrinks to (cw, ch, frames) = (4, 7, [SubRectFrame { x: 0, y: 0, w: 3, h: 4, overwrite: false, dispose_bg: false, rgba: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 255, 65, 60, 109, 0, 141, 141, 254, 255, 249, 7, 55, 0, 158, 8, 181, 0, 170, 152, 102, 255] }])
+cc b626e40a0f6f8d9f4deb2e9dc7879e4f80a494b5c0f41845a6ca7356e2b604fe # shrinks to (cw, ch, frames) = (4, 8, [SubRectFrame { x: 0, y: 0, w: 1, h: 1, overwrite: false, dispose_bg: false, rgba: [5, 127, 174, 255] }, SubRectFrame { x: 0, y: 2, w: 2, h: 5, overwrite: false, dispose_bg: true, rgba: [244, 55, 65, 128, 57, 223, 198, 255, 119, 19, 91, 128, 212, 91, 48, 128, 134, 102, 61, 128, 166, 130, 204, 0, 51, 185, 30, 0, 42, 100, 242, 255, 198, 81, 120, 0, 20, 22, 145, 128] }, SubRectFrame { x: 0, y: 2, w: 1, h: 6, overwrite: false, dispose_bg: false, rgba: [159, 247, 109, 128, 83, 43, 213, 0, 233, 60, 139, 128, 129, 11, 250, 255, 77, 222, 73, 0, 116, 197, 140, 255] }])

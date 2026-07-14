@@ -1,0 +1,59 @@
+# Native dev toolchain (mirrors what CI installs). The Rust toolchain itself is
+# owned by rust-toolchain.toml. Install with `mise install`, then `just doctor`.
+
+[tools]
+# JS runtime for commitlint (commit-msg hook).
+bun = "latest"
+
+# Task runner, git hooks, and the format/lint tools the recipes shell out to.
+just = "latest"
+lefthook = "latest"
+taplo = "latest"
+biome = "latest"
+yamlfmt = "0.13.0"    # pinned for format stability
+actionlint = "latest"
+typos = "latest"
+jq = "latest"
+
+# Lets the cargo: backend fetch prebuilt binaries instead of compiling.
+cargo-binstall = "latest"
+
+# Cargo subcommands via the cargo: backend (no mise registry short names exist).
+"cargo:cargo-nextest" = "latest"
+"cargo:cargo-deny" = "latest"
+"cargo:cargo-sort" = "latest"
+"cargo:cargo-fuzz" = "latest"
+"cargo:cargo-insta" = "latest"
+"cargo:cargo-llvm-cov" = "latest"
+# Pinned (not `latest`): cargo-mutants gates PRs, and its generated mutants /
+# output can shift across releases, so reproducibility beats auto-updates. Bump
+# explicitly (like yamlfmt / libwebp), not via Dependabot.
+"cargo:cargo-mutants" = "27.1.0"
+
+# libwebp's `cwebp` / `dwebp` — the conformance oracle used to generate and
+# verify golden fixtures. webmproject/libwebp publishes NO GitHub release assets
+# (only git tags), so the ubi / github / aqua backends cannot fetch binaries;
+# the official prebuilt archives on Google storage are pulled via the `http`
+# backend instead. `strip_components = 1` drops the top-level
+# `libwebp-<ver>-<platform>/` directory so `bin/` (cwebp, dwebp, ...) is what
+# lands on PATH. Verified working on this host (cwebp/dwebp resolve to 1.6.0).
+[tools."http:libwebp"]
+version = "1.6.0"
+strip_components = 1
+bin_path = "bin"
+
+[tools."http:libwebp".platforms.windows-x64]
+url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-windows-x64.zip"
+
+[tools."http:libwebp".platforms.linux-x64]
+url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-linux-x86-64.tar.gz"
+
+[tools."http:libwebp".platforms.macos-arm64]
+url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-mac-arm64.tar.gz"
+
+[tools."http:libwebp".platforms.macos-x64]
+url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-mac-x86-64.tar.gz"
+
+[settings.cargo]
+# Use cargo-binstall (prebuilt binaries) for cargo: backend tools, not source builds.
+binstall = true

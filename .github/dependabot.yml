@@ -1,0 +1,46 @@
+version: 2
+
+# Bumps Cargo crates, GitHub Actions, and the commitlint npm packages weekly.
+# Every entry pins commit-message.prefix to "build(deps)" so the conventional
+# commits CI gate accepts Dependabot-authored commits.
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      serde:
+        patterns:
+          - "serde*"
+      test:
+        patterns:
+          - "proptest"
+          - "criterion"
+          - "insta"
+          - "tempfile"
+          - "assert_cmd"
+          - "predicates"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      commitlint:
+        patterns:
+          - "@commitlint/*"

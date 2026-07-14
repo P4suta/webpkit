@@ -1,0 +1,42 @@
+[
+  {
+    "case": "anim_15x9_3f_alpha",
+    "frame_count": 3,
+    "passed": true
+  },
+  {
+    "case": "anim_15x9_3f_opaque",
+    "frame_count": 3,
+    "passed": true
+  },
+  {
+    "case": "anim_15x9_4f_alpha",
+    "frame_count": 4,
+    "passed": true
+  },
+  {
+    "case": "anim_15x9_4f_opaque",
+    "frame_count": 4,
+    "passed": true
+  },
+  {
+    "case": "anim_16x16_3f_alpha",
+    "frame_count": 3,
+    "passed": true
+  },
+  {
+    "case": "anim_16x16_3f_opaque",
+    "frame_count": 3,
+    "passed": true
+  },
+  {
+    "case": "anim_16x16_4f_alpha",
+    "frame_count": 4,
+    "passed": true
+  },
+  {
+    "case": "anim_16x16_4f_opaque",
+    "frame_count": 4,
+    "passed": true
+  }
+]

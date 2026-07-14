@@ -1,0 +1,1050 @@
+//! `webpkit` — a pure-Rust WebP codec: lossless (VP8L) and lossy (VP8) behind one API.
+//!
+//! This is the umbrella crate. [`decode`] reads any still WebP file, inspecting
+//! the container to route `VP8L` payloads to the [`crate::lossless`] (lossless) decoder and
+//! `VP8 ` payloads to the [`crate::lossy`] (lossy) decoder; both return the shared
+//! [`Image`] type. A lossy image's sibling `ALPH` alpha chunk is composited here,
+//! where both codecs are in scope. The type-state [`Encoder`] writes output with
+//! either codec — [`Encoder::lossless`] or [`Encoder::lossy`] — sharing the
+//! effort/metadata knobs (only the lossy builder has a `quality`). The container
+//! framing, image model, and error type are defined once in [`crate`] and
+//! re-exported here.
+//!
+//! Like the codec crates it wraps, this crate forbids `unsafe`, has zero required
+//! runtime dependencies, and targets `no_std` (with `alloc`).
+//!
+//! # Status
+//!
+//! Lossless decode/encode is complete (see [`crate::lossless`]). Lossy (VP8) decoding
+//! reconstructs baseline key frames (via [`crate::lossy`]), composites a separate
+//! `ALPH` alpha channel, and decodes lossy animations (frames dispatched into
+//! the `lossless` codec's compositor). The unified [`IncrementalDecoder`] streams any still or
+//! animation, row-streaming a bare lossy `VP8 ` still through [`crate::lossy`]. Lossy
+//! **encoding** ([`Encoder::lossy`]) writes a baseline `VP8 ` key frame, carrying a
+//! lossless `ALPH` alpha plane for non-opaque images and ICC/Exif/XMP [`Metadata`]
+//! via the extended `VP8X` container ([`Encoder::encode`] preserves a source
+//! [`Image`]'s metadata by default).
+#![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "std"), no_std)]
+#![deny(
+    clippy::float_arithmetic,
+    reason = "the codecs must be bit-deterministic across platforms; floating-point \
+              rounding is not portable. Use fixed-point integer math."
+)]
+#![allow(
+    clippy::redundant_pub_crate,
+    reason = "pub(crate) is our honest internal visibility; this nursery lint conflicts \
+              with the rustc unreachable_pub lint that we also enable"
+)]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(not(feature = "alloc"))]
+compile_error!("webp requires an allocator: enable the `alloc` feature (implied by `std`)");
+
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
+// ---- module tree ------------------------------------------------------------
+// The bitstream-agnostic shell (formerly the `webpkit-core` crate): container
+// framing, image model, error type, streaming vocabulary. Flattened at the crate
+// root so its `crate::`-relative code is unchanged. NOT named `core` — that would
+// shadow the `::core` std crate the no_std codecs use throughout.
+//
+// The shell and codec modules are `#[doc(hidden)] pub` so this workspace's own
+// test & tooling crates can still reach into them module-first (they used to be
+// separate public crates). They are NOT a stable, documented part of the public
+// API — the curated re-exports below are what external users depend on. (`prelude`
+// stays private: it was `pub(crate)` internal even as a separate crate.)
+#[doc(hidden)]
+pub mod alpha;
+#[doc(hidden)]
+pub mod anim;
+#[doc(hidden)]
+pub mod container;
+#[doc(hidden)]
+pub mod effort;
+mod encoder;
+#[doc(hidden)]
+pub mod error;
+#[doc(hidden)]
+pub mod image;
+#[doc(hidden)]
+pub mod lossless;
+#[doc(hidden)]
+pub mod lossy;
+mod prelude;
+#[doc(hidden)]
+pub mod stream;
+#[cfg(feature = "work-count")]
+#[doc(hidden)]
+pub mod work_count;
+
+// ---- public facade re-exports ----------------------------------------------
+pub use crate::anim::{
+    AnimInfo, BlendMode, CompositedFrame, DisposalMode, Frame, FrameMeta,
+    decode_frames_with_decoder,
+};
+pub use crate::effort::Effort;
+pub use crate::error::{Codec, Error, Result};
+pub use crate::image::{
+    Dimensions, Image, ImageRef, MAX_DIMENSION, Metadata, MetadataPolicy, PixelLayout,
+};
+pub use crate::stream::{
+    DecodeOptions, DecodedFrame, FrameDecoder, FramePayload, ImageInfo, Progress, RowDrain,
+};
+pub use encoder::{Encoder, Lossless, Lossy};
+// Surface animation construction from the facade (previously reachable only
+// through the lossless crate).
+pub use crate::lossless::AnimationEncoder;
+
+// ---- imports used by the facade functions below -----------------------------
+use crate::alpha::{AlphaCompression, parse_header, unfilter};
+use crate::container::fourcc::FourCc;
+use crate::container::reader::{ImageChunk, read_container};
+use crate::container::scan::{declared_len, is_complete, scan_chunks};
+use crate::container::vp8x::{VP8X_PAYLOAD_LEN, Vp8xInfo};
+
+/// A lazy per-frame iterator over a WebP animation — each frame decoded by the
+/// both-codecs [`WebpFrameDecoder`] (lossless `VP8L` or lossy `VP8 `).
+#[cfg(feature = "alloc")]
+pub type Frames<'a> = crate::anim::Frames<'a, WebpFrameDecoder>;
+/// A compositing iterator that paints each animation frame onto the persistent
+/// canvas (see [`crate::anim::CompositedFrames`]).
+#[cfg(feature = "alloc")]
+pub type CompositedFrames<'a> = crate::anim::CompositedFrames<'a, WebpFrameDecoder>;
+
+/// Decode a still WebP file — lossless (`VP8L`) or lossy (`VP8 `) — into an
+/// [`Image`] (RGBA8 by default), dispatching on the container's image chunk.
+///
+/// A lossy `VP8 ` image accompanied by a sibling `ALPH` chunk is composited: the
+/// opaque RGB is decoded by [`crate::lossy`], the alpha plane is decompressed (raw, or
+/// a lossless `VP8L` stream) and spatially un-filtered, and the result is written
+/// into the image's alpha channel. Lossless (`VP8L`) images carry their own alpha.
+///
+/// An animated file returns its **first composited frame** (matching libwebp's
+/// `WebPDecode`); use [`decode_frames`] to walk every frame.
+///
+/// # Errors
+///
+/// [`Error::NotWebp`]/[`Error::Truncated`] for a non-WebP or short input,
+/// [`Error::MissingImage`] when the file has no image chunk, or a
+/// bitstream/container error from the selected decoder or the `ALPH` alpha stream.
+pub fn decode(input: &[u8]) -> Result<Image> {
+    decode_with(input, &DecodeOptions::default())
+}
+
+/// Decode a still WebP file into an [`Image`] with explicit [`DecodeOptions`]
+/// (output layout, pixel limit), dispatching on the container's image chunk.
+///
+/// Symmetric with the codec crates' `decode_with`: the selected decoder enforces
+/// `options.max_pixels` against the peeked header dimensions *before* any pixel or
+/// canvas buffer is allocated, and the limit is propagated into a lossy image's
+/// `ALPH` alpha decode. The default `max_pixels` is `None` (no cap); set it when
+/// decoding untrusted input. An animated file returns its **first composited
+/// frame** (matching [`decode`]).
+///
+/// # Errors
+///
+/// The same errors as [`decode`], plus [`Error::LimitExceeded`] when
+/// `options.max_pixels` is exceeded.
+#[cfg(feature = "alloc")]
+pub fn decode_with(input: &[u8], options: &DecodeOptions) -> Result<Image> {
+    // One container walk yields the image chunk, any sibling `ALPH`, the `VP8X`
+    // header, and sidecar metadata — so the file is parsed exactly once (the codec
+    // is handed the located payload, not the whole file to re-parse).
+    let c = read_container(input, options.read_metadata)?;
+    // A clearly-animated file routes to its first composited frame, leaving the
+    // still-image path (and its exact error semantics) untouched otherwise.
+    if c.animated {
+        return first_composited_frame(input, options);
+    }
+    match c.image.ok_or(Error::MissingImage)? {
+        // A `VP8L` image encodes its own alpha, so any sibling `ALPH` does not
+        // apply; decode the located payload directly (no container re-parse).
+        ImageChunk::Lossless(payload) => {
+            let image = crate::lossless::decode_vp8l(payload, options)?;
+            // A VP8X canvas, if present, must agree with the decoded dimensions.
+            if c.vp8x.is_some_and(|vp8x| vp8x.canvas != image.dimensions()) {
+                return Err(Error::InvalidContainer);
+            }
+            Ok(image.with_metadata(c.metadata))
+        },
+        ImageChunk::Lossy(payload) => {
+            let mut image = crate::lossy::decode_with(payload, options)?;
+            if let Some(alph) = c.alpha {
+                let plane = alpha_plane_with(alph, image.width(), image.height(), options)?;
+                image.apply_alpha_plane(&plane)?;
+            }
+            // Surface any `VP8X` sidecar metadata (ICCP/EXIF/XMP) so a lossy
+            // decode → encode_image round trip preserves it, matching the lossless
+            // path (a bare `VP8 ` yields no metadata, leaving the image unchanged).
+            Ok(image.with_metadata(c.metadata))
+        },
+    }
+}
+
+/// Decode an `ALPH` chunk payload (including its 1-byte header) into a
+/// `width * height` alpha plane.
+///
+/// Parses the header, decompresses the plane (raw bytes, or a lossless `VP8L`
+/// stream via [`crate::lossless::decode_alpha`]), then reverses its spatial filter. The
+/// un-filter is applied identically for both compression methods — the filter is
+/// orthogonal to how the plane was stored.
+#[cfg(feature = "alloc")]
+fn alpha_plane(alph: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+    alpha_plane_with(alph, width, height, &DecodeOptions::default())
+}
+
+/// Like [`alpha_plane`] but threading `options` so [`decode_with`] can propagate
+/// its `max_pixels` limit into the lossless `ALPH` alpha decode (checked before the
+/// plane is allocated). The plane is the same size as the already-limited image, so
+/// this is defense in depth rather than the primary guard.
+#[cfg(feature = "alloc")]
+fn alpha_plane_with(
+    alph: &[u8],
+    width: u32,
+    height: u32,
+    options: &DecodeOptions,
+) -> Result<Vec<u8>> {
+    let (w, h) = (width as usize, height as usize);
+    let count = w.checked_mul(h).ok_or(Error::Truncated)?;
+    let (header, data) = parse_header(alph)?;
+    let mut plane = match header.compression {
+        AlphaCompression::None => data.get(..count).ok_or(Error::Truncated)?.to_vec(),
+        AlphaCompression::Lossless => {
+            crate::lossless::decode_alpha_with(data, width, height, options)?
+        },
+    };
+    unfilter(header.filter, &mut plane, w, h);
+    Ok(plane)
+}
+
+/// Decode an animated WebP into a lazy [`Frames`] iterator.
+///
+/// Handles both lossless (`VP8L`) and lossy (`VP8 ` + optional `ALPH`) frames —
+/// the latter via [`crate::lossy`] with alpha compositing, injected into the `lossless`
+/// codec's animation walker.
+///
+/// # Errors
+///
+/// [`Error::UnsupportedFeature`] if `input` is not an animation, or a
+/// container/bitstream error from a frame.
+#[cfg(feature = "alloc")]
+pub fn decode_frames(input: &[u8]) -> Result<Frames<'_>> {
+    decode_frames_with(input, &DecodeOptions::default())
+}
+
+/// Like [`decode_frames`] with explicit [`DecodeOptions`] (output layout,
+/// per-frame pixel limit); the both-codecs [`WebpFrameDecoder`] is always wired in.
+///
+/// # Errors
+///
+/// The same as [`decode_frames`], plus [`Error::LimitExceeded`] when a frame
+/// exceeds `options.max_pixels`.
+#[cfg(feature = "alloc")]
+pub fn decode_frames_with<'a>(input: &'a [u8], options: &DecodeOptions) -> Result<Frames<'a>> {
+    crate::decode_frames_with_decoder(input, options, WebpFrameDecoder)
+}
+
+/// A push-based [`IncrementalDecoder`] for still images and animations, with the
+/// lossy-frame hook wired so animated `VP8 ` frames decode.
+#[cfg(feature = "alloc")]
+#[must_use]
+pub fn incremental_decoder() -> IncrementalDecoder {
+    IncrementalDecoder::new()
+}
+
+/// The chosen streaming back end once the container kind is known.
+#[cfg(feature = "alloc")]
+enum Backend {
+    /// Not yet classified — buffering until the first image chunk is reachable.
+    Undecided,
+    /// Lossless still, or any animation: the `lossless` codec's incremental decoder (with the
+    /// lossy-frame hook injected so animated `VP8 ` frames decode). Boxed to keep the
+    /// enum small — the lossless decoder dwarfs the other variants.
+    Lossless(Box<crate::lossless::IncrementalDecoder<WebpFrameDecoder>>),
+    /// A bare lossy `VP8 ` still (no `VP8X`): true row streaming via [`crate::lossy`].
+    Lossy(Box<crate::lossy::IncrementalDecoder>),
+    /// An extended lossy still (`VP8X` + `VP8 `, possibly with `ALPH`): alpha /
+    /// metadata compositing is not row-streamable byte-identically, so buffer the
+    /// whole file and finish with a one-shot [`decode`].
+    Deferred,
+}
+
+/// How [`IncrementalDecoder::push`] should proceed once enough bytes are buffered.
+#[cfg(feature = "alloc")]
+enum Decision {
+    Lossless,
+    Lossy,
+    Deferred(ImageInfo),
+    NeedMore,
+}
+
+/// A push-based decoder for **any** still WebP or animation.
+///
+/// Dispatches on the container kind: lossless stills and all animations stream
+/// through [`crate::lossless`], a bare lossy `VP8 ` still row-streams through [`crate::lossy`],
+/// and an extended lossy still (which may carry `ALPH` alpha) is buffered and
+/// finished with a one-shot [`decode`]. The pixels and error semantics match
+/// [`decode`] exactly; the only new streaming capability over the
+/// lossless/animation paths is the bare lossy still. `Read`-free, so it works on
+/// `no_std + alloc`.
+#[cfg(feature = "alloc")]
+pub struct IncrementalDecoder {
+    buf: Vec<u8>,
+    options: DecodeOptions,
+    reported_header: bool,
+    image: Option<Image>,
+    backend: Backend,
+}
+
+#[cfg(feature = "alloc")]
+impl IncrementalDecoder {
+    /// A new decoder with default options.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::with_options(DecodeOptions::default())
+    }
+
+    /// A new decoder with the given options (output layout, per-image pixel limit).
+    #[must_use]
+    pub const fn with_options(options: DecodeOptions) -> Self {
+        Self {
+            buf: Vec::new(),
+            options,
+            reported_header: false,
+            image: None,
+            backend: Backend::Undecided,
+        }
+    }
+
+    /// Feed the next slice of the file and report [`Progress`].
+    ///
+    /// # Errors
+    ///
+    /// The same errors as [`decode`], surfaced as soon as the buffered bytes make
+    /// them detectable.
+    pub fn push(&mut self, chunk: &[u8]) -> Result<Progress> {
+        // Once a back end is chosen, forward the raw chunk to it (its own buffer
+        // already holds everything up to here, replayed on the deciding push).
+        match &mut self.backend {
+            Backend::Lossless(be) => return be.push(chunk),
+            Backend::Lossy(be) => return be.push(chunk),
+            Backend::Deferred => {
+                self.buf.extend_from_slice(chunk);
+                return self.drive_deferred();
+            },
+            Backend::Undecided => {},
+        }
+        if self.image.is_some() {
+            return Ok(Progress::Finished);
+        }
+        self.buf.extend_from_slice(chunk);
+        match classify(&self.buf)? {
+            Decision::Lossless => {
+                // Inject the both-codecs frame decoder so animated `VP8 ` frames
+                // decode (a bare `lossless` decoder would reject them).
+                let mut be = crate::lossless::IncrementalDecoder::with_options_and_decoder(
+                    self.options.clone(),
+                    WebpFrameDecoder,
+                );
+                let progress = be.push(&self.buf)?;
+                self.backend = Backend::Lossless(Box::new(be));
+                Ok(progress)
+            },
+            Decision::Lossy => {
+                let mut be = crate::lossy::IncrementalDecoder::with_options(self.options.clone());
+                let progress = be.push(&self.buf)?;
+                self.backend = Backend::Lossy(Box::new(be));
+                Ok(progress)
+            },
+            Decision::Deferred(info) => {
+                self.backend = Backend::Deferred;
+                if !self.reported_header {
+                    self.reported_header = true;
+                    return Ok(Progress::HeaderReady(info));
+                }
+                self.drive_deferred()
+            },
+            Decision::NeedMore => {
+                // A complete-but-unclassifiable buffer (e.g. a malformed container)
+                // takes the one-shot path, preserving its exact error / image.
+                if is_complete(&self.buf) {
+                    self.image = Some(decode(&self.buf)?);
+                    Ok(Progress::Finished)
+                } else {
+                    Ok(Progress::NeedMoreInput)
+                }
+            },
+        }
+    }
+
+    /// Finish the deferred (extended-lossy) path once the whole RIFF is buffered.
+    fn drive_deferred(&mut self) -> Result<Progress> {
+        if is_complete(&self.buf) {
+            self.image = Some(decode(&self.buf)?);
+            Ok(Progress::Finished)
+        } else {
+            Ok(Progress::NeedMoreInput)
+        }
+    }
+
+    /// The most-recently composited animation frame, or `None` for a still image.
+    /// Mirrors the underlying decoder's `frame_image`.
+    #[must_use]
+    pub fn frame_image(&self) -> Option<&Image> {
+        match &self.backend {
+            Backend::Lossless(be) => be.frame_image(),
+            _ => None,
+        }
+    }
+
+    /// Borrow the finalized-but-not-yet-viewed rows of a streamed still image (a
+    /// non-consuming early view). `None` unless a row-streaming back end is active
+    /// (a lossless or bare-lossy still); the deferred and animation paths yield no
+    /// rows.
+    pub fn drain_rows(&mut self) -> Option<RowDrain<'_>> {
+        match &mut self.backend {
+            Backend::Lossless(be) => be.drain_rows(),
+            Backend::Lossy(be) => be.drain_rows(),
+            Backend::Undecided | Backend::Deferred => None,
+        }
+    }
+
+    /// Retrieve the complete decoded image (an animation's first composited frame)
+    /// once [`Progress::Finished`] has been reported.
+    ///
+    /// # Errors
+    ///
+    /// The same errors as [`decode`] when the buffer is not a fully-decoded image.
+    pub fn into_image(self) -> Result<Image> {
+        if let Some(image) = self.image {
+            return Ok(image);
+        }
+        match self.backend {
+            Backend::Lossless(be) => be.into_image(),
+            Backend::Lossy(be) => be.into_image(),
+            Backend::Undecided | Backend::Deferred => decode(&self.buf),
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl Default for IncrementalDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Walk the buffered container to decide which streaming back end handles it.
+/// `Ok(Decision::NeedMore)` means the first image chunk is not yet reachable.
+#[cfg(feature = "alloc")]
+fn classify(buf: &[u8]) -> Result<Decision> {
+    if buf.len() < 12 {
+        return Ok(Decision::NeedMore);
+    }
+    if buf[0..4] != FourCc::RIFF.0 || buf[8..12] != FourCc::WEBP.0 {
+        return Err(Error::NotWebp);
+    }
+    // The header of a non-animated `VP8X`, if seen before the image chunk: its
+    // presence means an extended (possibly alpha-bearing) lossy still is deferred.
+    let mut vp8x_info: Option<ImageInfo> = None;
+    for chunk in scan_chunks(buf) {
+        match chunk.id {
+            FourCc::VP8X => {
+                let Some(data) =
+                    buf.get(chunk.payload_start..chunk.payload_start + VP8X_PAYLOAD_LEN)
+                else {
+                    return Ok(Decision::NeedMore);
+                };
+                let info = Vp8xInfo::parse(data)?;
+                if info.flags.is_animated() {
+                    return Ok(Decision::Lossless);
+                }
+                vp8x_info = Some(ImageInfo::new(
+                    info.canvas,
+                    info.flags.has_alpha(),
+                    info.flags.has_icc() || info.flags.has_exif() || info.flags.has_xmp(),
+                    false,
+                ));
+            },
+            // A lossless still (crate::lossless re-reads any VP8X sidecar) or an animation
+            // chunk: crate::lossless streams it.
+            FourCc::VP8L | FourCc::ANIM | FourCc::ANMF => return Ok(Decision::Lossless),
+            FourCc::VP8 => {
+                if let Some(info) = vp8x_info {
+                    return Ok(Decision::Deferred(info)); // extended lossy (has VP8X)
+                }
+                // Bare VP8: row-stream only if it spans the whole declared RIFF
+                // body (`chunk.next` is the padded end), so no trailing
+                // ALPH/metadata chunk can diverge the opaque stream from the
+                // one-shot decode; otherwise defer.
+                return match declared_len(buf) {
+                    Some(riff_end) if chunk.next >= riff_end => Ok(Decision::Lossy),
+                    Some(_) => Ok(bare_deferred(buf.get(chunk.payload_start..))),
+                    None => Ok(Decision::NeedMore),
+                };
+            },
+            _ => {},
+        }
+    }
+    Ok(Decision::NeedMore)
+}
+
+/// A bare `VP8 ` followed by trailing chunks (e.g. a malformed `ALPH` with no
+/// `VP8X`): defer to the one-shot decode, peeking the VP8 dimensions for the
+/// header report. `NeedMore` until the 10-byte VP8 header is buffered.
+#[cfg(feature = "alloc")]
+fn bare_deferred(vp8_payload: Option<&[u8]>) -> Decision {
+    vp8_payload
+        .and_then(|p| crate::lossy::peek_dimensions(p).ok())
+        .map_or(Decision::NeedMore, |dimensions| {
+            Decision::Deferred(ImageInfo::new(dimensions, false, false, false))
+        })
+}
+
+/// Decode an animation's first composited frame as a still [`Image`], honoring
+/// `options` (output layout, per-frame pixel limit).
+#[cfg(feature = "alloc")]
+fn first_composited_frame(input: &[u8], options: &DecodeOptions) -> Result<Image> {
+    decode_frames_with(input, options)?
+        .composited()
+        .next()
+        .ok_or(Error::MissingImage)?
+        .map(CompositedFrame::into_image)
+}
+
+/// The umbrella's [`FrameDecoder`]: the seam that
+/// drives **both** codecs.
+///
+/// It lets the `lossless` codec's codec-agnostic animation walker decode frames of
+/// either codec. A `VP8L` frame is decoded by the `lossless` codec (delegating to its
+/// [`Vp8lFrameDecoder`](crate::lossless::Vp8lFrameDecoder)); a lossy `VP8 ` (+
+/// optional sibling `ALPH`) frame is decoded by [`crate::lossy`], compositing the
+/// alpha plane into the pixels' top byte.
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WebpFrameDecoder;
+
+#[cfg(feature = "alloc")]
+impl crate::FrameDecoder for WebpFrameDecoder {
+    fn decode_frame(
+        &self,
+        frame: crate::FramePayload<'_>,
+        options: &DecodeOptions,
+    ) -> Result<crate::DecodedFrame> {
+        if frame.vp8l.is_some() {
+            // The VP8L path is codec-internal to `crate::lossless` — reuse it verbatim.
+            return crate::lossless::Vp8lFrameDecoder.decode_frame(frame, options);
+        }
+        let Some(payload) = frame.vp8 else {
+            return Err(Error::MissingImage);
+        };
+        // Guard the pixel budget against the frame's declared dimensions before the
+        // lossy decoder allocates its planes.
+        let pixels = frame.dims.pixel_count();
+        if let Some(limit) = options.max_pixels.filter(|&l| pixels > l) {
+            return Err(Error::LimitExceeded { pixels, limit });
+        }
+        let (dims, mut argb) = crate::lossy::decode_argb(payload)?;
+        if dims != frame.dims {
+            return Err(Error::InvalidContainer);
+        }
+        if let Some(alph) = frame.alph {
+            let plane = alpha_plane(alph, dims.width(), dims.height())?;
+            for (pixel, &a) in argb.iter_mut().zip(&plane) {
+                *pixel = (*pixel & 0x00FF_FFFF) | (u32::from(a) << 24);
+            }
+        }
+        // libwebp keys the compositor on whether an `ALPH` chunk is present.
+        Ok(crate::DecodedFrame {
+            argb,
+            alpha_used: frame.alph.is_some(),
+        })
+    }
+}
+
+/// Whether `input` is an animated WebP.
+///
+/// A cheap header probe (a `VP8X` animation flag, or an `ANIM`/`ANMF` chunk) that
+/// decodes no pixels and is codec-agnostic (it works for a lossy file the same as a
+/// lossless one).
+///
+/// # Errors
+///
+/// [`Error::NotWebp`]/[`Error::Truncated`] for a non-WebP or short input, or
+/// [`Error::InvalidContainer`] for a malformed `VP8X`.
+pub fn is_animated(input: &[u8]) -> Result<bool> {
+    crate::container::reader::is_animated(input)
+}
+
+/// The crate version, as reported by Cargo.
+#[must_use]
+pub const fn version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::container::fourcc::FourCc;
+    use crate::container::writer::{push_chunk, riff_envelope};
+
+    use super::{
+        BlendMode, DecodeOptions, Dimensions, DisposalMode, Effort, Encoder, Error, FrameMeta,
+        Image, ImageRef, IncrementalDecoder, Metadata, MetadataPolicy, PixelLayout, Progress,
+        decode, decode_with,
+    };
+
+    #[test]
+    fn round_trips_a_lossless_image_through_the_umbrella() {
+        // Encoder::lossless writes VP8L; decode() must route it back through crate::lossless.
+        let rgba = [10u8, 20, 30, 255, 40, 50, 60, 255];
+        let dims = Dimensions::new(2, 1).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        let file = Encoder::lossless().encode_ref(img).unwrap();
+        let decoded = decode(&file).unwrap();
+        assert_eq!(decoded.dimensions(), dims);
+        assert_eq!(decoded.as_bytes(), &rgba[..]);
+    }
+
+    #[test]
+    fn round_trips_a_lossy_image_through_the_umbrella() {
+        // Encoder::lossy writes a VP8 key frame; decode() routes it back
+        // through crate::lossy and returns an image of the right shape (lossy, so the
+        // pixels are close but not identical — only dimensions/opacity are pinned).
+        let mut rgba = Vec::new();
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                rgba.extend_from_slice(&[x * 16, y * 16, 128, 255]);
+            }
+        }
+        let dims = Dimensions::new(16, 16).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        let file = Encoder::lossy().quality(90).encode_ref(img).unwrap();
+        assert_eq!(&file[12..16], b"VP8 ", "lossy chunk fourcc");
+        let decoded = decode(&file).unwrap();
+        assert_eq!(decoded.dimensions(), dims);
+        assert!(decoded.as_bytes().chunks_exact(4).all(|p| p[3] == 0xff));
+    }
+
+    #[test]
+    fn lossy_alpha_round_trips_byte_exact_through_the_umbrella() {
+        // Encode a lossy image with a NON-TRIVIAL alpha channel (a radial-ish
+        // gradient plus fully-transparent and fully-opaque regions) and decode it
+        // back. Alpha is LOSSLESS, so the decoded alpha lane must equal the source
+        // byte-for-byte; the container must upgrade to the extended VP8X + ALPH form.
+        let (w, h) = (24u32, 20u32);
+        let mut rgba = Vec::new();
+        let mut source_alpha = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                // Fully transparent top-left block, fully opaque bottom-right block,
+                // a smooth diagonal ramp elsewhere.
+                let a = if x < 4 && y < 4 {
+                    0
+                } else if x >= w - 4 && y >= h - 4 {
+                    255
+                } else {
+                    u8::try_from(((x + y) * 255) / (w + h - 2)).unwrap_or(255)
+                };
+                source_alpha.push(a);
+                let px = [
+                    u8::try_from((x * 9) & 0xff).unwrap_or(0),
+                    u8::try_from((y * 11) & 0xff).unwrap_or(0),
+                    100,
+                    a,
+                ];
+                rgba.extend_from_slice(&px);
+            }
+        }
+        let dims = Dimensions::new(w, h).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        let file = Encoder::lossy().quality(90).encode_ref(img).unwrap();
+        assert_eq!(
+            &file[12..16],
+            b"VP8X",
+            "alpha image must use the extended form"
+        );
+        assert!(
+            file.windows(4).any(|c| c == b"ALPH"),
+            "must carry an ALPH chunk"
+        );
+
+        let decoded = decode(&file).unwrap();
+        assert_eq!(decoded.dimensions(), dims);
+        assert!(decoded.has_alpha());
+        // The alpha lane (byte 3 of every Rgba8 pixel) is byte-exact vs the source.
+        let decoded_alpha: Vec<u8> = decoded.as_bytes().chunks_exact(4).map(|p| p[3]).collect();
+        assert_eq!(decoded_alpha, source_alpha, "alpha must be lossless");
+    }
+
+    #[test]
+    fn round_trips_each_lossy_effort_through_the_umbrella() {
+        // Every effort preset (the shared `Effort`, now common to both codecs)
+        // rides on the shared `Encoder::lossy` builder, so each effort must produce
+        // a decodable, correctly-sized, fully-opaque VP8 image.
+        let mut rgba = Vec::new();
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                rgba.extend_from_slice(&[x * 16, y * 16, 128, 255]);
+            }
+        }
+        let dims = Dimensions::new(16, 16).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        for effort in [Effort::Fast, Effort::Balanced, Effort::Best] {
+            let file = Encoder::lossy()
+                .quality(90)
+                .effort(effort)
+                .encode_ref(img)
+                .unwrap();
+            assert_eq!(&file[12..16], b"VP8 ", "{effort:?}: lossy chunk fourcc");
+            let decoded = decode(&file).unwrap();
+            assert_eq!(decoded.dimensions(), dims, "{effort:?}: dims");
+            assert!(
+                decoded.as_bytes().chunks_exact(4).all(|p| p[3] == 0xff),
+                "{effort:?}: not fully opaque"
+            );
+        }
+    }
+
+    #[test]
+    fn encode_image_lossy_preserves_metadata_through_the_umbrella() {
+        // `Encoder::lossy().encode(&Image)` routes an `Image` carrying metadata to
+        // the lossy encoder, which upgrades to the extended VP8X form and emits the
+        // ICCP/EXIF/XMP chunks. The lossless side is exercised by crate::lossless's own
+        // tests; here we confirm the lossy encode preserves metadata by default.
+        let mut rgba = Vec::new();
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                rgba.extend_from_slice(&[x * 16, y * 16, 128, 255]);
+            }
+        }
+        let dims = Dimensions::new(16, 16).unwrap();
+        let metadata = Metadata {
+            icc_profile: Some(b"icc".to_vec()),
+            exif: Some(b"exif".to_vec()),
+            xmp: Some(b"<x/>".to_vec()),
+        };
+        let img = Image::from_parts(dims, PixelLayout::Rgba8, rgba, false, metadata.clone());
+        let file = Encoder::lossy().quality(90).encode(&img).unwrap();
+        assert_eq!(
+            &file[12..16],
+            b"VP8X",
+            "metadata must force the extended form"
+        );
+        let find = |id: &[u8; 4]| -> Option<Vec<u8>> {
+            crate::container::reader::chunks(&file)
+                .unwrap()
+                .filter_map(Result::ok)
+                .find(|c| &c.id.0 == id)
+                .map(|c| c.data.to_vec())
+        };
+        assert_eq!(find(b"ICCP").as_deref(), metadata.icc_profile.as_deref());
+        assert_eq!(find(b"EXIF").as_deref(), metadata.exif.as_deref());
+        assert_eq!(find(b"XMP ").as_deref(), metadata.xmp.as_deref());
+        // The image still decodes to the right shape through the umbrella.
+        assert_eq!(decode(&file).unwrap().dimensions(), dims);
+    }
+
+    #[test]
+    fn lossy_decode_surfaces_vp8x_metadata_and_round_trips() {
+        // Decoding a lossy VP8X file must surface its ICCP/EXIF/XMP into the
+        // returned `Image`, so a decode → `encode_image` round trip preserves the
+        // color profile and sidecar metadata (matching the lossless path).
+        let mut rgba = Vec::new();
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                rgba.extend_from_slice(&[x * 16, y * 16, 200, 255]);
+            }
+        }
+        let dims = Dimensions::new(16, 16).unwrap();
+        let metadata = Metadata {
+            icc_profile: Some(b"icc-profile-bytes".to_vec()),
+            exif: Some(b"exif-bytes".to_vec()),
+            xmp: Some(b"<x:xmpmeta/>".to_vec()),
+        };
+        let img = Image::from_parts(dims, PixelLayout::Rgba8, rgba, false, metadata.clone());
+        let file = Encoder::lossy().quality(90).encode(&img).unwrap();
+
+        // A decoded lossy file carries its ICC/Exif/XMP metadata.
+        let decoded = decode(&file).unwrap();
+        assert_eq!(
+            decoded.metadata().icc_profile.as_deref(),
+            metadata.icc_profile.as_deref()
+        );
+        assert_eq!(decoded.metadata().exif.as_deref(), metadata.exif.as_deref());
+        assert_eq!(decoded.metadata().xmp.as_deref(), metadata.xmp.as_deref());
+
+        // Full round trip: re-encoding the decoded image preserves the metadata.
+        let refile = Encoder::lossy().quality(90).encode(&decoded).unwrap();
+        let round = decode(&refile).unwrap();
+        assert_eq!(
+            round.metadata(),
+            &metadata,
+            "decode → Encoder::lossy().encode must preserve metadata"
+        );
+
+        // A bare (metadata-free) lossy file still decodes to empty metadata.
+        let bare = Encoder::lossy()
+            .quality(90)
+            .encode_ref(ImageRef::new(dims, PixelLayout::Rgba8, img.as_bytes()).unwrap())
+            .unwrap();
+        assert_eq!(decode(&bare).unwrap().metadata(), &Metadata::none());
+    }
+
+    #[test]
+    fn dispatches_a_lossy_file_to_the_vp8_decoder() {
+        // A RIFF/`VP8 ` container with a valid key-frame header routes to
+        // crate::lossy, which reconstructs it to an image of the declared size.
+        let vp8_key_frame = [0x10u8, 0x00, 0x00, 0x9d, 0x01, 0x2a, 16, 0, 16, 0];
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::VP8, &vp8_key_frame);
+        let file = riff_envelope(&body);
+        let image = decode(&file).unwrap();
+        assert_eq!(image.dimensions(), Dimensions::new(16, 16).unwrap());
+    }
+
+    #[test]
+    fn composites_a_raw_alpha_chunk_onto_a_lossy_image() {
+        // A `VP8 ` 16x16 key-frame header plus a raw (method=0, filter=NONE) `ALPH`
+        // plane must decode to an image whose alpha channel is the plane's bytes.
+        let vp8_key_frame = [0x10u8, 0x00, 0x00, 0x9d, 0x01, 0x2a, 16, 0, 16, 0];
+        let mut alph = Vec::new();
+        alph.push(0x00u8); // method=0 (none), filter=0 (NONE), pre_processing=0
+        alph.resize(1 + 16 * 16, 0x80); // 256 alpha bytes, all 0x80
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::VP8, &vp8_key_frame);
+        push_chunk(&mut body, FourCc::ALPH, &alph);
+        let file = riff_envelope(&body);
+        let image = decode(&file).unwrap();
+        assert_eq!(image.dimensions(), Dimensions::new(16, 16).unwrap());
+        assert!(image.has_alpha());
+        // Default Rgba8 layout: the alpha lane is byte 3 of every pixel.
+        assert!(image.as_bytes().chunks_exact(4).all(|px| px[3] == 0x80));
+    }
+
+    #[test]
+    fn rejects_a_non_webp_input() {
+        // At least 12 bytes so the RIFF/WEBP magic check runs (a shorter input is
+        // reported as `Truncated` before the magic is even examined).
+        assert_eq!(
+            decode(b"definitely not a webp file").unwrap_err(),
+            Error::NotWebp
+        );
+    }
+
+    #[test]
+    fn unified_streams_a_bare_lossy_still_and_drains_rows() {
+        // A bare RIFF/`VP8 ` still routes to crate::lossy and row-streams: one-byte
+        // pushes reproduce the one-shot decode and expose rows via drain_rows. A
+        // real 32x24 stream (unlike a tiny header-only frame, whose payload only
+        // completes at EOF) sets up the still stream well before completion, so
+        // rows are genuinely drained incrementally.
+        let vp8 = include_bytes!("../tests/fixtures/noise_32x24_q30.vp8");
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::VP8, vp8);
+        let file = riff_envelope(&body);
+        let expected = decode(&file).unwrap();
+
+        let mut dec = IncrementalDecoder::new();
+        let mut drained = 0u32;
+        for byte in &file {
+            dec.push(core::slice::from_ref(byte)).unwrap();
+            if let Some(rows) = dec.drain_rows() {
+                drained += rows.rows;
+            }
+        }
+        assert!(drained > 0, "a lossy still must stream rows");
+        assert_eq!(dec.into_image().unwrap().as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn unified_streams_a_lossless_still() {
+        // A VP8L still routes to crate::lossless and streams; the assembled image matches
+        // the one-shot decode.
+        let rgba: Vec<u8> = (0..16u8).flat_map(|i| [i * 3, i * 5, i * 7, 255]).collect();
+        let dims = Dimensions::new(4, 4).unwrap();
+        let file = Encoder::lossless()
+            .encode_ref(ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap())
+            .unwrap();
+        let expected = decode(&file).unwrap();
+
+        let mut dec = IncrementalDecoder::new();
+        for chunk in file.chunks(3) {
+            dec.push(chunk).unwrap();
+        }
+        assert_eq!(dec.into_image().unwrap().as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn unified_defers_a_lossy_still_with_alpha() {
+        // `VP8 ` + `ALPH` (alpha present) is deferred to the one-shot decode: no
+        // rows stream, but into_image composites the alpha exactly like decode().
+        let vp8 = [0x10u8, 0x00, 0x00, 0x9d, 0x01, 0x2a, 16, 0, 16, 0];
+        let mut alph = vec![0x00u8]; // method=0, filter=NONE
+        alph.resize(1 + 16 * 16, 0x80);
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::VP8, &vp8);
+        push_chunk(&mut body, FourCc::ALPH, &alph);
+        let file = riff_envelope(&body);
+        let expected = decode(&file).unwrap();
+
+        let mut dec = IncrementalDecoder::new();
+        let mut any_drain = false;
+        for byte in &file {
+            dec.push(core::slice::from_ref(byte)).unwrap();
+            any_drain |= dec.drain_rows().is_some();
+        }
+        assert!(!any_drain, "the deferred alpha path streams no rows");
+        let image = dec.into_image().unwrap();
+        assert!(image.has_alpha());
+        assert_eq!(image.as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn decode_with_enforces_max_pixels_on_a_lossless_still() {
+        // The umbrella decode_with propagates the pixel limit to the lossless
+        // decoder, which rejects an 8x8 (64px) image *before* allocating pixels.
+        let rgba: Vec<u8> = (0u8..64).flat_map(|i| [i, 0, 0, 255]).collect();
+        let dims = Dimensions::new(8, 8).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        let file = Encoder::lossless().encode_ref(img).unwrap();
+        assert_eq!(
+            decode_with(&file, &DecodeOptions::default().max_pixels(10)).unwrap_err(),
+            Error::LimitExceeded {
+                pixels: 64,
+                limit: 10,
+            }
+        );
+        // The default (no cap) still decodes.
+        assert_eq!(
+            decode_with(&file, &DecodeOptions::default())
+                .unwrap()
+                .dimensions(),
+            dims
+        );
+    }
+
+    #[test]
+    fn decode_with_enforces_max_pixels_on_lossy_still_and_frames() {
+        // A bare 16x16 lossy `VP8 ` still: decode_with rejects it before planes.
+        let vp8 = [0x10u8, 0x00, 0x00, 0x9d, 0x01, 0x2a, 16, 0, 16, 0];
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::VP8, &vp8);
+        let file = riff_envelope(&body);
+        assert_eq!(
+            decode_with(&file, &DecodeOptions::default().max_pixels(4)).unwrap_err(),
+            Error::LimitExceeded {
+                pixels: 256,
+                limit: 4,
+            }
+        );
+
+        // An animation: decode_with routes to the first composited frame through
+        // decode_frames_with, which rejects a 2x2 (4px) frame under a 1-pixel cap.
+        let canvas = Dimensions::new(2, 2).unwrap();
+        let red = [255u8, 0, 0, 255].repeat(4);
+        let meta = FrameMeta {
+            x: 0,
+            y: 0,
+            dimensions: canvas,
+            duration_ms: 100,
+            blend: BlendMode::Blend,
+            dispose: DisposalMode::Keep,
+        };
+        let anim = crate::lossless::AnimationEncoder::new(canvas)
+            .add_frame(
+                ImageRef::new(canvas, PixelLayout::Rgba8, &red).unwrap(),
+                meta,
+            )
+            .unwrap()
+            .finish();
+        assert!(matches!(
+            decode_with(&anim, &DecodeOptions::default().max_pixels(1)),
+            Err(Error::LimitExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn metadata_policy_is_reexported_from_the_umbrella() {
+        // The umbrella re-exports the shared `MetadataPolicy` so a caller can name
+        // the `Encoder::metadata_policy` argument type through `webpkit`.
+        let dims = Dimensions::new(1, 1).unwrap();
+        let metadata = Metadata {
+            icc_profile: Some(vec![1]),
+            exif: Some(vec![2]),
+            xmp: Some(vec![3]),
+        };
+        let img = Image::from_parts(
+            dims,
+            PixelLayout::Rgba8,
+            vec![0, 0, 0, 255],
+            false,
+            metadata,
+        );
+        let file = Encoder::lossless()
+            .metadata_policy(MetadataPolicy::StripPrivate)
+            .encode(&img)
+            .unwrap();
+        let decoded = decode(&file).unwrap();
+        // StripPrivate keeps ICC, drops the privacy-bearing Exif/XMP sidecars.
+        assert_eq!(decoded.metadata().icc_profile.as_deref(), Some(&[1][..]));
+        assert_eq!(decoded.metadata().exif, None);
+        assert_eq!(decoded.metadata().xmp, None);
+    }
+
+    #[test]
+    fn unified_streams_animation_frames() {
+        // An animation routes to crate::lossless's frame walker: each frame composites and
+        // exposes its canvas; into_image returns the first composited frame.
+        let canvas = Dimensions::new(2, 2).unwrap();
+        let red = [255u8, 0, 0, 255].repeat(4);
+        let blue = [0u8, 0, 255, 255].repeat(4);
+        let meta = |ms| FrameMeta {
+            x: 0,
+            y: 0,
+            dimensions: canvas,
+            duration_ms: ms,
+            blend: BlendMode::Blend,
+            dispose: DisposalMode::Keep,
+        };
+        let file = crate::lossless::AnimationEncoder::new(canvas)
+            .add_frame(
+                ImageRef::new(canvas, PixelLayout::Rgba8, &red).unwrap(),
+                meta(100),
+            )
+            .unwrap()
+            .add_frame(
+                ImageRef::new(canvas, PixelLayout::Rgba8, &blue).unwrap(),
+                meta(100),
+            )
+            .unwrap()
+            .finish();
+        let expected = decode(&file).unwrap();
+
+        let mut dec = IncrementalDecoder::new();
+        let mut chunks = file.chunks(5);
+        let mut frames = 0;
+        loop {
+            let progress = match chunks.next() {
+                Some(chunk) => dec.push(chunk),
+                None => dec.push(&[]),
+            }
+            .unwrap();
+            match progress {
+                Progress::FrameComplete(_) => {
+                    frames += 1;
+                    assert!(dec.frame_image().is_some());
+                },
+                Progress::Finished => break,
+                _ => {},
+            }
+        }
+        assert_eq!(frames, 2, "both frames composited");
+        assert_eq!(dec.into_image().unwrap().as_bytes(), expected.as_bytes());
+    }
+}

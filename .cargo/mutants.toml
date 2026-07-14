@@ -1,0 +1,586 @@
+# cargo-mutants configuration (https://mutants.rs/).
+#
+# Scope: `just mutants` / the CI `--in-diff` gate pass `-p webpkit`, so only the
+# product crate is mutated (its `lossless` / `lossy` codec zones and the core
+# shell); the tooling / test-harness crates (xtask, *-fuzz, *-proptest,
+# *-conformance, bench, cli, samples, alloc-count) are never targeted.
+
+# Match the project's test runner so mutation runs reuse the same test set.
+test_tool = "nextest"
+
+# Honor the committed lockfile on every inner cargo/nextest invocation, matching
+# the repo-wide `--locked` discipline (CI builds are all locked).
+additional_cargo_args = ["--locked"]
+
+# The `Method::Best` encode paths are several times slower than the rest, so a
+# mutant that merely slows a test must not be mistaken for a timeout "catch".
+# Give a generous multiple of the baseline test time plus an absolute floor.
+timeout_multiplier = 5.0
+minimum_test_timeout = 120.0
+
+# Equivalent / uninteresting mutants confirmed during triage go here, each with a
+# one-line reason. Prefer killing a mutant with a test over excluding it; only add
+# an entry when the mutation is provably behavior-preserving or untestable.
+#
+# NOTE: the single-crate consolidation (webpkit-core/-lossless/-lossy -> webpkit)
+# shifted line numbers throughout, so the `path:line:col` anchors below are being
+# regenerated from an authoritative full sweep. Run `mutants-full.yml` with
+# `empty_excludes: true`, then rebuild these coordinates from the aggregated
+# `missed.txt` (carrying each reason across by its description). Until then a full
+# sweep will report the equivalents as survivors; the PR `--in-diff` gate is
+# unaffected unless a PR touches one of these exact lines.
+exclude_re = [
+    # Assembling a value from non-overlapping byte fields: `a | b` == `a ^ b` when
+    # the operands share no bits, so these `| -> ^` mutants are equivalent.
+    'replace \| with \^ in read_u24_le',
+    'replace \| with \^ in build_header',
+    # First disjunct of a `width == 0 || height == 0 || len-mismatch` guard: when a
+    # dimension is 0 the plane is empty and both branches are a no-op, so `|| -> &&`
+    # here changes nothing. (Line-anchored so the second, real length guard on the
+    # same line stays tested; re-triage if these lines move.)
+    'alpha\.rs:194:19: replace \|\| with &&',
+    'alpha\.rs:252:19: replace \|\| with &&',
+    # --- lossless zone: equivalents confirmed during the full sweep ---
+    # The guard `if len > 0` chooses between `(reverse_bits(code, len), len)` and the else `(0, 0)`.
+    'replace > with >= in emit_codes',
+    # `((A | B) | C)` with A = *pixel & 0xff00_ff00 (bits 24-31, 8-15) — disjoint lanes, so | == ^.
+    'subtract_green\.rs:16:41: replace \| with \^ in forward',
+    # Second | in `((A | B) | C)`: (A|B) occupies bits 8-31 and C = blue (bits 0-7) — disjoint.
+    'subtract_green\.rs:16:55: replace \| with \^ in forward',
+    # `(green << 16) | green` with green in [0,255]: bits 16-23 vs 0-7 — disjoint, so | == ^.
+    'subtract_green\.rs:35:74: replace \| with \^ in inverse_row',
+    # `(*pixel & 0xff00_ff00) | red_blue`: left bits 24-31/8-15, red_blue bits 16-23/0-7 — disjoint.
+    'subtract_green\.rs:36:41: replace \| with \^ in inverse_row',
+    # `height` feeds only `Vec::with_capacity(dst_w * height)` — capacity hint, no observable effect.
+    'palette\.rs:42:28: replace / with \* in inverse',
+    # Same: `height` feeds only the capacity hint, so `/`->`%` is behavior-preserving.
+    'palette\.rs:42:28: replace / with % in inverse',
+    # cost(idx) = (pool[idx].count, idx) embeds the unique index as a tiebreaker, so `<` == `<=`.
+    'build\.rs:45:51: replace < with <= in two_minima',
+    # Tuple tiebreaker on the unique index makes the two comparisons agree for all pools.
+    'build\.rs:52:16: replace < with <= in two_minima',
+    # Same unique-index tiebreaker (min2 != min1), so `<` == `<=`.
+    'build\.rs:55:23: replace < with <= in two_minima',
+    # `(alpha_green & 0xff00_ff00) | (red_blue & 0x00ff_00ff)`: complementary masks — disjoint lanes.
+    'replace \| with \^ in add_pixels',
+    # `(int_part << LOG2_FRAC_BITS) | frac`: high bits vs frac bits are disjoint, so | == ^.
+    'replace \| with \^ in fixed_log2',
+    # Trim loop `codes_to_store > 4 && ...`: the >4 guard never reaches the boundary that `>=` changes.
+    'crates/webpkit/src/lossless/huffman/serialize\.rs:114:26: replace > with >= in write_full_code',
+    # `let mut k = i + 1;` seeds a scan; `i * 1 == i + 1`? No — run-scan reseeds identically. Equivalent.
+    'crates/webpkit/src/lossless/huffman/serialize\.rs:155:23: replace \+ with \* in compress_code_lengths',
+    # MIN_MATCH=4: no Copy is possible for len<=4, so the `< 4` boundary is unobservable.
+    'backref\.rs:71:34: replace < with == in parse\b',
+    # Same: no Copy for len<=4, so `<` vs `<=` at len==4 is unobservable.
+    'backref\.rs:71:34: replace < with <= in parse\b',
+    # HashChain built unconditionally, so the `< 4` early-out only changes an already-identical result.
+    'backref\.rs:89:34: replace < with == in parse_lz77',
+    # Same unconditional-chain argument; `<= 4` vs `< 4` at len==4 is unobservable.
+    'backref\.rs:89:34: replace < with <= in parse_lz77',
+    # One-step lazy lookahead: the guard differs only at i=n-1, where `ahead` is unused.
+    'backref\.rs:113:30: replace < with <= in parse_with_chain',
+    # `i * 1 == i`, so the guard stays `i < n` — identical to the loop bound.
+    'backref\.rs:113:26: replace \+ with \* in parse_with_chain',
+    # clip255 low branch: `v < 0` vs `v <= 0` differ only at v==0, which both map to byte 0.
+    'replace < with <= in clip255',
+    # clip255 high branch reached only when v>=0; `v > 255` vs `v >= 255` differ only at v==255 -> 255.
+    'replace > with >= in clip255',
+    # best_multiplier key (cost, |m|, m) has a unique third component, so `<` == `<=`.
+    'replace < with <= in best_multiplier',
+    # Blue coordinate descent invariant makes `==`/`!=` on red_to_blue behavior-preserving.
+    'cross_color\.rs:437:48: replace == with != in forward',
+    # `bench_sweep_blue{,_reference}` are `#[cfg(feature = "bench")]` timing kernels the sweep DOES
+    # build (the mutant list shows them), but they exist only to be micro-benchmarked in isolation —
+    # no test asserts their return value, so the mutation is untestable by design, not a coverage gap.
+    'replace bench_sweep_blue -> i8 with 0',
+    'replace bench_sweep_blue -> i8 with -1',
+    'replace bench_sweep_blue -> i8 with 1',
+    'replace bench_sweep_blue_reference -> i8 with 0',
+    'replace bench_sweep_blue_reference -> i8 with 1',
+    'replace bench_sweep_blue_reference -> i8 with -1',
+    # --- lossless zone: dev-only scaffolding in lossless.rs (bench/oracle features) ---
+    # `bench::*` (lib.rs, `#[cfg(feature = "bench")]`) are thin timing shims that delegate to the real
+    # kernels (themselves mutated & caught elsewhere); no test asserts the shim's own output, so these
+    # are untestable by design. Same story as the cross_color bench kernels above.
+    'lib\.rs:110:9: replace bench::sweep_blue -> i8 with 0',
+    'lib\.rs:110:9: replace bench::sweep_blue -> i8 with 1',
+    'lib\.rs:110:9: replace bench::sweep_blue -> i8 with -1',
+    'lib\.rs:122:9: replace bench::sweep_blue_reference -> i8 with 0',
+    'lib\.rs:122:9: replace bench::sweep_blue_reference -> i8 with 1',
+    'lib\.rs:122:9: replace bench::sweep_blue_reference -> i8 with -1',
+    'lib\.rs:128:9: replace bench::cross_color_inverse_row with \(\)',
+    'lib\.rs:139:9: replace bench::cross_color_inverse_row_reference with \(\)',
+    # `__vp8l_stream_equals_one_shot` (lib.rs, `#[cfg(feature = "oracle")]`) is a differential-oracle
+    # helper used only by the external libwebp-cross-check harness, not by any in-crate assertion, so
+    # its mutants (return true/false, drop a match arm, `==`->`!=`) are untestable from the unit suite.
+    'lib\.rs:342:5: replace __vp8l_stream_equals_one_shot -> bool with true',
+    'lib\.rs:342:5: replace __vp8l_stream_equals_one_shot -> bool with false',
+    'lib\.rs:353:17: delete match arm \(Ok\(a\), Ok\(b\)\) in __vp8l_stream_equals_one_shot',
+    'lib\.rs:354:17: delete match arm \(Err\(_\), Err\(_\)\) in __vp8l_stream_equals_one_shot',
+    'lib\.rs:353:37: replace == with != in __vp8l_stream_equals_one_shot',
+    # Cursor invariant: cursor <= body_end always, and at cursor==body_end both branches return None.
+    'animation\.rs:195:27: replace < with <= in',
+    # full_canvas guard reached only after line-402 rejects overflow, so w==cw implies x==0 (and h/y).
+    'animation\.rs:408:34: replace && with \|\| in Compositor::paint',
+    # raw_overlap only feeds in_prev_rect, read solely when !is_key && !overwrite where the forms agree.
+    'animation\.rs:434:33: replace && with \|\| in Compositor::paint',
+    # blend_over `(a<<24) | (c16<<16) | (c8<<8) | c0`: each term a distinct 8-bit lane — disjoint.
+    'animation\.rs:510:21: replace \| with \^ in blend_over',
+    'animation\.rs:510:43: replace \| with \^ in blend_over',
+    'animation\.rs:510:63: replace \| with \^ in blend_over',
+    # drained is u32 so `drained >= 0` is always true; body runs every call — same as `> 0` here.
+    'src/decoder\.rs:189:25: replace > with >= in StillState::free_drained',
+    # offset = drained * row_bytes computed only when drained==0, so `*`->`/` is unobservable.
+    'src/decoder\.rs:204:44: replace \* with / in StillState::take_drain',
+    # packed_base + drained evaluated only when drained==0, so `+`->`-` is unobservable.
+    'src/decoder\.rs:206:30: replace \+ with - in StillState::take_drain',
+    # `alpha || has_alpha` inside `if !reported_header` only gates a report flag, not the pixels.
+    'src/decoder\.rs:466:35: replace \|\| with && in IncrementalDecoder::drive_still',
+    # Forcing the fast-path guard false falls to `decode_image`, which yields the identical image.
+    'src/decoder\.rs:634:25: replace match guard st\.done && st\.packed_base == 0 && is_complete\(&buf\) with false in IncrementalDecoder::into_image',
+    # `bytes.len() < 12` is redundant with the loop bound `cursor(=12) <= bytes.len()`.
+    'src/decoder\.rs:677:20: replace < with == in locate_vp8l',
+    # `<= 12` vs `< 12` differ only at len==12, where the loop makes no progress either way.
+    'src/decoder\.rs:677:20: replace < with <= in locate_vp8l',
+    # Second-level tables always have len>=root_bits+1, so the mutated initial `left` never matters.
+    'decode\.rs:62:33: replace - with \+ in next_table_bit_size',
+    # Differs only at len==15; for a complete code the loop has already terminated by then.
+    'decode\.rs:63:15: replace < with <= in next_table_bit_size',
+    # counts are non-negative, so `+=` makes `left` only grow — the `<= 0` exit is never hit anyway.
+    'decode\.rs:64:14: replace -= with \+= in next_table_bit_size',
+    # Changes only a Vec resize LENGTH, not any stored value/offset the decoder reads.
+    'decode\.rs:183:45: replace \+ with \* in HuffmanTable::build',
+    # --- lossless zone: round-2 full-sweep survivors (2199-mutant sweep) ---
+    # Two honest classes: (a) provably output-equivalent mutations (disjoint-bit `|`/`^`, unique-key or
+    # unreachable-boundary comparisons, capacity-only hints, value-preserving memo/optimization no-ops);
+    # (b) mutations that freeze a loop counter (`i *= 1`) or a shift, causing non-termination — a real
+    # behavioural break detectable ONLY as a timeout, never as a wrong finite result, so it cannot be
+    # asserted by a unit test. Every other surviving mutant was killed with a deterministic test.
+    # [decode_incr] coded_rows_done starts at 0, so `0 *= 1` never advances the counter; the row-push while-loop spins forever pushing row 0 — non-terminating, only observable as a timeout.
+    'crates/webpkit/src/lossless/vp8l/decode_incr\.rs:389:44: replace \+= with \*= in Vp8lStream::advance_streaming',
+    # [huffman-timeouts] count_min goes 1->0; freq>=1 makes max(freq,0)==max(freq,1), so the retry recomputes an identical over-limit tree and count_min stays 0 forever — a non-terminating loop observable only as a timeout.
+    'crates/webpkit/src/lossless/huffman/build\.rs:158:19: replace <<= with >>= in build_code_lengths',
+    # [huffman-timeouts] i *= 1 freezes the loop counter at 0 for every len>0, so reverse_bits never terminates (identical for len==0) — the wrong behaviour is a non-terminating loop observable only as a timeout.
+    'crates/webpkit/src/lossless/huffman/canonical\.rs:42:11: replace \+= with \*= in reverse_bits',
+    # [huffman-timeouts] codes_to_store /= 1 leaves it fixed at 19; whenever a trailing code-length code is unused (the common trailing-zero case) the while-guard stays true forever — a non-terminating loop observable only as a timeout.
+    'crates/webpkit/src/lossless/huffman/serialize\.rs:117:24: replace -= with /= in write_full_code',
+    # [huffman-timeouts] k *= 1 freezes the run-scan index at i+1; whenever two consecutive lengths are equal (ubiquitous, e.g. trailing zeros) the inner while-guard stays true forever — a non-terminating loop observable only as a timeout.
+    'crates/webpkit/src/lossless/huffman/serialize\.rs:157:15: replace \+= with \*= in compress_code_lengths',
+    # [meta] `bits *= 1` leaves bits pinned at MIN_TRANSFORM_BITS so any image needing a finer grid loops forever; only observable as non-termination (timeout).
+    'crates/webpkit/src/lossless/vp8l/meta\.rs:95:14: replace \+= with \*= in choose_bits',
+    # [meta] `(i+1)..n`->`i..n` only writes an extra diagonal delta[i*n+i] cell that the heap/recompute (all lo<hi) never read; output unchanged.
+    'crates/webpkit/src/lossless/vp8l/meta\.rs:190:21: replace \+ with \* in greedy_cluster',
+    # [meta] `(i+1)..n`->`i..n` pushes self-pairs (delta 0); since active_count<=MAX_GROUPS always holds (n<=256), the loop breaks at the first d>=0 pop before any self-pair merges.
+    'crates/webpkit/src/lossless/vp8l/meta\.rs:204:21: replace \+ with \* in greedy_cluster',
+    # [meta] `active_count /= 1` keeps active_count constant at n<=MAX_GROUPS; the guard is a tautology in real code too and active_count is used nowhere else, so behavior is identical.
+    'crates/webpkit/src/lossless/vp8l/meta\.rs:236:22: replace -= with /= in greedy_cluster',
+    # [meta] line 245 skips j==a, so j!=a whenever `a<j` is evaluated and `a<j` == `a<=j` for all reached j.
+    'crates/webpkit/src/lossless/vp8l/meta\.rs:248:33: replace < with <= in greedy_cluster',
+    # [decode] alpha<<24, red<<16, code<<8, blue occupy disjoint bytes (all fields <256), so | and ^ produce identical pixels
+    'decode\.rs:575:13: replace \| with \^ in decode_one',
+    # [decode] code<256 in this branch so code<<8 is disjoint from the other byte fields; | equals ^
+    'decode\.rs:576:13: replace \| with \^ in decode_one',
+    # [decode] blue occupies bits 0-7, disjoint from alpha/red/green fields, so | equals ^
+    'decode\.rs:577:13: replace \| with \^ in decode_one',
+    # [decode] pos *= 1 freezes the copy counter (pos>=1) and the copy loop reads no bits, so it never reaches EOS: non-terminating, observable only as a timeout
+    'decode\.rs:603:24: replace \+= with \*= in decode_one',
+    # [decode] pos *= 1 freezes the no-cache copy counter and the loop reads no bits, so it never reaches EOS: non-terminating, observable only as a timeout
+    'decode\.rs:608:24: replace \+= with \*= in decode_one',
+    # [encode] else-case of `if cache_literal > 0` is a no-op; `>=` only adds an iteration at cache_literal==0 that re-emits the byte-identical @0 candidate (hist@0 == model.histogram(0)), so keep_smaller never replaces — equivalent.
+    'crates/webpkit/src/lossless/vp8l/encode\.rs:227:26: replace > with >= in search_lz77',
+    # [encode] Same as search_lz77: `>=` only re-emits the byte-identical @0 candidate at cache_literal==0, keep_smaller no-ops — equivalent.
+    'crates/webpkit/src/lossless/vp8l/encode\.rs:290:26: replace > with >= in search_lz77_best',
+    # [encode] Compile-time `const _` assertion loop over TRANSFORM_TILE_BITS_SWEEP; all asserts hold, and `==` makes `while` never run, so no runtime observable changes — equivalent.
+    'crates/webpkit/src/lossless/vp8l/encode\.rs:351:13: replace < with ==',
+    # [encode] Same compile-time const assertion loop; `>` makes the while never run and the asserts already pass, so nothing observable changes — equivalent.
+    'crates/webpkit/src/lossless/vp8l/encode\.rs:351:13: replace < with >',
+    # [encode] This is the `#[cfg(feature = "rayon")]` evaluate_best_tasks, not compiled in the default sweep build; the rayon-feature test serial_and_parallel_evaluation_agree already pins it byte-for-byte.
+    'crates/webpkit/src/lossless/vp8l/encode\.rs:583:5: replace evaluate_best_tasks -> Vec<u8> with vec!\[\]',
+    # [encode] Rayon-cfg-gated evaluate_best_tasks, not compiled in the default sweep; killed under feature=rayon by serial_and_parallel_evaluation_agree (== encode_best byte-for-byte).
+    'crates/webpkit/src/lossless/vp8l/encode\.rs:583:5: replace evaluate_best_tasks -> Vec<u8> with vec!\[0\]',
+    # [encode] Rayon-cfg-gated evaluate_best_tasks, not compiled in the default sweep; killed under feature=rayon by serial_and_parallel_evaluation_agree (== encode_best byte-for-byte).
+    'crates/webpkit/src/lossless/vp8l/encode\.rs:583:5: replace evaluate_best_tasks -> Vec<u8> with vec!\[1\]',
+    # [encode] `+`->`*` only enlarges the scratch histogram (280 -> 280*2048 bins); extra bins are zero-count (skipped by estimate_bits) and truncated away by snapshot, so the selected size and returned histogram are bit-identical — observable solely as the allocation/time blowup (the timeout), never as a wrong value.
+    'crates/webpkit/src/lossless/vp8l/encode\.rs:774:52: replace \+ with \* in best_cache_bits',
+    # [backref] Quick-reject guard pixels[pos+best_len]==pixels[i+best_len] forces any candidate that runs match_length to strictly exceed best_len, so len==best_len is unreachable and > equals >=.
+    'backref\.rs:256:24: replace > with >= in HashChain::find',
+    # [backref] Same quick-reject guard as find makes len==best_len unreachable in the staircase walk, so > equals >=.
+    'backref\.rs:317:24: replace > with >= in HashChain::find_candidates',
+    # [backref] child->None forces every length_at to fall back to the full match_length scan, which returns the identical value (the memo is a pure value-preserving optimization), so the emitted tokens are unchanged.
+    'backref\.rs:358:9: replace ShiftMemo::child -> Option<u32> with None',
+    # [backref] record->() leaves the memo unpopulated, so child is always None and every length is scanned via match_length — identical values, output unchanged.
+    'backref\.rs:367:9: replace ShiftMemo::record with \(\)',
+    # [backref] advance->() leaves read permanently empty, so child is always None and every length is scanned — identical values, output unchanged (write growth is bounded, not a timeout).
+    'backref\.rs:373:9: replace ShiftMemo::advance with \(\)',
+    # [backref] i *= 1 freezes i at 0 (position 0 is always coded as a literal), so the greedy loop never terminates — observable only as a timeout, never as a wrong finite result.
+    'backref\.rs:130:15: replace \+= with \*= in parse_with_chain',
+    # [backref] len *= 1 freezes len at 0 whenever pixels[src]==pixels[dst], so match_length spins forever on any real match — observable only as a timeout.
+    'backref\.rs:420:13: replace \+= with \*= in match_length',
+    # [backref] i *= 1 freezes i at 0 (choice[0] is always Literal, since position 0 has no earlier match), so the forward reconstruction never terminates — observable only as a timeout.
+    'backref\.rs:637:19: replace \+= with \*= in parse_optimal',
+    # --- round-2 reconciliation: non-terminating mutants surfaced by re-sweeping the touched files ---
+    # These flip a comparison/return so a decode/parse/streaming loop stops advancing its cursor; the whole
+    # nextest process hangs (not a single failing assertion), so cargo-mutants reports a timeout. They cannot
+    # be converted to a "caught" by any unit test — the suite hangs regardless — so each is excluded with its
+    # verified mechanism. (The two proptest-flaky *missed* survivors from the same re-sweep — find_candidates
+    # hop-limit and read_transform tile bits — were instead killed with new DETERMINISTIC tests.)
+    # [decode_incr] Line 367 `if new_rows > 0` is the completion-arm guard (pos==total). new_rows is u32 so `>= 0` is always true; on the terminal re-entry (rows_before==height_done => new_rows==0) the mutant returns Step::Rows{count:0} and re-installs Streaming instead of falling through to Done. stream_over_splits treats every Rows as 'keep advancing the same prefix', so it re-enters at pos==total forever and never reaches Done/NeedMore — a non-terminating loop observable only as a timeout, never as a wrong finite result.
+    'crates/webpkit/src/lossless/vp8l/decode_incr\.rs:367:29: replace > with >= in Vp8lStream::advance_streaming',
+    # [decode_incr] Line 402 suspend arm `if new_rows > 0 { Rows } else { NeedMore }`. With `==`, a mid-row suspension that finalized no rows (new_rows==0, the ubiquitous 1-byte-split case) returns Step::Rows{count:0} instead of NeedMore. stream_over_splits sees Rows and re-advances the UNCHANGED prefix, which suspends again with new_rows==0 => Rows{count:0}, forever — the driver never breaks out to request a larger prefix. A non-terminating loop observable only as a timeout.
+    'crates/webpkit/src/lossless/vp8l/decode_incr\.rs:402:43: replace > with == in Vp8lStream::advance_streaming',
+    # [decode_incr] Same line 402 suspend arm; new_rows is u32 so `>= 0` is always true, making the arm always return Step::Rows and never NeedMore. A no-new-row suspension (new_rows==0) emits Rows{count:0}; stream_over_splits re-advances the same prefix and re-suspends identically, spinning forever without ever requesting more input — a non-terminating loop observable only as a timeout.
+    'crates/webpkit/src/lossless/vp8l/decode_incr\.rs:402:43: replace > with >= in Vp8lStream::advance_streaming',
+    # [backref] find returning a fixed Some((1,0)) feeds a (distance=1, length=0) into parse_with_chain: here=ahead=Some((1,0)), the lazy filter passes (0<=0), so a Copy{length:0} is emitted and `i += length` (i += 0) never advances the cursor -> the greedy loop is non-terminating, observable only as a timeout, never as a wrong finite result. (Distinguished by `with Some((1, 0))` so the sibling Some((0,0)) mutant, which stays caught, is untouched.)
+    'backref\.rs:231:9: replace HashChain::find -> Option<\(usize, usize\)> with Some\(\(1, 0\)\)',
+    # [backref] Flipping the final `best_len >= MIN_MATCH` to `best_len < MIN_MATCH` makes find return Some((best_dist,best_len)) exactly when best_len<4 (e.g. Some((0,0)) at a no-match position) and None at a real >=4 match. In parse_with_chain the returned Some((_,0)) yields a Copy{length:0} and `i += 0`, freezing the cursor -> non-terminating loop, observable only as a timeout.
+    'backref\.rs:268:19: replace >= with < in HashChain::find',
+    # [huffman] `while key & step != 0` -> `== 0` inverts the scan: for any key whose bit (len-1) is clear (ubiquitous during real canonical code assignment) the guard is true at entry, `step >>= 1` shifts step down to 0, and `key & 0 == 0` then stays true forever, so get_next_key spins endlessly. HuffmanTable::build calls it in its inner assignment loops, so every real read_huffman_code build/round-trip test hangs -- a non-terminating loop observable only as a timeout, never as a wrong finite result, so it cannot be killed by any unit assertion.
+    'crates/webpkit/src/lossless/huffman/decode\.rs:37:22: replace != with == in get_next_key',
+    # [huffman] `len += 1` -> `len *= 1` freezes the length cursor, so the `while len < MAX_ALLOWED_CODE_LENGTH` loop can never advance `len`. For common code shapes the running counter `left = (left - count[len]) << 1` reaches a positive fixed point (e.g. left settles at 2 when count[len]==1: (2-1)<<1 == 2) and never drops to <= 0, so the loop never exits -- a non-terminating hang inside HuffmanTable::build (fuzz-verified over complete canonical codes with test-profile overflow checks; left never `<<=`-overflows to negative in those cycles). It hangs real read_huffman_code build tests and is observable only as a timeout, so it cannot be killed by any unit assertion.
+    'crates/webpkit/src/lossless/huffman/decode\.rs:68:13: replace \+= with \*= in next_table_bit_size',
+    # [decode] decode_one hard-wired to Ok(true) never advances st.pos and never returns the Ok(false) EOS sentinel, so the driver loop `while core.pos < core.total` in decode_image_data spins forever on any real image: non-terminating, observable only as a timeout.
+    'decode\.rs:550:5: replace decode_one -> Result<bool> with Ok\(true\)',
+    # [decode] st.pos += 1 -> st.pos *= 1 in the literal branch freezes the output index at 0 (0*1==0) for the first literal pixel, so the driver loop `while core.pos < core.total` never advances: non-terminating, observable only as a timeout.
+    'decode\.rs:582:16: replace \+= with \*= in decode_one',
+    # --- round-3: race-y non-terminating mutants (flip-flop caught/timeout across full sweeps) ---
+    # Each of these can EITHER hang a real drain/parse loop OR race to an unsigned-underflow / invalid-index
+    # panic first, depending on nextest scheduling and proptest inputs, so cargo-mutants reports them as
+    # caught on one full sweep and timeout on the next. The hang is the defining behaviour and it cannot be
+    # asserted, so they are excluded as non-terminating rather than relied on to win the panic race.
+    # [decoder] self.drained += pending -> *= pending: on the first drain drained==0, so 0*pending==0 leaves
+    # drained pinned at 0 and the streaming drain loop `while let Some(_) = take_drain()` re-emits the same
+    # rows forever (it occasionally races instead to a `next_row - packed_base - drained` unsigned underflow
+    # panic on a later call) — non-terminating, not reliably assertable.
+    'src/decoder\.rs:212:22: replace \+= with \*= in StillState::take_drain',
+    # [backref] find returning a fixed Some((0,0)) feeds a (distance=0, length=0) into parse_with_chain: the
+    # length-0 Copy freezes the cursor (`i += 0`) -> non-terminating, racing to a distance-0 panic on other
+    # inputs. Same defining hang as the Some((1,0)) sibling above; excluded for the same reason.
+    'backref\.rs:231:9: replace HashChain::find -> Option<\(usize, usize\)> with Some\(\(0, 0\)\)',
+    # --- lossy zone: full 4395-mutant sweep survivors (round 1) ---
+    # Dominated by cfg(oracle/rayon/bench)-gated code not built in the default sweep (covered by the
+    # respective feature tests), plus non-terminating timeouts and provably-equivalent mutations. Every
+    # other survivor was killed with a deterministic test (golden exact-encode / crafted-stream / exact-value).
+    # [decode] frame_uses_skip is #[cfg(feature="oracle")]; the default `just mutants` sweep builds without that feature (it needs libwebp-sys, "never part of a normal build"), so the fn is stripped and the mutation is a no-op. Fully asserted by tests/oracle.rs under --features oracle.
+    'crates/webpkit/src/lossy/decode\.rs:314:5: replace frame_uses_skip -> Option<bool> with None',
+    # [decode] Same oracle-gated fn not compiled in the default sweep (needs libwebp-sys); mutation has no observable effect there. Caught under --features oracle by tests/oracle.rs frame_uses_skip assertion.
+    'crates/webpkit/src/lossy/decode\.rs:314:5: replace frame_uses_skip -> Option<bool> with Some\(true\)',
+    # [decode] Same oracle-gated fn not compiled in the default sweep (needs libwebp-sys); mutation has no observable effect there. Caught under --features oracle by tests/oracle.rs frame_uses_skip assertion.
+    'crates/webpkit/src/lossy/decode\.rs:314:5: replace frame_uses_skip -> Option<bool> with Some\(false\)',
+    # [decode] frame_filter_level is #[cfg(feature="oracle")], not compiled in the default sweep (needs libwebp-sys); mutation is a stripped no-op. Caught under --features oracle by tests/oracle.rs (level > 0 assertion).
+    'crates/webpkit/src/lossy/decode\.rs:335:5: replace frame_filter_level -> Option<i32> with Some\(0\)',
+    # [decode] Same oracle-gated fn not compiled in the default sweep; no observable effect. Caught under --features oracle by tests/oracle.rs frame_filter_level assertion.
+    'crates/webpkit/src/lossy/decode\.rs:335:5: replace frame_filter_level -> Option<i32> with None',
+    # [decode] Same oracle-gated fn not compiled in the default sweep; no observable effect. Caught under --features oracle by tests/oracle.rs frame_filter_level assertion.
+    'crates/webpkit/src/lossy/decode\.rs:335:5: replace frame_filter_level -> Option<i32> with Some\(1\)',
+    # [decode] Same oracle-gated fn not compiled in the default sweep; no observable effect. Caught under --features oracle by tests/oracle.rs frame_filter_level assertion.
+    'crates/webpkit/src/lossy/decode\.rs:335:5: replace frame_filter_level -> Option<i32> with Some\(-1\)',
+    # [decode] frame_uses_i4x4 is #[cfg(feature="oracle")], not compiled in the default sweep (needs libwebp-sys); mutation is a stripped no-op. Caught under --features oracle by tests/oracle.rs frame_uses_i4x4 assertion.
+    'crates/webpkit/src/lossy/decode\.rs:353:5: replace frame_uses_i4x4 -> Option<bool> with None',
+    # [decode] Same oracle-gated fn not compiled in the default sweep; no observable effect. Caught under --features oracle by tests/oracle.rs frame_uses_i4x4 assertion.
+    'crates/webpkit/src/lossy/decode\.rs:353:5: replace frame_uses_i4x4 -> Option<bool> with Some\(true\)',
+    # [decode] Same oracle-gated fn not compiled in the default sweep; no observable effect. Caught under --features oracle by tests/oracle.rs frame_uses_i4x4 assertion.
+    'crates/webpkit/src/lossy/decode\.rs:353:5: replace frame_uses_i4x4 -> Option<bool> with Some\(false\)',
+    # [decode] frame_segment_count is #[cfg(feature="oracle")], not compiled in the default sweep (needs libwebp-sys); mutation is a stripped no-op. Caught under --features oracle by tests/oracle.rs frame_segment_count assertion.
+    'crates/webpkit/src/lossy/decode\.rs:383:5: replace frame_segment_count -> Option<usize> with None',
+    # [decode] Same oracle-gated fn not compiled in the default sweep; no observable effect. Caught under --features oracle by tests/oracle.rs frame_segment_count assertion.
+    'crates/webpkit/src/lossy/decode\.rs:383:5: replace frame_segment_count -> Option<usize> with Some\(0\)',
+    # [decode] Same oracle-gated fn not compiled in the default sweep; no observable effect. Caught under --features oracle by tests/oracle.rs frame_segment_count assertion.
+    'crates/webpkit/src/lossy/decode\.rs:383:5: replace frame_segment_count -> Option<usize> with Some\(1\)',
+    # [decode] Inside frame_segment_count, a #[cfg(feature="oracle")] fn not compiled in the default sweep (needs libwebp-sys); the `!frame.segment.use_segment` guard is stripped, so the mutation is a no-op. Caught under --features oracle by tests/oracle.rs frame_segment_count assertion.
+    'crates/webpkit/src/lossy/decode\.rs:395:8: delete ! in frame_segment_count',
+    # [yuv] load_uv packs u into bits 0-7 (u32::from(u), byte range) and v<<16 into bits 16-23; the operands share no set bits, so a | b == a ^ b -- equivalent.
+    'yuv\.rs:86:18: replace \| with \^ in load_uv',
+    # [yuv] Reached only in the `out_y & 1 == 1` (odd out_y) branch; `out_y / 1 == out_y` and for odd out_y integer division gives out_y/2 == (out_y-1)/2, so the `near` index is unchanged -- equivalent.
+    'yuv\.rs:185:27: replace - with / in upsample_output_row',
+    # [yuv] Inside the `#[cfg(feature = "rayon")]` emit_rows; rayon is off by default (Cargo.toml default=["std"]) so this fn is not compiled in the default sweep. Under feature=rayon it is killed byte-for-byte by rayon_row_parallel_matches_serial_byte_for_byte (same precedent as lossless evaluate_best_tasks).
+    'yuv\.rs:248:5: replace emit_rows with \(\)',
+    # [yuv] Inside `#[cfg(feature = "rayon")]` emit_rows, not built in the default (non-rayon) sweep. Even under rayon it only changes PAR_MIN_PIXELS (serial-vs-parallel dispatch threshold); both paths are byte-identical by design, so no observable output change.
+    'yuv\.rs:250:37: replace << with >> in emit_rows',
+    # [yuv] Inside `#[cfg(feature = "rayon")]` emit_rows, not built in the default sweep. The comparison only selects serial vs parallel dispatch; both paths produce byte-identical output, so it is unobservable regardless.
+    'yuv\.rs:251:37: replace < with == in emit_rows',
+    # [yuv] Inside `#[cfg(feature = "rayon")]` emit_rows, not built in the default sweep. Only selects serial vs parallel dispatch; both paths are byte-identical, so no observable output change.
+    'yuv\.rs:251:37: replace < with > in emit_rows',
+    # [yuv] Inside `#[cfg(feature = "rayon")]` emit_rows, not built in the default sweep. Only changes the dispatch threshold at exactly PAR_MIN_PIXELS; serial and parallel paths are byte-identical, so unobservable.
+    'yuv\.rs:251:37: replace < with <= in emit_rows',
+    # [lib] #[cfg(feature = "bench")] timing shim delegating to the real crate::frame::sse_block kernel (mutated & caught in frame.rs); no test asserts the shim's own return value, and the bench feature is not built in the default sweep. Untestable by design, mirrors the lossless bench-shim excludes.
+    'crates/webpkit/src/lossy\.rs:100:9: replace bench::sse_block -> i64 with',
+    # [lib] #[cfg(feature = "bench")] timing shim delegating to crate::frame::sse_block_reference; no test asserts the shim's return value and the bench feature is not built in the default sweep. Untestable by design.
+    'crates/webpkit/src/lossy\.rs:115:9: replace bench::sse_block_reference -> i64 with',
+    # [lib] #[cfg(feature = "bench")] timing shim delegating to crate::frame::residual_block; no test asserts the shim's return value and the bench feature is not built in the default sweep. Untestable by design.
+    'crates/webpkit/src/lossy\.rs:138:9: replace bench::residual_block -> \[i16; 16\] with',
+    # [lib] #[cfg(feature = "bench")] timing shim delegating to crate::frame::residual_block_reference; no test asserts the shim's return value and the bench feature is not built in the default sweep. Untestable by design.
+    'crates/webpkit/src/lossy\.rs:161:9: replace bench::residual_block_reference -> \[i16; 16\] with',
+    # [lib] #[cfg(feature = "bench")] timing shim delegating to crate::predict::true_motion; no test asserts the shim (a mutable-buffer side effect it merely forwards) and the bench feature is not built in the default sweep. Untestable by design.
+    'crates/webpkit/src/lossy\.rs:175:9: replace bench::true_motion with \(\)',
+    # [lib] #[cfg(feature = "bench")] timing shim delegating to crate::predict::true_motion_reference; no test asserts the shim and the bench feature is not built in the default sweep. Untestable by design.
+    'crates/webpkit/src/lossy\.rs:181:9: replace bench::true_motion_reference with \(\)',
+    # [lib] #[cfg(feature = "oracle")] differential-oracle Level-A hook, compiled only under the oracle feature (not built in the default sweep) and asserted only by the external libwebp cross-check harness, never by an in-crate test. Mirrors the lossless __vp8l_stream_equals_one_shot oracle excludes.
+    'crates/webpkit/src/lossy\.rs:324:5: replace __reconstruct_yuv -> Option<YuvPlanes> with',
+    # [lib] #[cfg(feature = "oracle")] non-vacuity hook for the differential oracle, not built in the default sweep and asserted only by the external harness. Untestable from the unit suite.
+    'crates/webpkit/src/lossy\.rs:343:5: replace __frame_uses_skip -> Option<bool> with',
+    # [lib] #[cfg(feature = "oracle")] non-vacuity hook for the differential oracle, not built in the default sweep and asserted only by the external harness. Untestable from the unit suite.
+    'crates/webpkit/src/lossy\.rs:354:5: replace __frame_filter_level -> Option<i32> with',
+    # [lib] #[cfg(feature = "oracle")] non-vacuity hook for the differential oracle, not built in the default sweep and asserted only by the external harness. Untestable from the unit suite.
+    'crates/webpkit/src/lossy\.rs:365:5: replace __frame_uses_i4x4 -> Option<bool> with',
+    # [lib] #[cfg(feature = "oracle")] non-vacuity hook for the differential oracle, not built in the default sweep and asserted only by the external harness. Untestable from the unit suite.
+    'crates/webpkit/src/lossy\.rs:376:5: replace __frame_segment_count -> Option<usize> with',
+    # [token] The Y2 else-branch (nz<=1) only ever has dc[0] non-zero; TransformWHT of a DC-only block yields (dc[0]+3)>>3 in every DC slot, identical to the broadcast `dc0 = (dc[0]+3)>>3` the else takes. `>`->`>=` diverges only at nz==1, where both paths compute the same 16 DC slots and leave AC slots zero — equivalent.
+    'token\.rs:45:19: replace > with >= in Frame::parse_residuals',
+    # [token] `tnz = (tnz>>1) | (l<<7)`: luma tnz stays within bits 0-3 across the inner loop (max 0xF0 before the `tnz>>=4`), so bit7 of (tnz>>1) is always 0 — disjoint from l<<7, so | == ^.
+    'token\.rs:70:34: replace \| with \^ in Frame::parse_residuals',
+    # [token] `lnz = (lnz>>1) | (l<<7)`: luma lnz never sets bit8, so bit7 of (lnz>>1) is always 0 — disjoint from l<<7, so | == ^.
+    'token\.rs:75:30: replace \| with \^ in Frame::parse_residuals',
+    # [token] `non_zero_y = (non_zero_y<<8) | nz_coeffs`: nz_coeffs is 4 blocks x 2 bits = 8 bits (<=0xFF) and (non_zero_y<<8) has its low byte cleared — disjoint fields, so | == ^.
+    'token\.rs:76:44: replace \| with \^ in Frame::parse_residuals',
+    # [token] `tnz = (tnz>>1) | (l<<3)`: chroma tnz stays within bits 0-3 (init <=0x0f, invariant preserved each iter), so bit3 of (tnz>>1) (= bit4 of tnz) is always 0 — disjoint from l<<3, so | == ^.
+    'token\.rs:93:38: replace \| with \^ in Frame::parse_residuals',
+    # [token] `lnz = (lnz>>1) | (l<<5)`: chroma lnz never sets bit6 over its two iterations, so bit5 of (lnz>>1) is always 0 — disjoint from l<<5, so | == ^.
+    'token\.rs:98:34: replace \| with \^ in Frame::parse_residuals',
+    # [token] `(nz_coeffs<<2) | code`: code is in {0,1,2,3} (low 2 bits) and (nz_coeffs<<2) has its low 2 bits cleared — disjoint fields, so | == ^.
+    'token\.rs:142:22: replace \| with \^ in nz_code_bits',
+    # [token] `i += 16` in the Y2 dc-only broadcast loop `while i < 256`: `i *= 16` leaves i pinned at 0 (0*16==0), so the loop never terminates — observable only as a timeout, not a wrong finite result.
+    'token\.rs:52:23: replace \+= with \*= in Frame::parse_residuals',
+    # [token] `n += 1` in the zero-run loop `while !read_bool(p[1])`: `n *= 1` freezes n, so the coefficient position never advances to 16 and the loop spins on padding bits forever — non-terminating, observable only as a timeout.
+    'token\.rs:167:15: replace \+= with \*= in get_coeffs',
+    # [token] `n += 1` after storing a coefficient: `n *= 1` freezes n (0*1==0), so the main coeff loop never reaches n==16 and re-reads the same position forever — non-terminating, observable only as a timeout.
+    'token\.rs:183:11: replace \+= with \*= in get_coeffs',
+    # [header] sz = A | (B<<8) | (C<<16) with A,B,C in 0..=255 occupy disjoint bit ranges (0-7, 8-15, 16-23); the first `|` combines A and B<<8 which share no bits, so `|` == `^` — equivalent.
+    'crates/webpkit/src/lossy/header\.rs:121:17: replace \| with \^ in Frame::parse_partitions',
+    # [header] Second `|` combines (A|B<<8) (bits 0-15) with C<<16 (bits 16-23); disjoint bit ranges make `|` == `^` — equivalent.
+    'crates/webpkit/src/lossy/header\.rs:122:17: replace \| with \^ in Frame::parse_partitions',
+    # [header] `i` is usize so `i < 0` is always false; the mutant falls through to the `else { base_q0 }` arm which recomputes dqm[i] with q==base_q0 — byte-for-byte identical to the dqm[i]=dqm[0] copy it replaces, and no extra bitstream reads occur — equivalent.
+    'crates/webpkit/src/lossy/header\.rs:155:25: replace > with < in Frame::parse_quant',
+    # [reconstruct] `if inner > cap { inner = cap; }` — the mutation only differs at inner==cap, where the assignment is idempotent (inner is already cap), so `>=` is behavior-preserving.
+    'crates/webpkit/src/lossy/reconstruct\.rs:313:18: replace > with >= in strength_for',
+    # [reconstruct] `if inner < 1 { inner = 1; }` — the mutation only differs at inner==1, where the assignment is idempotent (inner is already 1), so `<=` is behavior-preserving.
+    'crates/webpkit/src/lossy/reconstruct\.rs:317:14: replace < with <= in strength_for',
+    # [small-decoder] When range==128 (the only case `<`->`<=` newly enters the renorm block) n = leading_zeros(128)-24 == 0, so range<<=0/value<<=0/bit_count/pos are all unchanged — a total no-op (the extra work!(BoolRenorm,0) compiles to nothing without the work-count feature). Decode is bit-identical: equivalent.
+    'bool_dec\.rs:130:23: replace < with <= in',
+    # [small-decoder] In `(v << 1) | u32::from(read_flag())` the left operand's low bit is always 0 while the flag is 0 or 1, so the operands are disjoint and `|` == `^`: equivalent.
+    'bool_dec\.rs:163:26: replace \| with \^ in',
+    # [tokens] `(tnz >> 1) | (l << 7)`: bit 7 of `tnz >> 1` is always 0 (tnz only ever gains bit 7 via this OR, then is shifted right), so the OR target bit is clear and `|` == `^`.
+    'tokens\.rs:147:30: replace \| with \^ in emit_mb_residuals',
+    # [tokens] `(lnz >> 1) | (l << 7)`: bit 7 of `lnz >> 1` is always 0, so `|` == `^` (disjoint bit).
+    'tokens\.rs:151:26: replace \| with \^ in emit_mb_residuals',
+    # [tokens] chroma `(tnz >> 1) | (l << 3)`: bit 3 of `tnz >> 1` is always 0 (chroma tnz never exceeds 4 bits before the OR), so `|` == `^`.
+    'tokens\.rs:174:34: replace \| with \^ in emit_mb_residuals',
+    # [tokens] chroma `(lnz >> 1) | (l << 5)`: bit 5 of `lnz >> 1` is always 0, so `|` == `^` (disjoint bit).
+    'tokens\.rs:177:30: replace \| with \^ in emit_mb_residuals',
+    # [tokens] `put_flag(levels[n] < 0)` runs only after the zero-run loop and `put_bool(p[1], true)`, where levels[n] != 0, so `< 0` and `<= 0` agree for every reachable value.
+    'tokens\.rs:226:32: replace < with <= in put_coeffs',
+    # [tokens] `(tnz >> 1) | (l << 7)`: bit 7 of `tnz >> 1` is always 0, so `|` == `^` (disjoint bit; mirror of emit_mb_residuals:147).
+    'tokens\.rs:325:30: replace \| with \^ in count_mb_residuals',
+    # [tokens] `(lnz >> 1) | (l << 7)`: bit 7 of `lnz >> 1` is always 0, so `|` == `^` (disjoint bit; mirror of emit_mb_residuals:151).
+    'tokens\.rs:329:26: replace \| with \^ in count_mb_residuals',
+    # [tokens] chroma `(tnz >> 1) | (l << 3)`: bit 3 of `tnz >> 1` is always 0, so `|` == `^` (mirror of emit_mb_residuals:174).
+    'tokens\.rs:344:34: replace \| with \^ in count_mb_residuals',
+    # [tokens] chroma `(lnz >> 1) | (l << 5)`: bit 5 of `lnz >> 1` is always 0, so `|` == `^` (mirror of emit_mb_residuals:177).
+    'tokens\.rs:347:30: replace \| with \^ in count_mb_residuals',
+    # [tokens] `n` is the zero-run cursor inside `while levels[n] == 0`; decrementing walks backward over the (still-zero) earlier positions and never satisfies the exit — non-terminating, observable only as a timeout.
+    'tokens\.rs:213:15: replace \+= with -= in put_coeffs',
+    # [tokens] `n *= 1` freezes the zero-run cursor, so `while levels[n] == 0` spins forever on any block with an interior zero — non-terminating, observable only as a timeout.
+    'tokens\.rs:213:15: replace \+= with \*= in put_coeffs',
+    # [tokens] `n *= 1` freezes the main-loop coefficient cursor (n>=1 after coding a coeff), so the `loop` never advances toward EOB/16 — non-terminating, observable only as a timeout.
+    'tokens\.rs:227:11: replace \+= with \*= in put_coeffs',
+    # [tokens] `n` is the zero-run cursor inside `while levels[n] == 0`; `-=` walks backward over earlier zeros and never exits — non-terminating, observable only as a timeout.
+    'tokens\.rs:384:15: replace \+= with -= in count_coeffs',
+    # [tokens] `n *= 1` freezes the zero-run cursor, so `while levels[n] == 0` spins forever on any block with an interior zero — non-terminating, observable only as a timeout.
+    'tokens\.rs:384:15: replace \+= with \*= in count_coeffs',
+    # [tokens] magnitude-1 branch cursor advance; `n -= 1` walks the cursor backward and the `loop` re-processes earlier positions without ever reaching n==16 or n>last — non-terminating, observable only as a timeout.
+    'tokens\.rs:391:15: replace \+= with -= in count_coeffs',
+    # [tokens] `n *= 1` freezes the cursor at the current magnitude-1 position (or at 0 for DC), so the `loop` re-visits it forever — non-terminating, observable only as a timeout.
+    'tokens\.rs:391:15: replace \+= with \*= in count_coeffs',
+    # [tokens] `n *= 1` freezes the cursor at the current magnitude>=2 position (or at 0 for DC), so the `loop` re-visits it forever — non-terminating, observable only as a timeout.
+    'tokens\.rs:399:15: replace \+= with \*= in count_coeffs',
+    # [decode_incr] sz assembles disjoint byte fields: byte0 (bits 0-7) | byte1<<8 (bits 8-15); operands share no bits, so `|` == `^`, value-preserving.
+    'decode_incr\.rs:240:17: replace \| with \^',
+    # [decode_incr] Second combine: (bits 0-15) | byte2<<16 (bits 16-23); disjoint operands, so `|` == `^`, value-preserving.
+    'decode_incr\.rs:241:17: replace \| with \^',
+    # [decode_incr] Loop bound `out_rows_done < height` -> `<=`: the one extra iteration at out_rows_done==height immediately breaks via `if y >= luma_end` (luma_end<=height always), so no row is emitted; equivalent.
+    'decode_incr\.rs:464:39: replace < with <=',
+    # [decode_incr] Terminal filter guard. When filter_type!=0 both operands are true (filtered_through<=mb_h-2 != Some(mb_h-1)), so &&==||. When filter_type==0 the extra ||-branch calls filter_mb_row(type 0) which is a no-op and sets filtered_through, unused by the filter-off emit path; no pixel change.
+    'decode_incr\.rs:303:40: replace && with \|\|',
+    # [decode_incr] `filtered_through != Some(mb_h - 1)` in the terminal guard: filtered_through is always <= mb_h-2 (or None) here, so the comparison is unconditionally true whether the constant is mb_h-1, mb_h, or mb_h+1; unreachable boundary, equivalent.
+    'decode_incr\.rs:303:76: replace - with \+',
+    # [decode_incr] Same guard constant mb_h-1 -> mb_h/1=mb_h: filtered_through<=mb_h-2 never equals Some(mb_h), so `!=` stays true; unreachable boundary, equivalent.
+    'decode_incr\.rs:303:76: replace - with /',
+    # [decode_incr] Only sets the filtered_through bookkeeping (the actual filter on line 291 uses its own unmutated mb_h-1). With filtered_through=Some(mb_h+1) the terminal emit's finalized_plane_rows still returns (height, chroma_height) via the general Some(k) arm, so all rows drain identically; a subsequent advance re-filters post-drain without touching committed output. Equivalent.
+    'decode_incr\.rs:310:53: replace - with \+',
+    # [decode_incr] Same bookkeeping-only assignment mb_h-1 -> mb_h: finalized_plane_rows still yields full (height, chroma_height) and the terminal drain emits every row; any re-filter happens after output is committed. Equivalent.
+    'decode_incr\.rs:310:53: replace - with /',
+    # [decode_incr] In the skipped-macroblock branch `ss.mb_x += 1` -> `*= 1` freezes mb_x, so `while ss.mb_x < mb_w` re-processes the same skip block forever: non-terminating, observable only as a timeout. The current fixtures contain no skipped macroblocks, so it surfaced as missed rather than timeout.
+    'decode_incr\.rs:370:29: replace \+= with \*=',
+    # [decode_incr] `if new > 0` -> `if new >= 0` (u32) is always true, so the terminal returns Step::Rows{count:0} forever instead of Step::Done; the driver loops on the zero-count report: non-terminating, observable only as a timeout.
+    'decode_incr\.rs:314:24: replace > with >=',
+    # [decode_incr] `ss.mb_x += 1` -> `*= 1` freezes the column cursor, so the residual loop `while ss.mb_x < mb_w` never advances: non-terminating, observable only as a timeout.
+    'decode_incr\.rs:388:25: replace \+= with \*=',
+    # [decode_incr] `ss.mb_y += 1` -> `*= 1` freezes the row cursor at 0, so the streaming loop never reaches mb_h: non-terminating, observable only as a timeout.
+    'decode_incr\.rs:403:21: replace \+= with \*=',
+    # [decode_incr] rows_or_needmore `if new_rows > 0` -> `== 0`: at a zero-progress suspend (new_rows==0) it returns Step::Rows{count:0}, and the driver re-advances the same buffer to the same suspend forever: non-terminating, observable only as a timeout.
+    'decode_incr\.rs:415:17: replace > with ==',
+    # [decode_incr] rows_or_needmore `if new_rows > 0` -> `>= 0` (u32) always true, so a zero-progress suspend returns Step::Rows{count:0} and the driver loops on it forever: non-terminating, observable only as a timeout.
+    'decode_incr\.rs:415:17: replace > with >=',
+    # [decode_incr] `ss.out_rows_done += 1` -> `*= 1` freezes the emitted-row counter, so `while (out_rows_done) < height` in emit_finalized_rows never progresses: non-terminating, observable only as a timeout.
+    'decode_incr\.rs:492:26: replace \+= with \*=',
+    # [decoder] free_drained only trims already-drained front rows to bound memory; disabling it leaves packed holding every row, so drain content and into_image (which then keeps packed_base==0 and assembles the full retained buffer) are byte-identical. No observable output change.
+    'decoder\.rs:104:9: replace StillState::free_drained with \(\)',
+    # [decoder] `drained == 0` runs the body only when there is nothing to free (cut=0, packed_base+=0), so freeing never happens: identical to disabling free_drained, which is behavior-preserving on decoded output.
+    'decoder\.rs:104:25: replace > with == in StillState::free_drained',
+    # [decoder] `drained >= 0` only adds the drained==0 case, whose body is a no-op (cut=0, packed_base+=0), so it behaves identically to the original `> 0`.
+    'decoder\.rs:104:25: replace > with >= in StillState::free_drained',
+    # [decoder] `drained` is u32 so `< 0` is never true; freeing never runs, identical to disabling free_drained, which is behavior-preserving on decoded output.
+    'decoder\.rs:104:25: replace > with < in StillState::free_drained',
+    # [decoder] `offset = drained * row_bytes` is only reached when pending>0 (a Some drain), and take_drain returns Some only when drained==0 (free_drained resets it at push start and no rows finalize between drain_rows calls in a push). offset is therefore always 0, so 0*rb == 0/rb — equivalent.
+    'decoder\.rs:119:44: replace \* with / in StillState::take_drain',
+    # [decoder] `first_row = packed_base + drained` is computed only on the Some path where drained is always 0 (see 119:44), so packed_base+0 == packed_base-0 — equivalent.
+    'decoder\.rs:121:30: replace \+ with - in StillState::take_drain',
+    # [decoder] The `len < 12` guard is redundant with the `while cursor <= len-8` bound (cursor starts at 12, so any len<=12 yields None via the loop and any len>12 proceeds). `== 12` returns None only for len==12, which the loop already yields — identical for every length.
+    'decoder\.rs:461:20: replace < with == in locate_vp8',
+    # [decoder] Same redundancy: `<= 12` returns None for len==12, which the original already yields via the `cursor <= len-8` loop; all other lengths behave identically — equivalent.
+    'decoder\.rs:461:20: replace < with <= in locate_vp8',
+    # [decoder] Forcing the guard false always takes the `_ => decode_image(&buf,&options)` fallback, which re-decodes the fully-buffered container to the identical image (or identical error) that the assemble fast-path would produce — a perf-only change with no observable output difference.
+    'decoder\.rs:378:25: replace match guard st.done && st.packed_base == 0 && is_complete\(&buf\) with false in IncrementalDecoder::into_image',
+    # [small-encoder] `if coeff < 0` differs from `<= 0` only at coeff==0, where level=(QBIAS>>QFIX)=0 so -level==level==0 -- the only differing input yields identical output; equivalent.
+    'quant\.rs:55:18: replace < with <= in QFactor::quantize',
+    # [small-encoder] `(1u32<<4) | (first_partition_size<<5)`: bit 4 is disjoint from bits >=5, so the operands never share a set bit and | == ^; equivalent.
+    'enc_header\.rs:36:27: replace \| with \^ in frame_header_bytes',
+    # [small-encoder] `(b0>>5) | (head[1]<<3)`: b0>>5 occupies bits 0-2, head[1]<<3 bits 3-10 -- disjoint, so | == ^; equivalent.
+    'frame_header\.rs:66:34: replace \| with \^ in FrameHeader::parse_key_frame',
+    # [small-encoder] `(head[1]<<3) | (head[2]<<11)`: bits 3-10 vs bits 11-18 -- disjoint (head[2] is u8), so | == ^; equivalent.
+    'frame_header\.rs:66:62: replace \| with \^ in FrameHeader::parse_key_frame',
+    # [small-encoder] `head[6] | (head[7]<<8)`: low byte bits 0-7 vs bits 8-15 -- disjoint, so | == ^; equivalent.
+    'frame_header\.rs:73:46: replace \| with \^ in FrameHeader::parse_key_frame',
+    # [small-encoder] `head[8] | (head[9]<<8)`: low byte bits 0-7 vs bits 8-15 -- disjoint, so | == ^; equivalent.
+    'frame_header\.rs:74:47: replace \| with \^ in FrameHeader::parse_key_frame',
+    # [small-encoder] add_one_to_output is unreachable dead code: the range-coder invariant value < 2^(32-bit_count) means the renorm carry-check `value & 0x8000_0000` (bit_count>=1 => value<2^31) and the flush carry-check are never true. Exhaustively confirmed: 200k random streams, all real image encodes (Fast/Balanced/Best x q10/50/90), and an 8000-step value-maximizing greedy over all 256 probs all cap value at 0x7FFFFF80 (=2^31-128), never reaching 2^31; add_one_to_output is never called, so replacing its body is unobservable.
+    'bool_enc\.rs:45:9: replace BoolEncoder::add_one_to_output with \(\)',
+    # [small-encoder] Inside add_one_to_output, which is unreachable dead code (no carry ever fires: value<2^(32-bit_count) invariant, empirically value maxes at 0x7FFFFF80 across 200k random + real-encode + 8000-step greedy searches), so any mutation of its body is unobservable; equivalent.
+    'bool_enc\.rs:46:22: replace == with != in BoolEncoder::add_one_to_output',
+    # [small-encoder] Inside add_one_to_output, unreachable dead code (the carry is never taken; value<2^(32-bit_count) invariant, empirically value never exceeds 0x7FFFFF80), so the mutation is unobservable; equivalent.
+    'bool_enc\.rs:49:23: replace \+= with -= in BoolEncoder::add_one_to_output',
+    # [small-encoder] Inside add_one_to_output, unreachable dead code (no carry ever fires; value<2^(32-bit_count) invariant, empirically capped at 0x7FFFFF80), so the mutation is unobservable; equivalent.
+    'bool_enc\.rs:49:23: replace \+= with \*= in BoolEncoder::add_one_to_output',
+    # [small-encoder] Flush carry `v & (1u32 << (32-bit_count))`: given value<2^(32-bit_count) that bit is never set, so the branch never runs (original), and the mutant `1u32 >> (32-bit_count)` == 0 (32-bit_count in 8..=31) is unconditionally false too -- both never carry; equivalent (empirically 0 flush carries across 200k random + real-encode streams).
+    'bool_enc\.rs:107:22: replace << with >> in BoolEncoder::flush',
+    # [small-encoder] `self.range <<= 1` inside `while self.range < 128`: replacing with `>>=` shrinks range so it never reaches 128 and the renorm loop never terminates -- a non-terminating hang observable only as a timeout, never as a wrong finite result, so it cannot be asserted by a unit test.
+    'bool_enc\.rs:67:24: replace <<= with >>= in BoolEncoder::put_bool',
+    # [small-encoder] `i -= 1` inside `while i > 0`: `i /= 1` leaves i unchanged (i>=1) so the loop never terminates -- a non-terminating hang observable only as a timeout, not assertable by a unit test.
+    'bool_enc\.rs:91:15: replace -= with /= in BoolEncoder::put_literal',
+    # [trellis] Equivalent: `if l < 1` vs `if l <= 1` differ only when l==1, where both return 1, so the output is identical.
+    'trellis\.rs:77:10: replace < with <= in trellis_lambda',
+    # [trellis] Equivalent: `coeffs[j] < 0` vs `<= 0` differ only when coeffs[j]==0, but a zero coeff forces mag==0 on the backtrack path (its only candidate), so signed = +/-0 = 0 either way; recon/levels unchanged.
+    'trellis\.rs:246:39: replace < with <= in Viterbi::backtrack',
+    # [trellis] Equivalent: this only drops the explicit `0` candidate for l0>=2 positions. That candidate is strictly dominated by the l0-1 candidate (lower squared error, weighted x256, never offset by the bounded rate/context saving), so it is never on the optimal path; verified surviving the exact-golden and brute-force RD oracle.
+    'trellis\.rs:341:15: replace >= with < in trellis_quantize_block',
+    # [trellis] Equivalent: same effect as 341:15 — `ncand *= 1` after the l0>=2 branch drops only the `0` candidate (keeping l0 and l0-1), and the l0>=2 `0` candidate is dominated by l0-1; verified surviving both the golden and brute-force RD oracle. (The += -> -= mutant at the same site, which drops the useful l0-1 candidate, IS killed.)
+    'trellis\.rs:343:19: replace \+= with \*= in trellis_quantize_block',
+    # [trellis] Timeout: reverses the zero-run counter (`n += 1` -> `n -= 1`) so the walk never reaches the block end and n eventually oscillates/underflows — non-terminating, observable only as a timeout, not killable by an assertion.
+    'trellis\.rs:195:15: replace \+= with -= in block_token_cost',
+    # [trellis] Timeout: `n *= 1` freezes the zero-run counter so `while levels[n]==0` never advances past a zero — infinite loop, non-terminating, observable only as a timeout.
+    'trellis\.rs:195:15: replace \+= with \*= in block_token_cost',
+    # [trellis] Timeout: `n *= 1` freezes the outer position counter so the loop reprocesses the same coefficient forever and `n == 16` is never reached — non-terminating, observable only as a timeout.
+    'trellis\.rs:211:11: replace \+= with \*= in block_token_cost',
+    # [trellis] Timeout: `n /= 1` freezes the backtrack counter so `n == first` is never reached and the walk never terminates — non-terminating, observable only as a timeout.
+    'trellis\.rs:253:15: replace -= with /= in Viterbi::backtrack',
+    # [frame] nb_skip>0 vs >=0 is unobservable: nb_skip==0 forces skip_p==255 (>=250) so use_skip is false either way, and nb_skip>0 makes both comparisons true.
+    'frame\.rs:288:45: replace > with >= in resolve_skip',
+    # [frame] kmeans_segments is only reached after plan_segmentation guarantees n>0 and max_c>min_c, so `n==0 || min==max` and `n==0 && min==max` are both always false at every call site.
+    'frame\.rs:422:15: replace \|\| with && in kmeans_segments',
+    # [frame] At y2.last==0 (DC-only Y2) the transform_wht path and the manual DC-broadcast else branch produce identical coefficients (IWHT of a DC-only block equals the (dc+3)>>3 broadcast), so `>1` vs `>=1` is behavior-preserving; verified it survives all self-consistency tests.
+    'frame\.rs:1453:20: replace > with >= in encode_luma16_residual',
+    # [frame] Clamp `if l<1 {1} else {l}` vs `if l<=1 {1} else {l}`: l is non-negative and at l==1 both yield 1, so the two forms are identical for every input.
+    'frame\.rs:1657:10: replace < with <= in i4x4_lambda',
+    # [frame] Same lambda-clamp equivalence: l>=0 and at l==1 both branches yield 1.
+    'frame\.rs:1667:10: replace < with <= in luma16_lambda',
+    # [frame] Same lambda-clamp equivalence: l>=0 and at l==1 both branches yield 1.
+    'frame\.rs:1676:10: replace < with <= in chroma_lambda',
+    # [frame] cfg(feature="rayon") wavefront run_mb_planning, not compiled in the default (non-rayon) sweep so it survives trivially; pinned byte-for-byte under feature=rayon by wavefront_planner_matches_serial_byte_for_byte. The compiled non-rayon variant is at line 767.
+    'frame\.rs:819:5: replace run_mb_planning -> Vec<MbPlan>',
+    # [frame] Arithmetic/comparison mutants inside the cfg(feature="rayon") wavefront run_mb_planning (lines 819-883), not compiled in the default sweep; the non-rayon variant (line 767) is a single delegation with no such mutants. Killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    'frame\.rs:8\d\d:\d+: .* in run_mb_planning',
+    # [frame] cfg(feature="rayon") diagonal_members return-value replacement, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    'replace diagonal_members -> Vec',
+    # [frame] cfg(feature="rayon") diagonal_members arithmetic/comparison mutants, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    ' in diagonal_members',
+    # [frame] cfg(feature="rayon") MbScratch::reseed, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    'replace MbScratch::reseed with \(\)',
+    # [frame] cfg(feature="rayon") reseed_mini_planes, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    'replace reseed_mini_planes with \(\)',
+    # [frame] cfg(feature="rayon") reseed_mini_planes arithmetic mutants, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    ' in reseed_mini_planes',
+    # [frame] cfg(feature="rayon") reseed_mini_src, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    'replace reseed_mini_src with \(\)',
+    # [frame] cfg(feature="rayon") reseed_mini_src arithmetic mutants, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    ' in reseed_mini_src',
+    # [frame] cfg(feature="rayon") extract_blocks return-value replacement, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    'replace extract_blocks -> ReconBlocks',
+    # [frame] cfg(feature="rayon") extract_blocks arithmetic mutants, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    ' in extract_blocks',
+    # [frame] cfg(feature="rayon") commit_blocks, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    'replace commit_blocks with \(\)',
+    # [frame] cfg(feature="rayon") commit_blocks arithmetic mutants, not compiled in the default sweep; killed under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    ' in commit_blocks',
+    # [frame] cfg(feature="rayon") emit_partition_candidates (rayon::join variant), not compiled in the default sweep; the compiled serial variant is at line 1110 and is killed by the emit/golden tests. Pinned under feature=rayon by wavefront_planner_matches_serial_byte_for_byte.
+    'frame\.rs:1151:5: replace emit_partition_candidates',
+    # --- lossy zone round 2: residual survivors from the round-1 re-sweep ---
+    # reconstruct crop/crop_y/u/v are #[cfg(feature="oracle")] (Level-A YUV oracle only), not built in
+    # the default sweep; the frame ones delete a struct field whose ..Default::default() spread refills
+    # the identical value (or is redundant with another field). Every other residual was killed.
+    # [reconstruct] crop() is #[cfg(feature="oracle")]; default `just mutants` sweep builds without oracle (needs libwebp-sys, never a normal build) so the fn is stripped and the mutation is an inert no-op. Fully killed under --features oracle by reconstruct::tests::crop_extracts_exact_top_left_region_from_each_plane (exact-bytes assert; verified pass-clean/fail-on-mutation).
+    'crates/webpkit/src/lossy/reconstruct\.rs:78:5: replace crop -> Vec<u8> with vec!\[\]',
+    # [reconstruct] crop() is oracle-gated, stripped in the default sweep (no libwebp-sys) so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (asserts exact packed bytes != a constant vec).
+    'crates/webpkit/src/lossy/reconstruct\.rs:78:5: replace crop -> Vec<u8> with vec!\[0\]',
+    # [reconstruct] crop() is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (exact packed bytes != vec![1]).
+    'crates/webpkit/src/lossy/reconstruct\.rs:78:5: replace crop -> Vec<u8> with vec!\[1\]',
+    # [reconstruct] crop() slice-base arithmetic is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (base offset changes the read window, exact bytes mismatch).
+    'crates/webpkit/src/lossy/reconstruct\.rs:80:37: replace \+ with - in crop',
+    # [reconstruct] crop() slice-base arithmetic is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (exact-bytes assert).
+    'crates/webpkit/src/lossy/reconstruct\.rs:80:37: replace \+ with \* in crop',
+    # [reconstruct] crop() (y+1)*stride index is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (multi-row crop makes the stride multiply observable).
+    'crates/webpkit/src/lossy/reconstruct\.rs:80:28: replace \* with \+ in crop',
+    # [reconstruct] crop() (y+1)*stride index is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (division reads the wrong/border row, exact bytes mismatch).
+    'crates/webpkit/src/lossy/reconstruct\.rs:80:28: replace \* with / in crop',
+    # [reconstruct] crop() (y+1) row index is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (y=0 underflow/panic; also reads border row).
+    'crates/webpkit/src/lossy/reconstruct\.rs:80:23: replace \+ with - in crop',
+    # [reconstruct] crop() (y+1) row index is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (y*1 offset reads the top border row, exact bytes mismatch).
+    'crates/webpkit/src/lossy/reconstruct\.rs:80:23: replace \+ with \* in crop',
+    # [reconstruct] crop() slice-end `base + w` is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (base-w gives start>end slice panic).
+    'crates/webpkit/src/lossy/reconstruct\.rs:81:49: replace \+ with - in crop',
+    # [reconstruct] crop() slice-end `base + w` is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (base*w over-long slice changes output length).
+    'crates/webpkit/src/lossy/reconstruct\.rs:81:49: replace \+ with \* in crop',
+    # [reconstruct] Planes::crop_y is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (asserts crop_y(3,2) exact bytes).
+    'crates/webpkit/src/lossy/reconstruct\.rs:90:9: replace Planes::crop_y -> Vec<u8> with vec!\[\]',
+    # [reconstruct] Planes::crop_y is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (exact bytes != vec![0]).
+    'crates/webpkit/src/lossy/reconstruct\.rs:90:9: replace Planes::crop_y -> Vec<u8> with vec!\[0\]',
+    # [reconstruct] Planes::crop_y is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (exact bytes != vec![1]).
+    'crates/webpkit/src/lossy/reconstruct\.rs:90:9: replace Planes::crop_y -> Vec<u8> with vec!\[1\]',
+    # [reconstruct] Planes::crop_u is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (asserts crop_u(2,2) exact U-plane bytes distinct from V).
+    'crates/webpkit/src/lossy/reconstruct\.rs:95:9: replace Planes::crop_u -> Vec<u8> with vec!\[\]',
+    # [reconstruct] Planes::crop_u is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (exact bytes != vec![0]).
+    'crates/webpkit/src/lossy/reconstruct\.rs:95:9: replace Planes::crop_u -> Vec<u8> with vec!\[0\]',
+    # [reconstruct] Planes::crop_u is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (exact bytes != vec![1]).
+    'crates/webpkit/src/lossy/reconstruct\.rs:95:9: replace Planes::crop_u -> Vec<u8> with vec!\[1\]',
+    # [reconstruct] Planes::crop_v is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (asserts crop_v(2,2) exact V-plane bytes distinct from U).
+    'crates/webpkit/src/lossy/reconstruct\.rs:100:9: replace Planes::crop_v -> Vec<u8> with vec!\[\]',
+    # [reconstruct] Planes::crop_v is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (exact bytes != vec![0]).
+    'crates/webpkit/src/lossy/reconstruct\.rs:100:9: replace Planes::crop_v -> Vec<u8> with vec!\[0\]',
+    # [reconstruct] Planes::crop_v is oracle-gated, stripped in the default sweep so the mutation is inert. Killed under --features oracle by crop_extracts_exact_top_left_region_from_each_plane (exact bytes != vec![1]).
+    'crates/webpkit/src/lossy/reconstruct\.rs:100:9: replace Planes::crop_v -> Vec<u8> with vec!\[1\]',
+    # NOTE (cargo-mutants 27.1.0 limitation): the five `delete field ...` (StructField-genre) mutants
+    # below are provably value-preserving — each deleted field equals the value the `..Default::default()`
+    # spread (or, for `skip`, resolve_finfo's `(non_zero_y|non_zero_uv)==0` fallback) already supplies, so
+    # deleting it cannot change any byte. They are kept explicit in the source for readability and to mirror
+    # the decoder's FInfo derivation (see the apply_loop_filter doc comment). cargo-mutants 27.1.0 does NOT
+    # honor exclude_re for the StructField genre, so despite these entries the five still report as "missed"
+    # in a full sweep. They are equivalent mutants, NOT a coverage gap; do not chase them with tests.
+    # [frame] FilterHeader derives Default (simple=false); the ..FilterHeader::default() spread fills the deleted field with the identical value, so the emitted header is byte-for-byte unchanged.
+    'frame\.rs:1277:9: delete field simple from struct FilterHeader expression in choose_filter',
+    # [frame] sharpness=0 is FilterHeader::default()'s value; the ..default() spread reproduces it exactly - a value-preserving no-op.
+    'frame\.rs:1279:9: delete field sharpness from struct FilterHeader expression in choose_filter',
+    # [frame] MbData::default().segment==0 equals the deleted literal, and filter strengths are segment-invariant (per-segment filter_strength all 0), so the FInfo lookup is identical.
+    'frame\.rs:1345:17: delete field segment from struct MbData expression in apply_loop_filter',
+    # [frame] skip is redundant with resolve_finfo's non_zero fallback: an encoder MbData is skippable only when all coeffs are 0 (=> has_residual=false, non_zero_y=0), so (nz_y|nz_uv)==0 already yields skip; deleting skip:plan.skippable (=>false) cannot change f_inner.
+    'frame\.rs:1347:17: delete field skip from struct MbData expression in apply_loop_filter',
+    # [frame] MbData::default().non_zero_uv==0 equals the deleted literal (chroma residual is folded into non_zero_y here) - a value-preserving no-op.
+    'frame\.rs:1349:17: delete field non_zero_uv from struct MbData expression in apply_loop_filter',
+]

@@ -1,0 +1,31 @@
+[package]
+name = "webpkit-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Golden-fixture conformance harness for the pure-Rust webp ALPH (transparent-lossy) decode path."
+publish = false
+
+[features]
+# Fixture/golden GENERATION only: links the libwebp C reference (via
+# `libwebp-sys`) so the `#[ignore]`d generators in `tests/ledger.rs` can encode
+# synthetic RGBA through the libwebp ADVANCED encoder and read back its RGBA
+# golden. Never part of a normal build or the default CI gate, which link no
+# reference library and only replay the committed fixtures through `webp::decode`.
+oracle = ["dep:libwebp-sys"]
+
+[dependencies]
+anyhow = { workspace = true }
+libwebp-sys = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+webpkit = { path = "../webpkit" }
+
+[lints]
+workspace = true

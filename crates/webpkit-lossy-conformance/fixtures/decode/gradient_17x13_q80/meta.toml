@@ -1,0 +1,5 @@
+feature = "chroma-edge"
+level = "must"
+width = 17
+height = 13
+note = "libwebp WebPEncodeRGB gradient q80 -> WebPDecodeRGBA golden"

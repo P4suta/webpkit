@@ -1,0 +1,26 @@
+[
+  {
+    "case": "checker_16x16_q20",
+    "feature": "loop-filter",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "gradient_17x13_q80",
+    "feature": "chroma-edge",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "noise_32x24_q30",
+    "feature": "intra-4x4",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "noise_5x9_q50",
+    "feature": "tiny-odd",
+    "level": "must",
+    "passed": true
+  }
+]

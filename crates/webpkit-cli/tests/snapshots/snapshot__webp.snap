@@ -1,0 +1,20 @@
+---
+source: crates/webpkit-cli/tests/snapshot.rs
+expression: "help(\"webp\", \"--help\")"
+---
+Command-line tools for the webpkit WebP codec: libwebp-style cwebp (lossy by default, -lossless for VP8L) / dwebp and the webp brand tool.
+
+Usage: webp [OPTIONS] <COMMAND>
+
+Commands:
+  decode   Decode a WebP VP8L file to PNG (default), PPM/PAM, or raw pixels
+  encode   Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)
+  convert  Batch-convert many images (or directories) to WebP, in parallel
+  info     Print a summary of a WebP file (size, alpha, metadata, animation)
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -v, --verbose...  Print per-stage detail on stderr
+  -q, --quiet       Suppress all non-error output
+  -h, --help        Print help
+  -V, --version     Print version

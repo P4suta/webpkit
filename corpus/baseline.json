@@ -1,0 +1,302 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "conformance/all_transparent",
+      "decoded_ok": true,
+      "width": 8,
+      "height": 8,
+      "decoded_hash": 8349771140749020965,
+      "reencode_ok": true,
+      "reencode_len": 32,
+      "reencode_hash": 8266621097889865135,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/alpha_gradient",
+      "decoded_ok": true,
+      "width": 32,
+      "height": 32,
+      "decoded_hash": 14452233640459766565,
+      "reencode_ok": true,
+      "reencode_len": 2024,
+      "reencode_hash": 17406887342125683148,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/animation_frames",
+      "decoded_ok": true,
+      "width": 16,
+      "height": 16,
+      "decoded_hash": 1031595592303368997,
+      "reencode_ok": true,
+      "reencode_len": 514,
+      "reencode_hash": 6866298632559052505,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/col_1x256",
+      "decoded_ok": true,
+      "width": 1,
+      "height": 256,
+      "decoded_hash": 1358121096097866021,
+      "reencode_ok": true,
+      "reencode_len": 306,
+      "reencode_hash": 17395119602249639282,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/color_cache_scatter",
+      "decoded_ok": true,
+      "width": 32,
+      "height": 32,
+      "decoded_hash": 14482204067497497821,
+      "reencode_ok": true,
+      "reencode_len": 148,
+      "reencode_hash": 15413918212901321276,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/cross_color_corr",
+      "decoded_ok": true,
+      "width": 64,
+      "height": 64,
+      "decoded_hash": 11662461452830468389,
+      "reencode_ok": true,
+      "reencode_len": 9338,
+      "reencode_hash": 10516214697961279562,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/gradient_rgb",
+      "decoded_ok": true,
+      "width": 64,
+      "height": 64,
+      "decoded_hash": 13432808325684651301,
+      "reencode_ok": true,
+      "reencode_len": 9802,
+      "reencode_hash": 5742666861958408720,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/lz77_tiled",
+      "decoded_ok": true,
+      "width": 32,
+      "height": 32,
+      "decoded_hash": 14606322490691510853,
+      "reencode_ok": true,
+      "reencode_len": 108,
+      "reencode_hash": 15119997006315092908,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/palette_16color",
+      "decoded_ok": true,
+      "width": 32,
+      "height": 32,
+      "decoded_hash": 5715514711036246821,
+      "reencode_ok": true,
+      "reencode_len": 126,
+      "reencode_hash": 15298173619032547524,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/palette_256color",
+      "decoded_ok": true,
+      "width": 256,
+      "height": 16,
+      "decoded_hash": 9111896994453832485,
+      "reencode_ok": true,
+      "reencode_len": 832,
+      "reencode_hash": 4490857780263560343,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/palette_2color",
+      "decoded_ok": true,
+      "width": 32,
+      "height": 8,
+      "decoded_hash": 8679466570733856805,
+      "reencode_ok": true,
+      "reencode_len": 46,
+      "reencode_hash": 14605615336053112557,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/palette_4color",
+      "decoded_ok": true,
+      "width": 32,
+      "height": 8,
+      "decoded_hash": 4724570740496431141,
+      "reencode_ok": true,
+      "reencode_len": 64,
+      "reencode_hash": 5093298396373611829,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/row_256x1",
+      "decoded_ok": true,
+      "width": 256,
+      "height": 1,
+      "decoded_hash": 1358121096097866021,
+      "reencode_ok": true,
+      "reencode_len": 306,
+      "reencode_hash": 7744956181592444682,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/single_pixel_1x1",
+      "decoded_ok": true,
+      "width": 1,
+      "height": 1,
+      "decoded_hash": 15243141012813426364,
+      "reencode_ok": true,
+      "reencode_len": 32,
+      "reencode_hash": 15427635048552479274,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/solid_rgba_8x8",
+      "decoded_ok": true,
+      "width": 8,
+      "height": 8,
+      "decoded_hash": 15757725421260162597,
+      "reencode_ok": true,
+      "reencode_len": 32,
+      "reencode_hash": 14317780342667635701,
+      "self_roundtrip": true
+    },
+    {
+      "id": "conformance/vp8x_metadata",
+      "decoded_ok": true,
+      "width": 16,
+      "height": 16,
+      "decoded_hash": 1031595592303368997,
+      "reencode_ok": true,
+      "reencode_len": 514,
+      "reencode_hash": 6866298632559052505,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/animation/animation_frames",
+      "decoded_ok": true,
+      "width": 16,
+      "height": 16,
+      "decoded_hash": 1031595592303368997,
+      "reencode_ok": true,
+      "reencode_len": 514,
+      "reencode_hash": 6866298632559052505,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/animation/single_pixel_1x1",
+      "decoded_ok": true,
+      "width": 1,
+      "height": 1,
+      "decoded_hash": 15243141012813426364,
+      "reencode_ok": true,
+      "reencode_len": 32,
+      "reencode_hash": 15427635048552479274,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/decode/animation_frames",
+      "decoded_ok": true,
+      "width": 16,
+      "height": 16,
+      "decoded_hash": 1031595592303368997,
+      "reencode_ok": true,
+      "reencode_len": 514,
+      "reencode_hash": 6866298632559052505,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/decode/gradient_rgb",
+      "decoded_ok": true,
+      "width": 64,
+      "height": 64,
+      "decoded_hash": 13432808325684651301,
+      "reencode_ok": true,
+      "reencode_len": 9802,
+      "reencode_hash": 5742666861958408720,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/decode/meta_huffman",
+      "decoded_ok": true,
+      "width": 32,
+      "height": 32,
+      "decoded_hash": 16666787168084109780,
+      "reencode_ok": true,
+      "reencode_len": 2880,
+      "reencode_hash": 15581092113230976398,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/decode/palette_16color",
+      "decoded_ok": true,
+      "width": 32,
+      "height": 32,
+      "decoded_hash": 5715514711036246821,
+      "reencode_ok": true,
+      "reencode_len": 126,
+      "reencode_hash": 15298173619032547524,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/decode/single_pixel_1x1",
+      "decoded_ok": true,
+      "width": 1,
+      "height": 1,
+      "decoded_hash": 15243141012813426364,
+      "reencode_ok": true,
+      "reencode_len": 32,
+      "reencode_hash": 15427635048552479274,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/decode/vp8x_metadata",
+      "decoded_ok": true,
+      "width": 16,
+      "height": 16,
+      "decoded_hash": 1031595592303368997,
+      "reencode_ok": true,
+      "reencode_len": 514,
+      "reencode_hash": 6866298632559052505,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/roundtrip/cross_color_corr",
+      "decoded_ok": true,
+      "width": 64,
+      "height": 64,
+      "decoded_hash": 11662461452830468389,
+      "reencode_ok": true,
+      "reencode_len": 9338,
+      "reencode_hash": 10516214697961279562,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/roundtrip/palette_16color",
+      "decoded_ok": true,
+      "width": 32,
+      "height": 32,
+      "decoded_hash": 5715514711036246821,
+      "reencode_ok": true,
+      "reencode_len": 126,
+      "reencode_hash": 15298173619032547524,
+      "self_roundtrip": true
+    },
+    {
+      "id": "fuzz/roundtrip/single_pixel_1x1",
+      "decoded_ok": true,
+      "width": 1,
+      "height": 1,
+      "decoded_hash": 15243141012813426364,
+      "reencode_ok": true,
+      "reencode_len": 32,
+      "reencode_hash": 15427635048552479274,
+      "self_roundtrip": true
+    }
+  ]
+}

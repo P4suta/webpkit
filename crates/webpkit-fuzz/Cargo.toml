@@ -1,0 +1,44 @@
+[package]
+name = "webpkit-fuzz"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "cargo-fuzz targets for the umbrella `webp` decode path (container -> VP8 lossy/ALPH -> VP8L lossless)."
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[[bin]]
+name = "decode"
+path = "fuzz_targets/decode.rs"
+test = false
+doc = false
+bench = false
+# Only linked in a fuzzing build; keeps a normal `cargo build --workspace` from
+# emitting this bin (whose name is shared across fuzz crates by cargo-fuzz
+# convention) and racing on the same output path.
+required-features = ["fuzzing"]
+
+[[bin]]
+name = "decode_frames"
+path = "fuzz_targets/decode_frames.rs"
+test = false
+doc = false
+bench = false
+required-features = ["fuzzing"]
+
+[features]
+# Enabled by `cargo fuzz` invocations (pass `--features fuzzing`). Off by default
+# so a normal `cargo build --workspace` never links the libFuzzer runtime.
+fuzzing = ["dep:libfuzzer-sys"]
+
+[dependencies]
+libfuzzer-sys = { workspace = true, optional = true }
+webpkit = { path = "../webpkit" }
+
+[lints]
+workspace = true

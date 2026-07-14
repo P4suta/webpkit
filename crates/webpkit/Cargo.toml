@@ -1,0 +1,60 @@
+[package]
+name = "webpkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "A pure-Rust WebP codec: lossless (VP8L) and lossy (VP8) behind one decode/encode API."
+keywords = ["webp", "image", "codec", "lossless", "lossy"]
+categories = ["multimedia::images", "encoding", "no-std"]
+homepage = "https://github.com/P4suta/webpkit"
+documentation = "https://docs.rs/webpkit"
+readme = "README.md"
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+# Opt-in encoder data-parallelism (rayon). Off by default; every parallel path is
+# byte-identical to its serial fallback, so it changes only wall-clock, never output.
+rayon = ["dep:rayon", "std"]
+# Differential oracle: links the libwebp C reference in-process for the
+# `tests/oracle*.rs` cross-checks. Dev/test only; never part of a normal build.
+oracle = ["dep:libwebp-sys"]
+# Deterministic algorithmic-work counters (the work-cost measurement plane).
+# Off by default: production builds link no counter code and behave identically.
+work-count = []
+# Dev-only: re-exports internal numeric kernels (and their pre-optimization
+# `*_reference` twins) through `crate::{lossless,lossy}::bench` so `webpkit-bench`'s
+# `kernels` microbench can time them in isolation. Adds no dependency and no
+# production code; never enabled in a real build.
+bench = []
+
+[dependencies]
+libwebp-sys = { workspace = true, optional = true }
+# Declared locally (not `workspace = true`) so rayon can never enter a default build.
+rayon = { version = "1", optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+webpkit-lossy-proptest = { path = "../webpkit-lossy-proptest" }
+# The shared synthetic corpus, for the in-process comparison report against the
+# libwebp C reference (`examples/vs_libwebp.rs`, `oracle` feature).
+webpkit-samples = { path = "../webpkit-samples" }
+
+# In-process size/quality/speed comparison vs the libwebp C reference, rendered to a
+# self-contained HTML dashboard. Needs the `oracle` feature (libwebp-sys), so it is
+# skipped by ordinary `cargo build --examples`.
+#   just report-vs-libwebp
+[[example]]
+name = "vs_libwebp"
+required-features = ["oracle"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

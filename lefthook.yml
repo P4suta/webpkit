@@ -1,0 +1,73 @@
+# lefthook git hooks. Install: `just hooks`.
+# Steps delegate to Justfile `_hook-*` recipes; formatters use `stage_fixed: true`
+# and CI re-runs the same tools in `--check` mode.
+
+assert_lefthook_installed: true
+no_tty: false
+colors: true
+
+pre-commit:
+  parallel: false
+  follow: true
+  commands:
+    # auto-fixers
+    cargo-fmt:
+      tags: format
+      glob: "*.rs"
+      run: just _hook-fmt {staged_files}
+      stage_fixed: true
+
+    cargo-sort:
+      tags: format
+      glob: "{**/Cargo.toml,Cargo.lock}"
+      run: just _hook-cargo-sort
+      stage_fixed: true
+
+    taplo-fmt:
+      tags: format
+      glob: "*.toml"
+      run: just _hook-taplo-fmt {staged_files}
+      stage_fixed: true
+
+    biome-format:
+      tags: format
+      glob: "{*.json,*.jsonc}"
+      run: just _hook-biome-format {staged_files}
+      stage_fixed: true
+
+    yamlfmt:
+      tags: format
+      glob: "{*.yml,*.yaml}"
+      run: just _hook-yamlfmt {staged_files}
+      stage_fixed: true
+
+    typos-fix:
+      tags: spell
+      run: just _hook-typos-fix {staged_files}
+      stage_fixed: true
+
+    # checks (no auto-fix)
+    actionlint:
+      tags: ci
+      glob: "{.github/workflows/*.yml,.github/workflows/*.yaml}"
+      run: just _hook-actionlint {staged_files}
+
+    clippy:
+      tags: lint
+      glob: "*.rs"
+      run: just clippy
+
+commit-msg:
+  commands:
+    commitlint:
+      run: just _hook-commitlint {1}
+
+pre-push:
+  piped: true
+  commands:
+    lint:
+      tags: lint
+      run: just lint
+    test:
+      tags: test
+      run: just test

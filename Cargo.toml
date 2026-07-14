@@ -1,0 +1,117 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/webpkit",
+    "crates/webpkit-alloc-count",
+    "crates/webpkit-bench",
+    "crates/webpkit-cli",
+    "crates/webpkit-conformance",
+    "crates/webpkit-fuzz",
+    "crates/webpkit-lossless-conformance",
+    "crates/webpkit-lossless-fuzz",
+    "crates/webpkit-lossy-conformance",
+    "crates/webpkit-lossy-fuzz",
+    "crates/webpkit-lossy-proptest",
+    "crates/webpkit-samples",
+    "xtask",
+]
+default-members = ["crates/webpkit"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/P4suta/webpkit"
+authors = ["webpkit contributors"]
+
+# Shared dependency versions for the tooling / test-harness crates only. The
+# product crate `webpkit` has ZERO required runtime deps; its two optional deps are:
+# `rayon` (declared locally in crates/webpkit so it can never enter a default build)
+# and `libwebp-sys` (below, consumed only behind webpkit's `oracle` feature and by the
+# differential-test path).
+[workspace.dependencies]
+anyhow = "1"
+assert_cmd = "2"                                                     # dev: CLI integration tests
+cargo_metadata = "0.23"                                              # xtask: workspace introspection
+clap = { version = "4", features = ["derive"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+insta = { version = "1", features = ["yaml", "json", "redactions"] }
+libfuzzer-sys = "0.4"                                                # webpkit-lossless-fuzz targets
+libwebp-sys = "0.14"                                                 # oracle / differential path (optional at use site)
+png = "0.17"                                                         # CLI-only: PNG input/output for cwebp/dwebp
+predicates = "3"
+proptest = "1"
+rayon = "1"                                                          # CLI-only: parallel bulk convert
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+toml = "0.8"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+# Explicit promotions for cleanliness
+wildcard_imports = "deny"
+mod_module_files = "deny"
+or_fun_call = "deny"
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "deny"
+print_stdout = "warn"
+print_stderr = "warn"
+allow_attributes_without_reason = "deny" # `#[allow]` requires a reason
+disallowed_macros = "deny"               # denylist in clippy.toml
+disallowed_types = "deny"                # denylist in clippy.toml
+disallowed_methods = "deny"
+
+# Exceptions (lints whose design conflicts with this project's policy)
+module_name_repetitions = "allow" # clashes with natural names like `OverlayConfig`
+multiple_crate_versions = "allow" # depends on the transitive graph, uncontrollable here
+cargo_common_metadata = "allow"   # internal, publish=false
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unreachable_pub = "deny"
+elided_lifetimes_in_paths = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+static_mut_refs = "deny"           # forbid references through `static mut`
+missing_docs = "deny"              # doc required on every public item
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+opt-level = 3
+overflow-checks = false
+
+[profile.dev]
+opt-level = 0
+debug = "full"
+
+# For fast CI checks
+[profile.ci]
+inherits = "dev"
+debug = "line-tables-only"
+incremental = false
+
+# Inner dev-loop profile for measurement runs (bench-real, criterion smokes, the
+# work ledger). Keeps `-O` for representative timing but drops the two knobs that
+# dominate release compile time — fat LTO and a single codegen unit — so rebuilds
+# after an encoder edit are seconds, not a minute. NOT for the committed `metrics`
+# gate: that stays fat-LTO `release` because its peak-memory fields must be
+# reproducible on the pinned compiler. Timing deltas are valid as long as the
+# before/after runs use the SAME profile.
+[profile.quick]
+inherits = "release"
+lto = false
+codegen-units = 16

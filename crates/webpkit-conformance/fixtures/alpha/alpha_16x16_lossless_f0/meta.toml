@@ -1,0 +1,6 @@
+width = 16
+height = 16
+alpha_compression = "lossless"
+alpha_filtering = 0
+quality = 90.0
+note = "libwebp ADVANCED encoder (method 4, alpha_quality=100) -> WebPDecodeRGBA golden"

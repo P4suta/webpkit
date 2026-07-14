@@ -1,0 +1,5 @@
+feature = "intra-4x4"
+level = "must"
+width = 32
+height = 24
+note = "libwebp WebPEncodeRGB noise q30 -> WebPDecodeRGBA golden"

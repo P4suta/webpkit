@@ -1,0 +1,20 @@
+# Force LF in the working tree on every platform. The toolchain expects LF
+# everywhere — rustfmt (`newline_style = "Unix"`), biome / taplo / yamlfmt, and
+# `.editorconfig` all assume it. Without this, Git's `core.autocrlf=true` (the
+# Windows default) checks files out as CRLF, so `just fmt` / `just lint` and the
+# lefthook pre-commit hooks fail on a native Windows host even though the repo
+# blobs are LF. `text=auto` still lets Git auto-detect and leave binaries alone.
+#
+# Existing Windows clones: after pulling this file, run once to refresh the
+# working tree to LF:  git add --renormalize . && git checkout .
+* text=auto eol=lf
+
+# Explicit binaries — never normalize these.
+*.png binary
+*.jpg binary
+*.webp binary
+*.rgba binary
+*.pam binary
+*.ico binary
+*.exe binary
+*.svg text eol=lf

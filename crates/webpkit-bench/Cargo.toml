@@ -1,0 +1,58 @@
+[package]
+name = "webpkit-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Criterion benchmarks for the webpkit WebP codec (VP8L + VP8)."
+publish = false
+
+[features]
+# Forward the compile-time parallelism feature so `Method::Best` can be timed
+# serial vs parallel via criterion's two-baseline workflow (see encode.rs).
+rayon = ["webpkit/rayon"]
+# Expose the codecs' internal numeric kernels (via their `crate::bench` shims) so
+# the `kernels` microbench can time each kernel against its `*_reference` twin
+# back-to-back. Without it the `kernels` bench compiles to an empty no-op `main`.
+bench = ["webpkit/bench"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+webpkit = { path = "../webpkit" }
+webpkit-samples = { path = "../webpkit-samples" }
+
+[[bench]]
+name = "decode"
+harness = false
+
+[[bench]]
+name = "encode"
+harness = false
+
+[[bench]]
+name = "lossy_decode"
+harness = false
+
+[[bench]]
+name = "lossy_encode"
+harness = false
+
+[[bench]]
+name = "animation"
+harness = false
+
+[[bench]]
+name = "match_finding"
+harness = false
+
+# Isolated per-kernel microbenchmarks for the autovectorization loop. Needs
+# `--features bench`; without it the target builds to an empty `main` (see the
+# module's `cfg` fallback), so plain `cargo bench` skips it.
+[[bench]]
+name = "kernels"
+harness = false
+
+[lints]
+workspace = true

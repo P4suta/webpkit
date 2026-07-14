@@ -1,0 +1,13 @@
+[package]
+name = "webpkit-samples"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Deterministic synthetic measurement corpus shared by the webpkit metrics ledger and benchmarks."
+publish = false
+
+[lints]
+workspace = true

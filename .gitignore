@@ -1,0 +1,27 @@
+/target
+/artifacts
+node_modules/
+*.pdb
+*.tmp
+.DS_Store
+.vscode/
+.idea/
+*.swp
+.claude/
+
+# insta snapshots in-progress
+*.snap.new
+*.pending-snap
+
+# cargo-mutants working output
+mutants.out/
+mutants.out.old/
+# Root-anchored and trailing-slash-free so ad-hoc sweep dirs (mutants-ll-full/)
+# AND their console logs (mutants-ll-c2.log) are both ignored — without catching
+# tracked files like .github/workflows/mutants-full.yml.
+/mutants-*
+
+# cargo-fuzz working data (curated corpora are committed separately)
+crates/webpkit-lossless-fuzz/corpus/
+crates/webpkit-lossless-fuzz/artifacts/
+crates/webpkit-lossless-fuzz/coverage/

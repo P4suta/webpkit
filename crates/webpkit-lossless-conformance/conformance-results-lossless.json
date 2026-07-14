@@ -1,0 +1,176 @@
+[
+  {
+    "case": "all_transparent",
+    "feature": "exact",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "alpha_gradient",
+    "feature": "predictor",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "animation_frames",
+    "feature": "animation",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "col_1x256",
+    "feature": "predictor",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "color_cache_scatter",
+    "feature": "color-cache",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "cross_color_corr",
+    "feature": "cross-color",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "gradient_rgb",
+    "feature": "predictor",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "lz77_tiled",
+    "feature": "lz77",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "palette_16color",
+    "feature": "palette",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "palette_256color",
+    "feature": "palette",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "palette_2color",
+    "feature": "palette",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "palette_4color",
+    "feature": "palette",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "row_256x1",
+    "feature": "predictor",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "single_pixel_1x1",
+    "feature": "literal",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "solid_rgba_8x8",
+    "feature": "literal",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "vp8x_metadata",
+    "feature": "metadata",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/all_transparent",
+    "feature": "exact",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/alpha_gradient",
+    "feature": "predictor",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/col_1x256",
+    "feature": "predictor",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/color_cache_scatter",
+    "feature": "color-cache",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/cross_color_corr",
+    "feature": "cross-color",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/gradient_rgb",
+    "feature": "predictor",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/lz77_tiled",
+    "feature": "lz77",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/palette_16color",
+    "feature": "palette",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/palette_256color",
+    "feature": "palette",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/palette_2color",
+    "feature": "palette",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/palette_4color",
+    "feature": "palette",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/row_256x1",
+    "feature": "predictor",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "encode/single_pixel_1x1",
+    "feature": "literal",
+    "level": "must",
+    "passed": true
+  }
+]

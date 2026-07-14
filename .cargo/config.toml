@@ -1,0 +1,14 @@
+[alias]
+xtask = "run --quiet --package xtask --"
+
+[term]
+color = "auto"
+
+# Link the Windows MSVC target with the toolchain's bundled `rust-lld` instead of
+# MSVC `link.exe`. Measured ~2x faster incremental relinks, which dominates the
+# per-mutant cost of a `cargo mutants` sweep on this platform. `linker = "rust-lld"`
+# resolves to the sysroot copy shipped with every toolchain (no absolute path, so
+# it is portable across machines and the Windows CI matrix). `linker-features=+lld`
+# would be cleaner but is still nightly-only on the pinned 1.96 toolchain.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "linker=rust-lld", "-C", "linker-flavor=lld-link"]

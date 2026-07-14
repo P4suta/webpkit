@@ -1,0 +1,5 @@
+feature = "tiny-odd"
+level = "must"
+width = 5
+height = 9
+note = "libwebp WebPEncodeRGB noise q50 -> WebPDecodeRGBA golden"

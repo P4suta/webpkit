@@ -1,0 +1,5 @@
+feature = "loop-filter"
+level = "must"
+width = 16
+height = 16
+note = "libwebp WebPEncodeRGB checkerboard q20 -> WebPDecodeRGBA golden"
