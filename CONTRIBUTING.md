@@ -44,7 +44,11 @@ webpkit follows an external-verification discipline:
   (the lossy strategies are shared via `webpkit-lossy-proptest`) and cargo-fuzz
   targets (`webpkit-lossless-fuzz` / `webpkit-lossy-fuzz` / `webpkit-fuzz`,
   `just fuzz-smoke`); the differential path cross-checks against libwebp behind
-  the `oracle` feature.
+  the `oracle` feature. The CI `fuzz` job is currently `workflow_dispatch`-only
+  (an upstream cargo-fuzz/sancov link regression on 2026 nightlies — see the
+  `TODO(fuzz)` in `.github/workflows/ci.yml`); when bumping `NIGHTLY_TOOLCHAIN` or
+  cargo-fuzz, re-check that `cargo fuzz build` links and re-enable the push/PR
+  trigger if it does.
 - **Mutation testing.** [cargo-mutants](https://mutants.rs/) injects deliberate
   bugs into the product crates; a surviving mutant is an assertion the tests do
   not make. `just mutants` runs the full (slow) sweep; `just mutants --file <path>`

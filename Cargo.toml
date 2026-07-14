@@ -92,6 +92,11 @@ codegen-units = 1
 panic = "abort"
 strip = "symbols"
 opt-level = 3
+# Release drops the runtime overflow trap for speed. This does NOT weaken decode
+# safety: every size/index derived from an untrusted header goes through explicit
+# `checked_*` / `saturating_*` arithmetic (see the decoders and `alpha_plane_with`),
+# and the dev/test profiles keep `overflow-checks = on` so the test suite still
+# catches an unguarded overflow. See SECURITY.md → "Hardening notes".
 overflow-checks = false
 
 [profile.dev]
