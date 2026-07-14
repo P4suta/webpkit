@@ -12,10 +12,20 @@ categories = ["multimedia::images", "encoding", "no-std"]
 homepage = "https://github.com/P4suta/webpkit"
 documentation = "https://docs.rs/webpkit"
 readme = "README.md"
+# Keep the published tarball lean and dependency-free: the integration tests carry
+# ~200 KB of golden fixtures + oracle sources that need dev-only path deps
+# (`webpkit-samples`, `webpkit-lossy-proptest`) which are stripped on publish, so
+# they cannot build from the crate anyway. `examples/roundtrip.rs` stays (it is the
+# doc-linked quick-start); `examples/vs_libwebp.rs` is `required-features = ["oracle"]`
+# and therefore inert in a default build.
+exclude = ["tests/"]
 
+# Render every feature's items on docs.rs (the `rayon`/`oracle` gated code included).
+# No `--cfg docsrs` / `doc_cfg`: no optional feature changes a *public* signature
+# (`rayon` only swaps in parallelism, `oracle` is dev-only, `std`/`alloc` are the
+# baseline), so a feature-badge pass would annotate internal items for no reader gain.
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["std"]
