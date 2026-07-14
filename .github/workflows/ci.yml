@@ -34,10 +34,11 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: short
   # Pinned nightly for the fuzz job so an upstream nightly regression cannot block
-  # every merge. This exact dated channel was verified to exist and build the fuzz
-  # targets. Bump it deliberately (Dependabot does not track rustup channels; a
-  # scheduled bump PR or a periodic manual review is the intended refresh path).
-  NIGHTLY_TOOLCHAIN: nightly-2026-07-01
+  # every merge. Kept contemporary with cargo-fuzz 0.13.2 (released 2026-06-09):
+  # nightly-2026-07-01 hit "undefined reference to __sancov_gen_" at link time with
+  # cargo-fuzz's sanitizer-coverage flags. Bump it deliberately (Dependabot does not
+  # track rustup channels; a scheduled bump PR or periodic manual review refreshes).
+  NIGHTLY_TOOLCHAIN: nightly-2026-06-10
 
 jobs:
   build-test:
@@ -379,11 +380,6 @@ jobs:
     name: fuzz
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      # musl links libc statically by default, which -Zsanitizer=address rejects;
-      # make libc dynamic so cargo-fuzz's ASAN build links. cargo-fuzz appends its
-      # own sancov/sanitizer flags after this value.
-      RUSTFLAGS: -Ctarget-feature=-crt-static
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -391,17 +387,7 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: install nightly (libFuzzer)
-        # cargo-fuzz 0.13 builds its ASAN target as x86_64-unknown-linux-musl by
-        # default (avoids the sancov link errors seen on gnu), so add that std.
-        run: |
-          rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal --no-self-update
-          rustup target add x86_64-unknown-linux-musl --toolchain "${NIGHTLY_TOOLCHAIN}"
-      # libfuzzer-sys compiles its C++ runtime for the musl target, which needs a
-      # musl C/C++ cross-compiler (not on ubuntu-latest). This sets CC/CXX/linker
-      # for x86_64-unknown-linux-musl so cc-rs finds `x86_64-linux-musl-g++`.
-      - uses: taiki-e/setup-cross-toolchain-action@3d9770ce98eb7dbcf378563182a5e8031165f75b # v1.41.0
-        with:
-          target: x86_64-unknown-linux-musl
+        run: rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal --no-self-update
       - name: fuzz smoke (all targets, seeded from committed corpora)
         run: |
           set -euo pipefail
