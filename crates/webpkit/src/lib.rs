@@ -128,6 +128,12 @@ pub type CompositedFrames<'a> = crate::anim::CompositedFrames<'a, WebpFrameDecod
 /// An animated file returns its **first composited frame** (matching libwebp's
 /// `WebPDecode`); use [`decode_frames`] to walk every frame.
 ///
+/// # Untrusted input
+///
+/// This applies no allocation cap beyond the per-side dimension limit
+/// ([`MAX_DIMENSION`], ≈1 GiB of RGBA). When decoding attacker-controlled data,
+/// use [`decode_with`] with [`DecodeOptions::max_pixels`] to bound memory.
+///
 /// # Errors
 ///
 /// [`Error::NotWebp`]/[`Error::Truncated`] for a non-WebP or short input,
@@ -187,6 +193,80 @@ pub fn decode_with(input: &[u8], options: &DecodeOptions) -> Result<Image> {
     }
 }
 
+/// Decode a still WebP straight to its **RGBA8** pixels and [`Dimensions`].
+///
+/// The raw-buffer companion to [`decode`], skipping the [`Image`] wrapper for
+/// callers that only want the bytes (any embedded metadata is dropped).
+///
+/// # Errors
+///
+/// The same errors as [`decode`].
+#[cfg(feature = "alloc")]
+pub fn decode_rgba(input: &[u8]) -> Result<(Dimensions, Vec<u8>)> {
+    let image = decode(input)?;
+    Ok((image.dimensions(), image.into_pixels()))
+}
+
+/// Decode a still WebP read from any [`std::io::Read`] source into an [`Image`].
+///
+/// The reader-based companion to [`decode`] (RGBA8 by default). The whole stream
+/// is buffered before decoding; for push-based streaming use
+/// [`incremental_decoder`].
+///
+/// # Errors
+///
+/// [`Error::Io`] if reading `reader` fails, otherwise the same errors as [`decode`].
+#[cfg(feature = "std")]
+pub fn decode_reader<R: std::io::Read>(mut reader: R) -> Result<Image> {
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf)?;
+    decode(&buf)
+}
+
+/// Encode an **RGBA8** pixel buffer as a lossless (`VP8L`) WebP file.
+///
+/// The one-call companion to [`decode`], mirroring [`decode_rgba`] on the encode
+/// side. Uses the default [`Effort`]; for a different effort tier, embedded
+/// metadata, or a non-RGBA input layout, use the [`Encoder`] builder. `rgba` must
+/// be exactly `width * height * 4` bytes.
+///
+/// # Examples
+///
+/// ```
+/// let rgba = vec![0u8; 4 * 4 * 4]; // a 4x4 RGBA image
+/// let webp = webpkit::encode_lossless_rgba(4, 4, &rgba)?;
+/// let (dims, pixels) = webpkit::decode_rgba(&webp)?;
+/// assert_eq!((dims.width(), dims.height()), (4, 4));
+/// assert_eq!(pixels, rgba); // lossless is byte-exact
+/// # Ok::<(), webpkit::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// [`Error::InvalidDimensions`] for a zero or over-large canvas,
+/// [`Error::PixelBufferMismatch`] if `rgba`'s length is wrong, otherwise any
+/// encode error.
+#[cfg(feature = "alloc")]
+pub fn encode_lossless_rgba(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>> {
+    let image = ImageRef::new(Dimensions::new(width, height)?, PixelLayout::Rgba8, rgba)?;
+    Encoder::lossless().encode_ref(image)
+}
+
+/// Encode an **RGBA8** pixel buffer as a lossy (`VP8 `) WebP file at `quality`.
+///
+/// The one-call companion to [`decode`]; `quality` is `0..=100` (clamped). For a
+/// different effort tier, embedded metadata, or a non-RGBA input layout, use the
+/// [`Encoder`] builder. `rgba` must be exactly `width * height * 4` bytes.
+///
+/// # Errors
+///
+/// The same errors as [`encode_lossless_rgba`].
+#[cfg(feature = "alloc")]
+pub fn encode_lossy_rgba(width: u32, height: u32, rgba: &[u8], quality: u8) -> Result<Vec<u8>> {
+    let image = ImageRef::new(Dimensions::new(width, height)?, PixelLayout::Rgba8, rgba)?;
+    Encoder::lossy().quality(quality).encode_ref(image)
+}
+
 /// Decode an `ALPH` chunk payload (including its 1-byte header) into a
 /// `width * height` alpha plane.
 ///
@@ -228,6 +308,12 @@ fn alpha_plane_with(
 /// Handles both lossless (`VP8L`) and lossy (`VP8 ` + optional `ALPH`) frames —
 /// the latter via [`crate::lossy`] with alpha compositing, injected into the `lossless`
 /// codec's animation walker.
+///
+/// # Untrusted input
+///
+/// Like [`decode`], this applies no per-frame allocation cap by default; use
+/// [`decode_frames_with`] with [`DecodeOptions::max_pixels`] for attacker-controlled
+/// input.
 ///
 /// # Errors
 ///
