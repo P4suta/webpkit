@@ -35,7 +35,7 @@ anyhow = "1"
 assert_cmd = "2"                                                     # dev: CLI integration tests
 cargo_metadata = "0.23"                                              # xtask: workspace introspection
 clap = { version = "4", features = ["derive"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 insta = { version = "1", features = ["yaml", "json", "redactions"] }
 libfuzzer-sys = "0.4"                                                # webpkit-lossless-fuzz targets
 libwebp-sys = "0.14"                                                 # oracle / differential path (optional at use site)
