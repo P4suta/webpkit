@@ -213,6 +213,12 @@ impl HuffmanTable {
     /// Decode one symbol, consuming its bits from `br`.
     pub(crate) fn read_symbol(&self, br: &mut BitReader<'_>) -> u16 {
         let root_index = br.peek_bits(self.root_bits) as usize;
+        // `root_index < 1 << root_bits <= arena.len()`: the root table always fills
+        // the arena's first `1 << root_bits` slots. The direct index below is the one
+        // decode-hot access whose in-bounds-ness rests on `build` having accepted a
+        // complete prefix code, so pin the invariant in dev/test (and every fuzz run,
+        // which builds in debug) — release is byte-identical and unaffected.
+        debug_assert!(root_index < self.arena.len(), "root_index within arena");
         let entry = self.arena[root_index];
         if u32::from(entry.bits) <= self.root_bits {
             br.consume(u32::from(entry.bits));
@@ -222,6 +228,11 @@ impl HuffmanTable {
         br.consume(self.root_bits);
         let extra_bits = u32::from(entry.bits) - self.root_bits;
         let sub_index = root_index + entry.value as usize + br.peek_bits(extra_bits) as usize;
+        // `sub_index ∈ [table_base, table_base + table_size) ⊆ arena`: guaranteed by
+        // the sub-table layout `build` writes and the exact-subscription check it
+        // enforces. This is the load-bearing invariant behind the copy/cache bounds
+        // downstream, so machine-check it here rather than trusting it by eye.
+        debug_assert!(sub_index < self.arena.len(), "sub_index within arena");
         let leaf = self.arena[sub_index];
         br.consume(u32::from(leaf.bits));
         leaf.value

@@ -6,6 +6,13 @@
 # 0.2), matching SemVer's 0.x semantics, which release-plz applies by default.
 
 [workspace]
+# Publish only when a release PR is merged — never directly on a feature push to
+# main. `release-plz release` (the publish + tag job) then acts solely on the
+# release-PR merge commit, so the version bump and CHANGELOG are reviewed before the
+# irreversible crates.io publish. Without this (the default `true`), the *first*
+# release would publish the current manifest version the moment any commit lands on
+# main, skipping that checkpoint. Matches the release-plz.yml header comment.
+release_always = false
 # Gate breaking API changes: run cargo-semver-checks before every release.
 semver_check = true
 # Maintain CHANGELOG.md from Conventional Commits.

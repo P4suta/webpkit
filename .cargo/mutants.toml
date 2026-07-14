@@ -10,7 +10,12 @@ test_tool = "nextest"
 
 # Honor the committed lockfile on every inner cargo/nextest invocation, matching
 # the repo-wide `--locked` discipline (CI builds are all locked).
-additional_cargo_args = ["--locked"]
+#
+# `--features image` so the optional `image`-interop module (`src/interop.rs`) and
+# its tests are compiled: they are `#[cfg(feature = "image")]`, so without this a
+# mutant on an interop line has no test exercising it and is spuriously "missed".
+# The feature only adds interop; it changes no other mutated code path.
+additional_cargo_args = ["--locked", "--features", "image"]
 
 # The `Method::Best` encode paths are several times slower than the rest, so a
 # mutant that merely slows a test must not be mistaken for a timeout "catch".

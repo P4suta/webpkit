@@ -75,9 +75,37 @@ Still to come: encoder size/speed tuning and broader real-image benchmarking.
 | `std`    | yes     | `std` conveniences + `std::error::Error` impl                 |
 | `alloc`  | no      | `no_std` + `alloc` build                                      |
 | `rayon`  | no      | encoder parallelism                                          |
+| `image`  | no      | `TryFrom` interop with the [`image`](https://crates.io/crates/image) crate |
 | `oracle` | no      | **dev/test only** — links `libwebp-sys` for differential tests |
 
-## Quick start
+## Library quick start
+
+```rust
+use webpkit::{decode, encode_lossless_rgba, Encoder};
+
+fn roundtrip(width: u32, height: u32, rgba: &[u8]) -> webpkit::Result<()> {
+    // One-call encode of raw RGBA8 (4 bytes/pixel) to a lossless (VP8L) file...
+    let webp = encode_lossless_rgba(width, height, rgba)?;
+
+    // ...and one-call decode of any still WebP (VP8L or VP8, auto-dispatched).
+    let image = decode(&webp)?;
+    assert_eq!((image.width(), image.height()), (width, height));
+
+    // Or the type-state builder. Only the lossy builder exposes `quality`, so
+    // `Encoder::lossless().quality(90)` is a compile error, not a runtime one.
+    let _lossy = Encoder::lossy().quality(90).encode(&image)?;
+    Ok(())
+}
+```
+
+`decode` is **safe on untrusted input by default**: it caps the canvas at
+`DEFAULT_MAX_PIXELS` before allocating anything. Choose a different cap with
+`decode_with(bytes, &DecodeOptions::default().max_pixels(n))`, or lift it for
+trusted input with `.unbounded()`. Full API on
+[docs.rs](https://docs.rs/webpkit); a runnable version is
+[`examples/roundtrip.rs`](crates/webpkit/examples/roundtrip.rs).
+
+## Building from source
 
 ```
 mise install        # pinned tools, incl. cwebp/dwebp

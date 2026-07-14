@@ -72,6 +72,10 @@ mod encoder;
 pub mod error;
 #[doc(hidden)]
 pub mod image;
+// Optional `image`-crate interop (TryFrom conversions on `Image`). The impls attach
+// to the public types, so the module itself stays private.
+#[cfg(feature = "image")]
+mod interop;
 #[doc(hidden)]
 pub mod lossless;
 #[doc(hidden)]
@@ -94,7 +98,8 @@ pub use crate::image::{
     Dimensions, Image, ImageRef, MAX_DIMENSION, Metadata, MetadataPolicy, PixelLayout,
 };
 pub use crate::stream::{
-    DecodeOptions, DecodedFrame, FrameDecoder, FramePayload, ImageInfo, Progress, RowDrain,
+    DEFAULT_MAX_PIXELS, DecodeOptions, DecodedFrame, FrameDecoder, FramePayload, ImageInfo,
+    Progress, RowDrain,
 };
 pub use encoder::{Encoder, Lossless, Lossy};
 // Surface animation construction from the facade (previously reachable only
@@ -130,9 +135,10 @@ pub type CompositedFrames<'a> = crate::anim::CompositedFrames<'a, WebpFrameDecod
 ///
 /// # Untrusted input
 ///
-/// This applies no allocation cap beyond the per-side dimension limit
-/// ([`MAX_DIMENSION`], ≈1 GiB of RGBA). When decoding attacker-controlled data,
-/// use [`decode_with`] with [`DecodeOptions::max_pixels`] to bound memory.
+/// Safe by default: this caps the canvas at [`DEFAULT_MAX_PIXELS`] before any
+/// buffer is allocated, so a hostile header cannot exhaust memory. Raise the cap
+/// with [`decode_with`] + [`DecodeOptions::max_pixels`], or remove it for trusted
+/// input with [`DecodeOptions::unbounded`].
 ///
 /// # Errors
 ///
@@ -149,9 +155,9 @@ pub fn decode(input: &[u8]) -> Result<Image> {
 /// Symmetric with the codec crates' `decode_with`: the selected decoder enforces
 /// `options.max_pixels` against the peeked header dimensions *before* any pixel or
 /// canvas buffer is allocated, and the limit is propagated into a lossy image's
-/// `ALPH` alpha decode. The default `max_pixels` is `None` (no cap); set it when
-/// decoding untrusted input. An animated file returns its **first composited
-/// frame** (matching [`decode`]).
+/// `ALPH` alpha decode. A default [`DecodeOptions`] caps at [`DEFAULT_MAX_PIXELS`];
+/// call [`DecodeOptions::unbounded`] to lift it for trusted input. An animated file
+/// returns its **first composited frame** (matching [`decode`]).
 ///
 /// # Errors
 ///
@@ -311,9 +317,10 @@ fn alpha_plane_with(
 ///
 /// # Untrusted input
 ///
-/// Like [`decode`], this applies no per-frame allocation cap by default; use
-/// [`decode_frames_with`] with [`DecodeOptions::max_pixels`] for attacker-controlled
-/// input.
+/// Safe by default: like [`decode`], each frame's canvas is capped at
+/// [`DEFAULT_MAX_PIXELS`] before allocation. Use [`decode_frames_with`] with
+/// [`DecodeOptions::max_pixels`] to choose another cap, or
+/// [`DecodeOptions::unbounded`] for trusted input.
 ///
 /// # Errors
 ///
@@ -1006,12 +1013,40 @@ mod tests {
                 limit: 10,
             }
         );
-        // The default (no cap) still decodes.
+        // A 64px image is far under the default `DEFAULT_MAX_PIXELS` cap, so the
+        // default options still decode it.
         assert_eq!(
             decode_with(&file, &DecodeOptions::default())
                 .unwrap()
                 .dimensions(),
             dims
+        );
+    }
+
+    #[test]
+    fn plain_decode_is_bounded_by_default_on_a_hostile_header() {
+        // Safe by default: a bare `decode` (no options) must reject a header that
+        // claims a huge canvas — here a 16383x16383 (≈268 Mpx) lossy `VP8 ` key
+        // frame, well past `DEFAULT_MAX_PIXELS` (100 Mpx) — *before* any plane is
+        // allocated, so only the 10-byte header is needed. A regression that let
+        // `decode` bypass the default cap would allocate ≈1 GiB here instead.
+        let vp8 = [0x10u8, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0xFF, 0x3F, 0xFF, 0x3F];
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::VP8, &vp8);
+        let file = riff_envelope(&body);
+        assert!(
+            matches!(decode(&file), Err(Error::LimitExceeded { limit, .. })
+                if limit == crate::DEFAULT_MAX_PIXELS),
+            "plain decode must enforce DEFAULT_MAX_PIXELS on an oversized header"
+        );
+        // `.unbounded()` is the explicit escape hatch: the same header now passes the
+        // pixel guard (and fails later on the truncated body, not on the cap).
+        assert!(
+            !matches!(
+                decode_with(&file, &DecodeOptions::default().unbounded()),
+                Err(Error::LimitExceeded { .. })
+            ),
+            "unbounded() must lift the pixel cap"
         );
     }
 

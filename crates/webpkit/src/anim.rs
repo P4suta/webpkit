@@ -400,6 +400,15 @@ impl Compositor {
         if x + w > cw || y + h > ch {
             return Err(Error::InvalidContainer);
         }
+        // The decoded frame buffer must be exactly `w * h` long — every per-row
+        // slice below indexes `argb` on that assumption. Enforce it here so a short
+        // (or oversized) buffer from *any* `FrameDecoder` — the trait is public, so
+        // a caller can supply their own — is a clean error rather than an
+        // out-of-bounds panic in the row loop. The built-in decoders already reject
+        // a dimension mismatch upstream; this makes the compositor safe on its own.
+        if argb.len() as u64 != header.dims.pixel_count() {
+            return Err(Error::InvalidContainer);
+        }
 
         // libwebp keys on the VP8L declared-alpha bit, not on the actual pixels.
         let frame_has_alpha = alpha_used;

@@ -694,6 +694,47 @@ mod tests {
     }
 
     #[test]
+    fn paint_rejects_a_length_mismatched_frame_buffer() {
+        // The compositor slices `argb` row by row on the assumption `argb.len() ==
+        // w*h`. `paint` is public and `FrameDecoder` is a public trait, so a caller
+        // can hand it a buffer that disagrees with the header. That must be a clean
+        // `InvalidContainer`, never an out-of-bounds panic in the row loop. Without
+        // the length guard, the short-buffer case below panics on the slice.
+        let canvas = Dimensions::new(4, 4).unwrap();
+        let fill = 0xFF00_FF00u32;
+        // Header declares a 4x4 (16px) frame; buffers are deliberately wrong-sized.
+        let short = solid(Dimensions::new(4, 3).unwrap(), fill); // 12 < 16
+        let long = solid(Dimensions::new(4, 5).unwrap(), fill); //  20 > 16
+        for bad in [short, long] {
+            let mut c = Compositor::new(canvas, PixelLayout::Rgba8);
+            assert_eq!(
+                c.paint(hdr(0, 0, 4, 4, AnmfFlags(0)), false, &bad)
+                    .unwrap_err(),
+                Error::InvalidContainer,
+            );
+        }
+    }
+
+    #[test]
+    fn paint_fit_check_does_not_wrap_at_a_maximal_u24_offset() {
+        // The fit check `x + w > cw` stays sound only because `x` (a doubled u24 ANMF
+        // field, so <= 33_554_430) and `w` (<= 16384) sum far below u32::MAX — no wrap
+        // even in release where overflow checks are off. Pin that: a maximal offset
+        // against a tiny canvas must reject cleanly, not wrap to a small sum that
+        // would then blit out of bounds. (This is the extreme the byte-level parse
+        // can produce: `read_u24_le` max is 0xFF_FFFF, doubled to 33_554_430.)
+        let canvas = Dimensions::new(1, 1).unwrap();
+        let mut c = Compositor::new(canvas, PixelLayout::Rgba8);
+        let huge = 0xFF_FFFFu32 * 2; // exactly what the parser yields at the u24 max
+        let argb = solid(Dimensions::new(1, 1).unwrap(), 0xFFFF_FFFF);
+        assert_eq!(
+            c.paint(hdr(huge, 0, 1, 1, AnmfFlags(0)), false, &argb)
+                .unwrap_err(),
+            Error::InvalidContainer,
+        );
+    }
+
+    #[test]
     fn paint_full_canvas_frame_is_key_and_overwrites() {
         // A full-canvas no-alpha, no-blend frame is a key frame: it clears the
         // canvas and overwrites verbatim, so a semi-transparent source is copied

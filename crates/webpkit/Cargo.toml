@@ -34,6 +34,10 @@ alloc = []
 # Opt-in encoder data-parallelism (rayon). Off by default; every parallel path is
 # byte-identical to its serial fallback, so it changes only wall-clock, never output.
 rayon = ["dep:rayon", "std"]
+# Opt-in interop with the `image` crate: `TryFrom` conversions between
+# `image::DynamicImage`/`RgbaImage` and `Image` (see `interop.rs`). Off by default,
+# so a plain build keeps the zero-dependency baseline; needs an allocator.
+image = ["dep:image", "alloc"]
 # Differential oracle: links the libwebp C reference in-process for the
 # `tests/oracle*.rs` cross-checks. Dev/test only; never part of a normal build.
 oracle = ["dep:libwebp-sys"]
@@ -47,6 +51,10 @@ work-count = []
 bench = []
 
 [dependencies]
+# Optional `image`-crate interop (the `image` feature). `default-features = false`
+# keeps it to the buffer/`DynamicImage` types — no image format codecs are pulled —
+# so a plain build has zero dependencies and this never enters it.
+image = { version = "0.25", optional = true, default-features = false }
 libwebp-sys = { workspace = true, optional = true }
 # Declared locally (not `workspace = true`) so rayon can never enter a default build.
 rayon = { version = "1", optional = true }

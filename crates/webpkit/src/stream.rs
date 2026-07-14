@@ -65,12 +65,28 @@ pub trait FrameDecoder: core::fmt::Debug + Sync {
     ) -> Result<DecodedFrame>;
 }
 
+/// The pixel cap (`width * height`) a default [`DecodeOptions`] applies — the
+/// safe-by-default guard against a hostile header that claims a huge image to
+/// exhaust memory.
+///
+/// `100_000_000` (100 Mpx ≈ 400 MiB of RGBA) comfortably covers real photographs
+/// (a 100-megapixel image is already far beyond any consumer camera) while keeping
+/// a single crafted decode from allocating toward the per-side ceiling
+/// ([`MAX_DIMENSION`](crate::MAX_DIMENSION)² ≈ 268 Mpx ≈ 1 GiB). Raise it with
+/// [`DecodeOptions::max_pixels`], or remove the cap entirely with
+/// [`DecodeOptions::unbounded`] when the input is trusted.
+pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
+
 /// Options controlling a decode.
 ///
 /// Build one with [`DecodeOptions::new`] / [`Default`] and the consuming builder
 /// methods ([`layout`](Self::layout), [`max_pixels`](Self::max_pixels),
 /// [`read_metadata`](Self::read_metadata)); the fields are private so new options
 /// can be added without a breaking change (reinforced by `#[non_exhaustive]`).
+///
+/// A default-constructed `DecodeOptions` caps the canvas at
+/// [`DEFAULT_MAX_PIXELS`] — so a plain [`decode`](crate::decode) is safe on
+/// untrusted input out of the box. Opt out with [`unbounded`](Self::unbounded).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct DecodeOptions {
@@ -86,14 +102,15 @@ impl Default for DecodeOptions {
     fn default() -> Self {
         Self {
             layout: PixelLayout::Rgba8,
-            max_pixels: None,
+            max_pixels: Some(DEFAULT_MAX_PIXELS),
             read_metadata: true,
         }
     }
 }
 
 impl DecodeOptions {
-    /// Default options: RGBA output, no pixel limit, metadata read.
+    /// Default options: RGBA output, the [`DEFAULT_MAX_PIXELS`] safety cap, and
+    /// metadata read.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -111,13 +128,26 @@ impl DecodeOptions {
     ///
     /// An image whose pixel count exceeds `max` is rejected with
     /// [`Error::LimitExceeded`](crate::error::Error::LimitExceeded) *before* any
-    /// pixel or canvas buffer is allocated. **The default is no cap** (`None`): a
-    /// plain [`decode`](crate::decode) accepts an arbitrarily large image, bounded
-    /// only by the per-side dimension limit ([`MAX_DIMENSION`](crate::MAX_DIMENSION),
-    /// ≈268 Mpx ≈ 1 GiB of RGBA). **Always set this when decoding untrusted input.**
+    /// pixel or canvas buffer is allocated. A default-constructed `DecodeOptions`
+    /// already applies [`DEFAULT_MAX_PIXELS`]; call this only to choose a different
+    /// cap, or [`unbounded`](Self::unbounded) to remove it for trusted input.
     #[must_use]
     pub const fn max_pixels(mut self, max: u64) -> Self {
         self.max_pixels = Some(max);
+        self
+    }
+
+    /// Remove the pixel cap entirely — the decode is bounded only by the per-side
+    /// dimension limit ([`MAX_DIMENSION`](crate::MAX_DIMENSION)² ≈ 268 Mpx ≈ 1 GiB
+    /// of RGBA).
+    ///
+    /// This opts out of the safe-by-default [`DEFAULT_MAX_PIXELS`] cap, so **only
+    /// use it on trusted input** (your own files, a size you already validated). For
+    /// attacker-controlled data keep the default cap or set a smaller
+    /// [`max_pixels`](Self::max_pixels).
+    #[must_use]
+    pub const fn unbounded(mut self) -> Self {
+        self.max_pixels = None;
         self
     }
 
@@ -261,7 +291,7 @@ impl RowDrain<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DecodeOptions, ImageInfo};
+    use super::{DEFAULT_MAX_PIXELS, DecodeOptions, ImageInfo};
     use crate::image::{Dimensions, PixelLayout};
 
     #[test]
@@ -277,10 +307,14 @@ mod tests {
     }
 
     #[test]
-    fn decode_options_builder_round_trips_and_defaults_to_no_limit() {
+    fn decode_options_builder_round_trips_and_defaults_to_the_safety_cap() {
         // `#[non_exhaustive]`: the builder (not a struct literal) is the construction
-        // path, and the default carries no pixel limit.
-        assert_eq!(DecodeOptions::default().max_pixels, None);
+        // path. Safe by default — the default carries the `DEFAULT_MAX_PIXELS` cap so
+        // a plain `decode` is bounded on untrusted input.
+        assert_eq!(
+            DecodeOptions::default().max_pixels,
+            Some(DEFAULT_MAX_PIXELS)
+        );
         let opts = DecodeOptions::new()
             .layout(PixelLayout::Bgra8)
             .max_pixels(1024)
@@ -288,6 +322,23 @@ mod tests {
         assert_eq!(opts.layout, PixelLayout::Bgra8);
         assert_eq!(opts.max_pixels, Some(1024));
         assert!(!opts.read_metadata);
+    }
+
+    #[test]
+    fn unbounded_removes_the_default_cap() {
+        // `.unbounded()` is the explicit opt-out for trusted input: it clears the
+        // default `DEFAULT_MAX_PIXELS` cap back to `None`. A body that left the cap in
+        // place (or set some other `Some`) would fail here.
+        assert_eq!(
+            DecodeOptions::default().max_pixels,
+            Some(DEFAULT_MAX_PIXELS)
+        );
+        assert_eq!(DecodeOptions::new().unbounded().max_pixels, None);
+        // A custom cap set afterwards still wins — `unbounded` is not sticky.
+        assert_eq!(
+            DecodeOptions::new().unbounded().max_pixels(64).max_pixels,
+            Some(64)
+        );
     }
 
     #[test]
