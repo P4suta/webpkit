@@ -23,7 +23,7 @@ rust-version = "1.96"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/P4suta/webpkit"
-authors = ["webpkit contributors"]
+authors = ["Yasunobu Sakashita <crates.tank733@slmails.com>"]
 
 # Shared dependency versions for the tooling / test-harness crates only. The
 # product crate `webpkit` has ZERO required runtime deps; its two optional deps are:
