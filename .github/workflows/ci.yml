@@ -385,7 +385,10 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
         with:
-          tool: cargo-fuzz
+          # Pinned: cargo-fuzz 0.13.2 emits sanitizer-coverage flags that fail to
+          # link (undefined __sancov_gen_) regardless of target/nightly. 0.13.1 uses
+          # the prior, working flag set.
+          tool: cargo-fuzz@0.13.1
       - name: install nightly (libFuzzer)
         run: rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal --no-self-update
       - name: fuzz smoke (all targets, seeded from committed corpora)
