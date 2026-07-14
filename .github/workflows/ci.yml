@@ -386,7 +386,11 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: install nightly (libFuzzer)
-        run: rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal --no-self-update
+        # cargo-fuzz 0.13 builds its ASAN target as x86_64-unknown-linux-musl by
+        # default (avoids the sancov link errors seen on gnu), so add that std.
+        run: |
+          rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal --no-self-update
+          rustup target add x86_64-unknown-linux-musl --toolchain "${NIGHTLY_TOOLCHAIN}"
       - name: fuzz smoke (all targets, seeded from committed corpora)
         run: |
           set -euo pipefail
@@ -394,7 +398,7 @@ jobs:
             echo "::group::fuzz ${target}"
             mkdir -p "crates/webpkit-lossless-fuzz/corpus/${target}"
             cp crates/webpkit-lossless-fuzz/seeds/"${target}"/* "crates/webpkit-lossless-fuzz/corpus/${target}/"
-            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossless-fuzz --features fuzzing --target x86_64-unknown-linux-gnu \
+            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossless-fuzz --features fuzzing \
               -- -max_total_time=40 -runs=2000000
             echo "::endgroup::"
           done
@@ -405,7 +409,7 @@ jobs:
             echo "::group::webpkit-lossy ${target}"
             mkdir -p "crates/webpkit-lossy-fuzz/corpus/${target}"
             cp crates/webpkit-lossy-fuzz/seeds/"${target}"/* "crates/webpkit-lossy-fuzz/corpus/${target}/"
-            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossy-fuzz --features fuzzing --target x86_64-unknown-linux-gnu \
+            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossy-fuzz --features fuzzing \
               -- -max_total_time=40 -runs=2000000
             echo "::endgroup::"
           done
@@ -416,7 +420,7 @@ jobs:
             echo "::group::webpkit-fuzz ${target}"
             mkdir -p "crates/webpkit-fuzz/corpus/${target}"
             cp crates/webpkit-fuzz/seeds/"${target}"/*.webp "crates/webpkit-fuzz/corpus/${target}/"
-            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-fuzz --features fuzzing --target x86_64-unknown-linux-gnu \
+            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-fuzz --features fuzzing \
               -- -max_total_time=40 -runs=2000000
             echo "::endgroup::"
           done
