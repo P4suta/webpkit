@@ -5,11 +5,16 @@
 #                          crates.io and creates the GitHub release + tag.
 #                          cargo-semver-checks gates breaking API changes.
 #
-# Secrets live in the `crates-io` GitHub Environment — NOT repo-level secrets:
-#   - CARGO_REGISTRY_TOKEN   required to publish; inject it into the environment.
-# The GitHub token is the automatic GITHUB_TOKEN (nothing to inject). Note: PRs
-# opened via GITHUB_TOKEN do not trigger CI; to run CI on the release PR, swap in a
-# GitHub App token (see release-plz docs) as another environment secret.
+# Auth uses a GitHub App (no PAT, no repo-level secrets). Both jobs mint a short-
+# lived installation token via actions/create-github-app-token, so release PRs are
+# authored by the App and therefore DO trigger CI (GITHUB_TOKEN-authored PRs don't).
+#
+# Inject these into the `release` GitHub Environment (Settings > Environments):
+#   - RELEASE_PLZ_APP_ID           the GitHub App's App ID
+#   - RELEASE_PLZ_APP_PRIVATE_KEY  the App's private key (PEM)
+#   - CARGO_REGISTRY_TOKEN         crates.io publish token
+# The App needs repository permissions: Contents: read/write, Pull requests:
+# read/write, and must be installed on this repository.
 
 name: release-plz
 
@@ -21,31 +26,37 @@ permissions:
   contents: read
 
 jobs:
-  # Publish + GitHub release. Gated on the `crates-io` environment so the crates.io
-  # token is scoped there and (optionally) a manual approval precedes every publish.
+  # Publish + GitHub release, gated on the `release` environment (main-only) so the
+  # tokens are scoped there.
   release-plz-release:
     name: release-plz release
     runs-on: ubuntu-latest
-    environment: crates-io
+    environment: release
     permissions:
       contents: write # create the git tag + GitHub release
     steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  # Open/update the release PR. Needs no crates.io token, so it is not environment
-  # gated (would otherwise require an approval on every commit to main).
+  # Open/update the release PR. Same App token so the PR triggers CI.
   release-plz-pr:
     name: release-plz pr
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
       pull-requests: write
@@ -53,12 +64,18 @@ jobs:
       group: release-plz-pr
       cancel-in-progress: false
     steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release-pr
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
