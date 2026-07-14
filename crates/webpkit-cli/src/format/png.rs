@@ -21,13 +21,18 @@ const XMP_KEYWORD: &str = "XML:com.adobe.xmp";
 ///
 /// [`CliError::Format`] if the bytes are not a decodable PNG.
 pub fn read(bytes: &[u8]) -> Result<Image, CliError> {
-    let mut decoder = png::Decoder::new(bytes);
+    // png 0.18 requires the reader to be `Read + Seek`; `&[u8]` is only `Read`.
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(Transformations::EXPAND | Transformations::STRIP_16);
     let mut reader = decoder
         .read_info()
         .map_err(|err| CliError::Format(format!("invalid PNG: {err}")))?;
     let metadata = extract_metadata(reader.info(), bytes);
-    let mut buf = vec![0_u8; reader.output_buffer_size()];
+    // png 0.18 returns `None` when the buffer size would overflow `usize`.
+    let buf_size = reader
+        .output_buffer_size()
+        .ok_or_else(|| CliError::Format("PNG output buffer size overflow".to_owned()))?;
+    let mut buf = vec![0_u8; buf_size];
     let info = reader
         .next_frame(&mut buf)
         .map_err(|err| CliError::Format(format!("invalid PNG: {err}")))?;
