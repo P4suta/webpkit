@@ -37,6 +37,19 @@ fn reencode(bytes: &[u8]) -> webpkit::Result<()> {
 See [`examples/roundtrip.rs`](examples/roundtrip.rs) for a complete, runnable
 encode → decode round-trip.
 
+`decode` is **safe on untrusted input by default**: it caps the canvas at
+`DEFAULT_MAX_PIXELS` before allocating, so a hostile header cannot exhaust memory.
+Use `decode_with` + `DecodeOptions::max_pixels` for a different cap, or
+`DecodeOptions::unbounded` to lift it for trusted input.
+
+## Optional features
+
+Off by default, so a plain dependency stays zero-dependency:
+
+- `rayon` — encoder data-parallelism (byte-identical output, only faster).
+- `image` — `TryFrom` conversions between `image::DynamicImage`/`RgbaImage` and the
+  codec's `Image`.
+
 [`decode`]: https://docs.rs/webpkit/latest/webpkit/fn.decode.html
 [`Encoder`]: https://docs.rs/webpkit/latest/webpkit/struct.Encoder.html
 

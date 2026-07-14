@@ -22,9 +22,17 @@ required runtime dependencies, `no_std`-friendly with `alloc`.
 - **One-call helpers.** `encode_lossless_rgba` / `encode_lossy_rgba` and
   `decode_rgba` / `decode_reader` cover the raw-RGBA common case in a single call,
   alongside the full-control [`Encoder`] builder and `decode`.
+- **Safe-by-default decoding.** `decode` / `decode_frames` now cap the canvas at
+  `DEFAULT_MAX_PIXELS` (100 Mpx) before any allocation, so a hostile header cannot
+  exhaust memory out of the box. `DecodeOptions::unbounded` opts out for trusted
+  input; `DecodeOptions::max_pixels` sets a custom cap.
+- **`image` crate interop (optional `image` feature).** `TryFrom` conversions
+  between `image::DynamicImage` / `RgbaImage` and the codec's `Image`. Off by
+  default — the baseline build stays zero-dependency.
 - **Streaming API.** Incremental / suspend-resume row-streaming decode.
 - **CLI.** `cwebp`, `dwebp`, and `webp` binaries, tracking libwebp semantics.
 - **Verification harness.** Golden fixtures, conformance ledger, proptest
-  strategies, cargo-fuzz targets, and a libwebp differential oracle, driven by
-  `xtask` automation (`gen-fixtures`, `conformance`, `drift-gate`,
-  `corpus-sweep`) and a full CI / lint / hook toolchain.
+  strategies, cargo-fuzz targets (with a toolchain-independent stable corpus-replay
+  net that runs every committed seed on each CI run), and a libwebp differential
+  oracle, driven by `xtask` automation (`gen-fixtures`, `conformance`,
+  `drift-gate`, `corpus-sweep`) and a full CI / lint / hook toolchain.

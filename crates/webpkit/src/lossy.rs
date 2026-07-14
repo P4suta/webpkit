@@ -229,8 +229,9 @@ pub fn decode(payload: &[u8]) -> Result<Image> {
 ///
 /// Symmetric with [`crate::lossless::decode_with`]: the header dimensions are
 /// checked against `options.max_pixels` *before* the reconstruction planes are
-/// allocated (in `decode`), so a hostile header cannot exhaust memory. The default
-/// `max_pixels` is `None` (no limit); set it when decoding untrusted input.
+/// allocated (in `decode`), so a hostile header cannot exhaust memory. A default
+/// [`DecodeOptions`] caps at [`DEFAULT_MAX_PIXELS`](crate::DEFAULT_MAX_PIXELS);
+/// call [`DecodeOptions::unbounded`] to lift it for trusted input.
 ///
 /// # Errors
 ///
