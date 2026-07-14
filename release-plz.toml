@@ -1,0 +1,15 @@
+# release-plz configuration — https://release-plz.dev/docs/config
+#
+# Only the two facade crates are published (webpkit, then webpkit-cli); every other
+# workspace member sets `publish = false` and is skipped automatically. Versions are
+# derived from Conventional Commits; pre-1.0 breaking changes bump the minor (0.1 ->
+# 0.2), matching SemVer's 0.x semantics, which release-plz applies by default.
+
+[workspace]
+# Gate breaking API changes: run cargo-semver-checks before every release.
+semver_check = true
+# Maintain CHANGELOG.md from Conventional Commits.
+changelog_update = true
+# Create a git tag and a GitHub release for each published version.
+git_tag_enable = true
+git_release_enable = true

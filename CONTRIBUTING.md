@@ -58,8 +58,9 @@ webpkit follows an external-verification discipline:
   `perf:` / `docs:` / `refactor:` / `test:` / `chore:` / `ci:` / `build:`).
   commitlint (`commitlint.config.mjs`) lints every commit in a PR.
 - **Squash-merge only.**
-- Releases are cut by [release-please](https://github.com/googleapis/release-please):
-  it bumps the CHANGELOG from conventional commits and tags.
+- Releases are cut by [release-plz](https://release-plz.dev): it opens a release PR
+  that bumps the version + CHANGELOG from conventional commits, then on merge
+  publishes to crates.io (cargo-semver-checks gates breaking changes) and tags.
 
 ## Before pushing
 

@@ -1,0 +1,64 @@
+# Release automation via release-plz (https://release-plz.dev). On push to main:
+#   - release-plz-pr:      opens/updates a release PR (version bump + CHANGELOG)
+#                          from Conventional Commits.
+#   - release-plz-release: when that PR merges, publishes newly-versioned crates to
+#                          crates.io and creates the GitHub release + tag.
+#                          cargo-semver-checks gates breaking API changes.
+#
+# Secrets live in the `crates-io` GitHub Environment — NOT repo-level secrets:
+#   - CARGO_REGISTRY_TOKEN   required to publish; inject it into the environment.
+# The GitHub token is the automatic GITHUB_TOKEN (nothing to inject). Note: PRs
+# opened via GITHUB_TOKEN do not trigger CI; to run CI on the release PR, swap in a
+# GitHub App token (see release-plz docs) as another environment secret.
+
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # Publish + GitHub release. Gated on the `crates-io` environment so the crates.io
+  # token is scoped there and (optionally) a manual approval precedes every publish.
+  release-plz-release:
+    name: release-plz release
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: write # create the git tag + GitHub release
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Open/update the release PR. Needs no crates.io token, so it is not environment
+  # gated (would otherwise require an approval on every commit to main).
+  release-plz-pr:
+    name: release-plz pr
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-pr
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
