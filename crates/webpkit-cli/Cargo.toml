@@ -13,6 +13,10 @@ homepage = "https://github.com/P4suta/webpkit"
 documentation = "https://docs.rs/webpkit-cli"
 readme = "README.md"
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [lib]
 name = "webpkit_cli"
 path = "src/lib.rs"
@@ -50,7 +54,3 @@ tempfile = { workspace = true }
 
 [lints]
 workspace = true
-
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
