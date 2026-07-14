@@ -67,22 +67,19 @@ pub trait FrameDecoder: core::fmt::Debug + Sync {
 
 /// Options controlling a decode.
 ///
-/// `#[non_exhaustive]`: build one with [`DecodeOptions::new`] / [`Default`] and the
-/// `with_*` builder methods so future options can be added without a breaking change.
+/// Build one with [`DecodeOptions::new`] / [`Default`] and the consuming builder
+/// methods ([`layout`](Self::layout), [`max_pixels`](Self::max_pixels),
+/// [`read_metadata`](Self::read_metadata)); the fields are private so new options
+/// can be added without a breaking change (reinforced by `#[non_exhaustive]`).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct DecodeOptions {
-    /// The requested output pixel byte order.
-    pub layout: PixelLayout,
-    /// An **opt-in** cap on `width * height`. Defaults to `None` (no limit): a
-    /// decode of an arbitrarily large image is accepted. When set (via
-    /// [`DecodeOptions::max_pixels`]), an image whose pixel count exceeds it is
-    /// rejected with [`Error::LimitExceeded`](crate::error::Error::LimitExceeded)
-    /// *before* any pixel/canvas buffer is allocated, so a hostile header cannot
-    /// exhaust memory. Set it when streaming untrusted input.
-    pub max_pixels: Option<u64>,
-    /// Whether to extract ICC/Exif/XMP metadata.
-    pub read_metadata: bool,
+    /// The requested output pixel byte order. See [`layout`](Self::layout).
+    pub(crate) layout: PixelLayout,
+    /// The opt-in `width * height` cap. See [`max_pixels`](Self::max_pixels).
+    pub(crate) max_pixels: Option<u64>,
+    /// Whether to extract ICC/Exif/XMP metadata. See [`read_metadata`](Self::read_metadata).
+    pub(crate) read_metadata: bool,
 }
 
 impl Default for DecodeOptions {
@@ -109,7 +106,15 @@ impl DecodeOptions {
         self
     }
 
-    /// Reject images whose `width * height` exceeds `max` (hostile-header guard).
+    /// Cap the decoded canvas at `max` pixels (`width * height`) — the guard
+    /// against a hostile header that claims a huge image to exhaust memory.
+    ///
+    /// An image whose pixel count exceeds `max` is rejected with
+    /// [`Error::LimitExceeded`](crate::error::Error::LimitExceeded) *before* any
+    /// pixel or canvas buffer is allocated. **The default is no cap** (`None`): a
+    /// plain [`decode`](crate::decode) accepts an arbitrarily large image, bounded
+    /// only by the per-side dimension limit ([`MAX_DIMENSION`](crate::MAX_DIMENSION),
+    /// ≈268 Mpx ≈ 1 GiB of RGBA). **Always set this when decoding untrusted input.**
     #[must_use]
     pub const fn max_pixels(mut self, max: u64) -> Self {
         self.max_pixels = Some(max);

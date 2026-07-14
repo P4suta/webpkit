@@ -12,10 +12,12 @@ categories = ["command-line-utilities", "multimedia::images"]
 homepage = "https://github.com/P4suta/webpkit"
 documentation = "https://docs.rs/webpkit-cli"
 readme = "README.md"
+# CLI integration tests + insta snapshots (~45 KB) are dev-only; drop them from the
+# published tarball. The binaries and library are all a consumer needs.
+exclude = ["tests/"]
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
 
 [lib]
 name = "webpkit_cli"

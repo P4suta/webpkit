@@ -384,6 +384,12 @@ jobs:
     # fails to link (undefined symbol) — reproduced on gnu and musl, on nightly
     # 2026-07-01 and 2026-06-10. Disabled on push/PR until cargo-fuzz ships a fix;
     # still runnable on demand via the Actions "Run workflow" button.
+    #
+    # Upstream tracker: https://github.com/rust-fuzz/cargo-fuzz/issues
+    # RE-ENABLE when fixed: bump the cargo-fuzz install below (and NIGHTLY_TOOLCHAIN
+    # if needed), confirm a local `cargo fuzz build` links on the pinned nightly, then
+    # change this `if:` to run on push/PR again:
+    #   if: ${{ github.event_name != 'schedule' }}   # (or drop the guard entirely)
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

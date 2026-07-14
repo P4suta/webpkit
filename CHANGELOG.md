@@ -19,6 +19,9 @@ required runtime dependencies, `no_std`-friendly with `alloc`.
   libwebp on the decode conformance set.
 - **Container & metadata.** Extended `VP8X` container with ICC / Exif / XMP
   metadata (preserved by default), alpha (`ALPH`), and animation.
+- **One-call helpers.** `encode_lossless_rgba` / `encode_lossy_rgba` and
+  `decode_rgba` / `decode_reader` cover the raw-RGBA common case in a single call,
+  alongside the full-control [`Encoder`] builder and `decode`.
 - **Streaming API.** Incremental / suspend-resume row-streaming decode.
 - **CLI.** `cwebp`, `dwebp`, and `webp` binaries, tracking libwebp semantics.
 - **Verification harness.** Golden fixtures, conformance ledger, proptest
