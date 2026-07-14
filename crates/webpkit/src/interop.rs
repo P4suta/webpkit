@@ -14,7 +14,7 @@ use crate::image::{Dimensions, Image, Metadata, PixelLayout, pack_pixels, unpack
 
 /// Convert an [`image::DynamicImage`] into a webpkit [`Image`] (RGBA8).
 ///
-/// The source is materialised as RGBA8 and `has_alpha` is set from a scan of the
+/// The source is materialized as RGBA8 and `has_alpha` is set from a scan of the
 /// resulting alpha lane. Sidecar metadata (ICC/Exif/XMP) is not carried — a
 /// `DynamicImage` does not model it — so attach any with [`Image::with_metadata`].
 ///
