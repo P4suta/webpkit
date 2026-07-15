@@ -12,9 +12,13 @@
 # Inject these into the `release` GitHub Environment (Settings > Environments):
 #   - RELEASE_PLZ_APP_ID           the GitHub App's App ID
 #   - RELEASE_PLZ_APP_PRIVATE_KEY  the App's private key (PEM)
-#   - CARGO_REGISTRY_TOKEN         crates.io publish token
 # The App needs repository permissions: Contents: read/write, Pull requests:
 # read/write, and must be installed on this repository.
+#
+# crates.io auth uses Trusted Publishing (OIDC), not a stored token: release-plz
+# mints a short-lived token via `id-token: write`. Register a trusted publisher for
+# each published crate on crates.io (owner P4suta, repo webpkit, workflow
+# release-plz.yml, environment release).
 
 name: release-plz
 
@@ -26,19 +30,17 @@ permissions:
   contents: read
 
 jobs:
-  # Publish + GitHub release, gated on the `release` environment (main-only) so the
-  # tokens are scoped there.
+  # Publish + GitHub release. Only fires when a release PR merge introduces a new
+  # version (release_always = false). Gate publishing via the `release` environment's
+  # protection rules (Settings > Environments > release > Required reviewers), not a
+  # workflow flag: environment vars aren't readable in a job-level `if`.
   release-plz-release:
     name: release-plz release
-    # crates.io publishing is deferred. Enable it later by injecting
-    # CARGO_REGISTRY_TOKEN into the `release` environment AND setting the repository
-    # variable CRATES_IO_PUBLISH=true (Settings > Secrets and variables > Actions >
-    # Variables). Until then this job is skipped so it can't fail on the missing token.
-    if: ${{ vars.CRATES_IO_PUBLISH == 'true' }}
     runs-on: ubuntu-latest
     environment: release
     permissions:
       contents: write # create the git tag + GitHub release
+      id-token: write # crates.io Trusted Publishing (OIDC)
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
@@ -55,7 +57,6 @@ jobs:
           command: release
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   # Open/update the release PR. Same App token so the PR triggers CI.
   release-plz-pr:
