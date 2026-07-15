@@ -9,7 +9,12 @@
 # lived installation token via actions/create-github-app-token, so release PRs are
 # authored by the App and therefore DO trigger CI (GITHUB_TOKEN-authored PRs don't).
 #
-# Inject these into the `release` GitHub Environment (Settings > Environments):
+# Two environments carry the same App credentials, because only publishing may block
+# on a human: `release` has a required reviewer, `release-pr` has none. Sharing one
+# environment would make every push to main wait for an approval.
+#   - release      -> release-plz-release (publish; approval required)
+#   - release-pr   -> release-plz-pr      (runs on every push to main)
+# Inject into BOTH (Settings > Environments):
 #   - RELEASE_PLZ_APP_ID           the GitHub App's App ID
 #   - RELEASE_PLZ_APP_PRIVATE_KEY  the App's private key (PEM)
 # The App needs repository permissions: Contents: read/write, Pull requests:
@@ -32,8 +37,8 @@ permissions:
 jobs:
   # Publish + GitHub release. Only fires when a release PR merge introduces a new
   # version (release_always = false). Gate publishing via the `release` environment's
-  # protection rules (Settings > Environments > release > Required reviewers), not a
-  # workflow flag: environment vars aren't readable in a job-level `if`.
+  # required reviewer, not a workflow flag: environment vars aren't readable in a
+  # job-level `if`. crates.io pins its trusted publisher to this environment name.
   release-plz-release:
     name: release-plz release
     runs-on: ubuntu-latest
@@ -58,11 +63,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  # Open/update the release PR. Same App token so the PR triggers CI.
+  # Open/update the release PR. Same App token so the PR triggers CI. Uses the
+  # approval-free `release-pr` environment: this runs on every push to main.
   release-plz-pr:
     name: release-plz pr
     runs-on: ubuntu-latest
-    environment: release
+    environment: release-pr
     permissions:
       contents: write
       pull-requests: write
