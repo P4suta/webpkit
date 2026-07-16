@@ -1,0 +1,145 @@
+
+use builtin;
+use str;
+
+set edit:completion:arg-completer[webp] = {|@words|
+    fn spaces {|n|
+        builtin:repeat $n ' ' | str:join ''
+    }
+    fn cand {|text desc|
+        edit:complex-candidate $text &display=$text' '(spaces (- 14 (wcswidth $text)))$desc
+    }
+    var command = 'webp'
+    for word $words[1..-1] {
+        if (str:has-prefix $word '-') {
+            break
+        }
+        set command = $command';'$word
+    }
+    var completions = [
+        &'webp'= {
+            cand --color 'auto, always, or never'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand -q 'Suppress all non-error output'
+            cand --quiet 'Suppress all non-error output'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+            cand -V 'Print version'
+            cand --version 'Print version'
+            cand decode 'Decode a WebP file to PNG (default), PPM/PAM, or raw pixels'
+            cand encode 'Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)'
+            cand convert 'Batch-convert many images (or directories) to WebP, in parallel'
+            cand info 'Print a summary of a WebP file (size, alpha, metadata, animation)'
+            cand completions 'Print a shell completion script'
+            cand man 'Print a man page in roff, for `man -l -` or a package''s man directory'
+            cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'webp;decode'= {
+            cand -o 'Output path; `-` writes stdout'
+            cand --output 'Output path; `-` writes stdout'
+            cand --format 'Output format; defaults to the `-o` extension, else PNG'
+            cand --layout 'Byte order for raw output only'
+            cand --frames 'For animations: which frames to emit'
+            cand --frame 'For animations: emit only this 0-based frame'
+            cand --metadata 'Metadata to carry into the output: all,none,icc,exif,xmp (default: all)'
+            cand --color 'auto, always, or never'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand -q 'Suppress all non-error output'
+            cand --quiet 'Suppress all non-error output'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;encode'= {
+            cand -o 'Output `.webp` file; `-` writes stdout'
+            cand --output 'Output `.webp` file; `-` writes stdout'
+            cand --input-format 'Input format; defaults to the extension, else the magic bytes, else raw'
+            cand --width 'Raw-input width in pixels (required for raw input)'
+            cand --height 'Raw-input height in pixels (required for raw input)'
+            cand --layout 'Byte order for raw input only'
+            cand -m 'Encoder effort'
+            cand --method 'Encoder effort'
+            cand --quality 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy'
+            cand --metadata 'Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)'
+            cand --color 'auto, always, or never'
+            cand --lossy 'Encode lossily (VP8) instead of losslessly (VP8L)'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand -q 'Suppress all non-error output'
+            cand --quiet 'Suppress all non-error output'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;convert'= {
+            cand -o 'Output directory (created outputs are `<stem>.webp`); default: beside input'
+            cand --output 'Output directory (created outputs are `<stem>.webp`); default: beside input'
+            cand -m 'Encoder effort (ignored with --optimize)'
+            cand --method 'Encoder effort (ignored with --optimize)'
+            cand --quality 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy'
+            cand --metadata 'Metadata to embed: all,none,icc,exif,xmp (default: all)'
+            cand --color 'auto, always, or never'
+            cand --lossy 'Encode lossily (VP8) instead of losslessly (VP8L)'
+            cand --optimize 'Try every lossless effort level and keep the smallest output'
+            cand -r 'Recurse into subdirectories'
+            cand --recursive 'Recurse into subdirectories'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand -q 'Suppress all non-error output'
+            cand --quiet 'Suppress all non-error output'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;info'= {
+            cand --color 'auto, always, or never'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand -q 'Suppress all non-error output'
+            cand --quiet 'Suppress all non-error output'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;completions'= {
+            cand --color 'auto, always, or never'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand -q 'Suppress all non-error output'
+            cand --quiet 'Suppress all non-error output'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;man'= {
+            cand --color 'auto, always, or never'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand -q 'Suppress all non-error output'
+            cand --quiet 'Suppress all non-error output'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;help'= {
+            cand decode 'Decode a WebP file to PNG (default), PPM/PAM, or raw pixels'
+            cand encode 'Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)'
+            cand convert 'Batch-convert many images (or directories) to WebP, in parallel'
+            cand info 'Print a summary of a WebP file (size, alpha, metadata, animation)'
+            cand completions 'Print a shell completion script'
+            cand man 'Print a man page in roff, for `man -l -` or a package''s man directory'
+            cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'webp;help;decode'= {
+        }
+        &'webp;help;encode'= {
+        }
+        &'webp;help;convert'= {
+        }
+        &'webp;help;info'= {
+        }
+        &'webp;help;completions'= {
+        }
+        &'webp;help;man'= {
+        }
+        &'webp;help;help'= {
+        }
+    ]
+    $completions[$command]
+}

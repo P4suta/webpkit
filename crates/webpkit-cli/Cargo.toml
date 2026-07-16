@@ -41,6 +41,11 @@ path = "src/bin/webp.rs"
 anstream = { workspace = true }
 anstyle = { workspace = true }
 clap = { workspace = true }
+# Completions cost nothing new (clap + clap_lex only); man pages add `roff`.
+# Both generate from the same `clap::Command` the parser already builds, so the
+# help, the completions, and the man page cannot describe different flags.
+clap_complete = { workspace = true }
+clap_mangen = { workspace = true }
 png = { workspace = true }
 rayon = { workspace = true }
 # The one WebP codec crate: its type-state `Encoder` routes to lossless (VP8L) or

@@ -37,6 +37,8 @@ anyhow = "1"
 assert_cmd = "2"                                                     # dev: CLI integration tests
 cargo_metadata = "0.23"                                              # xtask: workspace introspection
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"                                                  # CLI-only: shell completion scripts
+clap_mangen = "0.3"                                                  # CLI-only: man pages
 criterion = { version = "0.8", features = ["html_reports"] }
 insta = { version = "1", features = ["yaml", "json", "redactions"] }
 libfuzzer-sys = "0.4"                                                # webpkit-lossless-fuzz targets

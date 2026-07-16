@@ -8,11 +8,13 @@ Command-line tools for the webpkit WebP codec: libwebp-style cwebp (lossy by def
 Usage: webp [OPTIONS] <COMMAND>
 
 Commands:
-  decode   Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
-  encode   Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)
-  convert  Batch-convert many images (or directories) to WebP, in parallel
-  info     Print a summary of a WebP file (size, alpha, metadata, animation)
-  help     Print this message or the help of the given subcommand(s)
+  decode       Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
+  encode       Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)
+  convert      Batch-convert many images (or directories) to WebP, in parallel
+  info         Print a summary of a WebP file (size, alpha, metadata, animation)
+  completions  Print a shell completion script
+  man          Print a man page in roff, for `man -l -` or a package's man directory
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
   -v, --verbose...
@@ -257,6 +259,66 @@ Arguments:
           Input `.webp` file; `-` (the default) reads stdin
           
           [default: -]
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+  -q, --quiet
+          Suppress all non-error output
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp completions --help
+Print a shell completion script.
+
+The script is generated from the same command tree that parses your arguments, so it cannot describe a flag that does not exist.
+
+Load it for the current shell, or install it where your shell looks:
+
+bash:        eval "$(webp completions bash)" zsh:         webp completions zsh > ~/.zfunc/_webp fish:        webp completions fish > ~/.config/fish/completions/webp.fish powershell:  webp completions powershell | Out-String | Invoke-Expression
+
+Usage: webp completions [OPTIONS] <SHELL>
+
+Arguments:
+  <SHELL>
+          The shell to generate for
+          
+          [possible values: bash, elvish, fish, powershell, zsh]
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+  -q, --quiet
+          Suppress all non-error output
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp man --help
+Print a man page in roff, for `man -l -` or a package's man directory
+
+Usage: webp man [OPTIONS] [COMMAND]
+
+Arguments:
+  [COMMAND]
+          Document this subcommand instead of the tool itself
 
 Options:
   -v, --verbose...

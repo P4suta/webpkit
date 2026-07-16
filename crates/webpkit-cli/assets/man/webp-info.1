@@ -1,0 +1,16 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-info 1  "info " 
+.SH NAME
+info \- Print a summary of a WebP file (size, alpha, metadata, animation)
+.SH SYNOPSIS
+\fBinfo\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
+.SH DESCRIPTION
+Print a summary of a WebP file (size, alpha, metadata, animation)
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIINPUT\fR] [default: \-]
+Input `.webp` file; `\-` (the default) reads stdin

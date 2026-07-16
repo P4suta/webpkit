@@ -1,0 +1,97 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-encode 1  "encode " 
+.SH NAME
+encode \- Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or \-\-lossy)
+.SH SYNOPSIS
+\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossy\fR] [\fB\-\-quality\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
+.SH DESCRIPTION
+Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or \-\-lossy)
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
+Output `.webp` file; `\-` writes stdout
+.TP
+\fB\-\-input\-format\fR \fI<INPUT_FORMAT>\fR
+Input format; defaults to the extension, else the magic bytes, else raw
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+png: PNG (any color type; normalized to RGBA8)
+.IP \(bu 2
+ppm: Netpbm binary PPM (`P6`, RGB)
+.IP \(bu 2
+pam: Netpbm binary PAM (`P7`, RGBA)
+.IP \(bu 2
+raw: Raw row\-major pixels; requires `\-\-width`/`\-\-height`/`\-\-layout`
+.RE
+.TP
+\fB\-\-width\fR \fI<WIDTH>\fR
+Raw\-input width in pixels (required for raw input)
+.TP
+\fB\-\-height\fR \fI<HEIGHT>\fR
+Raw\-input height in pixels (required for raw input)
+.TP
+\fB\-\-layout\fR \fI<LAYOUT>\fR [default: rgba8]
+Byte order for raw input only
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+rgba8: `R, G, B, A`
+.IP \(bu 2
+argb8: `A, R, G, B`
+.IP \(bu 2
+bgra8: `B, G, R, A`
+.RE
+.TP
+\fB\-m\fR, \fB\-\-method\fR \fI<METHOD>\fR [default: balanced]
+Encoder effort
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+fast: Fastest: literal + subtract\-green only
+.IP \(bu 2
+balanced: Balanced (the default): LZ77 + color cache
+.IP \(bu 2
+best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
+.RE
+.TP
+\fB\-\-lossy\fR
+Encode lossily (VP8) instead of losslessly (VP8L)
+.TP
+\fB\-\-quality\fR \fI<QUALITY>\fR
+Lossy quality 0\-100 (higher = larger, closer to source); selects \-\-lossy
+.TP
+\fB\-\-metadata\fR \fI<METADATA>\fR
+Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+all: Keep ICC, Exif, and XMP
+.IP \(bu 2
+none: Strip everything (a bare `VP8L` output)
+.IP \(bu 2
+icc: Keep the ICC color profile
+.IP \(bu 2
+exif: Keep Exif
+.IP \(bu 2
+xmp: Keep XMP
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIINPUT\fR] [default: \-]
+Input image (PNG/PPM/PAM/raw); `\-` (the default) reads stdin

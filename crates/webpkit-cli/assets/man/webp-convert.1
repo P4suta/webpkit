@@ -1,0 +1,65 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-convert 1  "convert " 
+.SH NAME
+convert \- Batch\-convert many images (or directories) to WebP, in parallel
+.SH SYNOPSIS
+\fBconvert\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossy\fR] [\fB\-\-quality\fR] [\fB\-\-optimize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIINPUTS\fR> 
+.SH DESCRIPTION
+Batch\-convert many images (or directories) to WebP, in parallel
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
+Output directory (created outputs are `<stem>.webp`); default: beside input
+.TP
+\fB\-m\fR, \fB\-\-method\fR \fI<METHOD>\fR [default: balanced]
+Encoder effort (ignored with \-\-optimize)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+fast: Fastest: literal + subtract\-green only
+.IP \(bu 2
+balanced: Balanced (the default): LZ77 + color cache
+.IP \(bu 2
+best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
+.RE
+.TP
+\fB\-\-lossy\fR
+Encode lossily (VP8) instead of losslessly (VP8L)
+.TP
+\fB\-\-quality\fR \fI<QUALITY>\fR
+Lossy quality 0\-100 (higher = larger, closer to source); selects \-\-lossy
+.TP
+\fB\-\-optimize\fR
+Try every lossless effort level and keep the smallest output
+.TP
+\fB\-r\fR, \fB\-\-recursive\fR
+Recurse into subdirectories
+.TP
+\fB\-\-metadata\fR \fI<METADATA>\fR
+Metadata to embed: all,none,icc,exif,xmp (default: all)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+all: Keep ICC, Exif, and XMP
+.IP \(bu 2
+none: Strip everything (a bare `VP8L` output)
+.IP \(bu 2
+icc: Keep the ICC color profile
+.IP \(bu 2
+exif: Keep Exif
+.IP \(bu 2
+xmp: Keep XMP
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIINPUTS\fR>
+Input images and/or directories (PNG/PPM/PAM)

@@ -192,6 +192,26 @@ work:
 work-bless:
     cargo run --release --quiet --features work-count -p xtask -- work --bless
 
+# (Re)generate the shell completions and man pages committed under
+# crates/webpkit-cli/assets/. They ship in the published tarball so packagers get
+# them without a build step, and `webpkit-cli`'s `ledger` test byte-compares them
+# against the binary — so run this after any change to the `webp` flag surface.
+gen-assets:
+    @bash -c 'set -e; \
+        out=crates/webpkit-cli/assets; \
+        run() { cargo run --quiet -p webpkit-cli --bin webp -- "$@"; }; \
+        mkdir -p "$out/completions" "$out/man"; \
+        for sh in bash zsh fish powershell elvish; do \
+            echo "  completions/webp.$sh"; \
+            run completions "$sh" > "$out/completions/webp.$sh"; \
+        done; \
+        echo "  man/webp.1"; \
+        run man > "$out/man/webp.1"; \
+        for c in encode decode convert info completions man; do \
+            echo "  man/webp-$c.1"; \
+            run man "$c" > "$out/man/webp-$c.1"; \
+        done'
+
 # Criterion benchmarks.
 bench:
     cargo bench -p webpkit-bench
