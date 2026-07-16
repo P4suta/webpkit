@@ -33,6 +33,7 @@ mod io;
 mod metadata;
 mod personality;
 mod report;
+mod term;
 
 pub use personality::Personality;
 

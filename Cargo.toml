@@ -31,6 +31,8 @@ authors = ["Yasunobu Sakashita <crates.tank733@slmails.com>"]
 # and `libwebp-sys` (below, consumed only behind webpkit's `oracle` feature and by the
 # differential-test path).
 [workspace.dependencies]
+anstream = "1"                                                       # CLI-only: strips ANSI when the stream isn't a terminal
+anstyle = "1"                                                        # CLI-only: the style vocabulary anstream renders
 anyhow = "1"
 assert_cmd = "2"                                                     # dev: CLI integration tests
 cargo_metadata = "0.23"                                              # xtask: workspace introspection

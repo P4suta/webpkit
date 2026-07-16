@@ -18,6 +18,7 @@ use crate::{
     io::{Sink, Source},
     metadata::{MetadataField, Selection},
     report::{self, Reporter},
+    term::{self, ColorChoice},
 };
 
 /// Encode, decode, and inspect WebP VP8L (lossless) images.
@@ -39,6 +40,20 @@ struct GlobalArgs {
     /// Suppress all non-error output.
     #[arg(short, long, global = true, conflicts_with = "verbose")]
     quiet: bool,
+    /// auto, always, or never
+    ///
+    /// `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color`
+    /// outranks both. Left alone, messages are colored only when stderr is a
+    /// terminal — so a pipe or a log file never receives escape codes.
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value_t,
+        value_name = "WHEN",
+        hide_possible_values = true
+    )]
+    color: ColorChoice,
 }
 
 #[derive(Debug, Subcommand)]
@@ -178,6 +193,7 @@ fn encode_mode(lossy: bool, quality: Option<u8>, method: Method) -> EncodeMode {
 #[must_use]
 pub(crate) fn main() -> ExitCode {
     let cli = Cli::parse();
+    term::install(cli.global.color);
     let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
     match run(&cli.command, &reporter) {
         Ok(()) => ExitCode::SUCCESS,
@@ -382,10 +398,6 @@ fn ratio(input_len: usize, output_len: usize) -> String {
     format!("{}.{}%", permille / 10, permille % 10)
 }
 
-#[allow(
-    clippy::print_stdout,
-    reason = "info prints its report to stdout by design"
-)]
 fn info(args: &InfoArgs) -> Result<(), CliError> {
     let source = Source::from_arg(&args.input);
     let bytes = source.read()?;
@@ -397,7 +409,7 @@ fn info(args: &InfoArgs) -> Result<(), CliError> {
         lines.extend(still_lines(&bytes, &image));
     }
     for line in &lines {
-        println!("{line}");
+        report::out(line);
     }
     Ok(())
 }

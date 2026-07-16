@@ -1367,6 +1367,8 @@ dependencies = [
 name = "webpkit-cli"
 version = "0.1.0"
 dependencies = [
+ "anstream",
+ "anstyle",
  "assert_cmd",
  "clap",
  "insta",

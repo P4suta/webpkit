@@ -1,4 +1,4 @@
-//! The `dwebp` drop-in: libwebp's `dwebp` command grammar, VP8L-lossless only.
+//! The `dwebp` drop-in: libwebp's `dwebp` command grammar.
 //!
 //! Decodes a WebP to PNG (default), PPM, or PAM. YUV/PGM output is rejected
 //! (there is no lossy RGB→YUV step here); `-flip` and `-alpha` are honored.
@@ -13,12 +13,14 @@ use crate::{
     format::{self, OutputFormat},
     io::{Sink, Source},
     report::Reporter,
+    term,
 };
 
 /// Parse `dwebp`-style arguments, decode, and return a process exit code.
 #[must_use]
 pub(crate) fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    term::install(term::prescan(&args));
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
@@ -96,19 +98,21 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                 print_version();
                 return Ok(Parsed::Handled);
             },
-            "-o" => {
-                index += 1;
-                let value = args
-                    .get(index)
-                    .ok_or_else(|| CliError::Usage("`-o` needs a value".to_owned()))?;
-                config.output = Some(PathBuf::from(value));
-            },
+            "-o" => config.output = Some(PathBuf::from(value(args, &mut index, "-o")?)),
             "-png" => config.format = Some(OutputFormat::Png),
             "-ppm" => config.format = Some(OutputFormat::Ppm),
             "-pam" => config.format = Some(OutputFormat::Pam),
             "-flip" => config.flip = true,
             "-alpha" => config.alpha = true,
             "-quiet" => config.quiet = true,
+            // Applied from a prescan in `main`, before parsing can fail; parsed again
+            // here to consume the value and to reject a bad one by name.
+            "-color" | "--color" => {
+                let when = value(args, &mut index, &token)?
+                    .to_string_lossy()
+                    .into_owned();
+                term::parse_choice(&when)?;
+            },
             "-v" => config.verbose = config.verbose.saturating_add(1),
             // Accepted for compatibility; no-ops for a lossless RGBA decoder.
             "-nofancy" | "-nofilter" | "-nodither" | "-alpha_dither" | "-mt" | "-incremental"
@@ -182,29 +186,33 @@ fn flip_vertically(image: &Image) -> Image {
     )
 }
 
-#[allow(
-    clippy::print_stdout,
-    reason = "help/version print to stdout by CLI convention"
-)]
 fn print_help() {
-    println!(
-        "dwebp (webpkit) — decode WebP VP8L (lossless) to PNG/PPM/PAM\n\n\
+    crate::report::out(
+        "dwebp (webpkit) — decode WebP (lossless, lossy, or animated) to PNG/PPM/PAM\n\n\
          Usage: dwebp [options] <input.webp> -o <output>\n\n\
          Options:\n\
-         \x20 -o <file>   output file (`-` for stdout)\n\
-         \x20 -png        PNG output (default)\n\
-         \x20 -ppm / -pam netpbm output\n\
-         \x20 -flip       flip vertically\n\
-         \x20 -alpha      output the alpha plane as grayscale\n\
-         \x20 -quiet / -v quieter / more verbose\n\
-         \x20 -version    print version\n"
+         \x20 -o <file>      output file (`-` for stdout)\n\
+         \x20 -png           PNG output (default)\n\
+         \x20 -ppm / -pam    netpbm output\n\
+         \x20 -flip          flip vertically\n\
+         \x20 -alpha         output the alpha plane as grayscale\n\
+         \x20 -quiet / -v    quieter / more verbose\n\
+         \x20 -color <when>  auto (default), always, or never\n\
+         \x20 -version       print version\n",
     );
 }
 
-#[allow(
-    clippy::print_stdout,
-    reason = "help/version print to stdout by CLI convention"
-)]
 fn print_version() {
-    println!("dwebp (webpkit) {}", env!("CARGO_PKG_VERSION"));
+    crate::report::out(&format!("dwebp (webpkit) {}", env!("CARGO_PKG_VERSION")));
+}
+
+/// The value following `flag`, advancing `index` past it.
+fn value<'a>(
+    args: &'a [OsString],
+    index: &mut usize,
+    flag: &str,
+) -> Result<&'a OsString, CliError> {
+    *index += 1;
+    args.get(*index)
+        .ok_or_else(|| CliError::Usage(format!("`{flag}` needs a value")))
 }

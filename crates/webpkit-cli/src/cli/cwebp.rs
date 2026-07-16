@@ -17,12 +17,14 @@ use crate::{
     io::{Sink, Source},
     metadata::{MetadataField, Selection},
     report::Reporter,
+    term,
 };
 
 /// Parse `cwebp`-style arguments, encode, and return a process exit code.
 #[must_use]
 pub(crate) fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    term::install(term::prescan(&args));
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
@@ -137,6 +139,11 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                     .extend(parse_metadata(&value(args, &mut index, "-metadata")?)?);
             },
             "-quiet" => config.quiet = true,
+            // Applied from a prescan in `main`, before parsing can fail; parsed again
+            // here to consume the value and to reject a bad one by name.
+            "-color" | "--color" => {
+                term::parse_choice(&value(args, &mut index, &token)?)?;
+            },
             "-v" => config.verbose = config.verbose.saturating_add(1),
             // Accepted for compatibility, but a no-op here. `-exact` preserves the
             // RGB of fully-transparent pixels — already this encoder's behavior, as
@@ -249,12 +256,8 @@ fn parse_metadata(list: &str) -> Result<Vec<MetadataField>, CliError> {
         .collect()
 }
 
-#[allow(
-    clippy::print_stdout,
-    reason = "help/version print to stdout by CLI convention"
-)]
 fn print_help() {
-    println!(
+    crate::report::out(
         "cwebp (webpkit) — encode PNG/PPM/PAM to WebP (lossy by default)\n\n\
          Usage: cwebp [options] <input> -o <output.webp>\n\n\
          Options:\n\
@@ -265,14 +268,11 @@ fn print_help() {
          \x20 -z <int>         lossless level 0-9 (implies -lossless)\n\
          \x20 -metadata <list> all,none,icc,exif,xmp (default: all)\n\
          \x20 -quiet / -v      quieter / more verbose\n\
-         \x20 -version         print version\n"
+         \x20 -color <when>    auto (default), always, or never\n\
+         \x20 -version         print version\n",
     );
 }
 
-#[allow(
-    clippy::print_stdout,
-    reason = "help/version print to stdout by CLI convention"
-)]
 fn print_version() {
-    println!("cwebp (webpkit) {}", env!("CARGO_PKG_VERSION"));
+    crate::report::out(&format!("cwebp (webpkit) {}", env!("CARGO_PKG_VERSION")));
 }

@@ -15,4 +15,5 @@ Options:
   -z <int>         lossless level 0-9 (implies -lossless)
   -metadata <list> all,none,icc,exif,xmp (default: all)
   -quiet / -v      quieter / more verbose
+  -color <when>    auto (default), always, or never
   -version         print version

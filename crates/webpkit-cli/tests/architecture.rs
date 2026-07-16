@@ -38,6 +38,7 @@ const CLI_LAYERS: &[(&str, u8)] = &[
     ("io", 1),
     ("metadata", 1),
     ("report", 1),
+    ("term", 1),
     ("effort", 2),
     ("bulk", 4),
     ("cli", 5),
@@ -65,10 +66,29 @@ const HIDDEN_MODULES: &[&str] = &[
 /// needs something the public API does not offer. Keep this list empty if you can.
 const FACADE_GAPS: &[(&str, &str)] = &[];
 
-/// Modules permitted to touch the filesystem and the standard streams. Confining
-/// I/O to one module is what lets errors carry a real path and message, and what
-/// keeps a `-o -` pipe byte-clean.
-const IO_OWNERS: &[&str] = &["io"];
+/// Modules permitted to touch the filesystem and the standard streams.
+///
+/// `io` owns the image bytes, which is what lets errors carry a real path and a
+/// real message and what keeps a `-o -` pipe byte-clean. `report` and `term` own
+/// the human channel: one writes stderr, the other asks whether it is a terminal.
+/// Nothing else opens a file or a stream.
+const IO_OWNERS: &[&str] = &["io", "report", "term"];
+
+/// Every way to reach a file or a standard stream.
+///
+/// `eprintln!`/`println!` are here because `anstream` shadows the std macros:
+/// clippy's `print_stderr` cannot see through the shadow, so this rule is the
+/// only thing keeping output in `report`.
+const IO_CALLS: &[&str] = &[
+    "std::fs::",
+    "fs::read",
+    "fs::write",
+    "io::stdin",
+    "io::stdout",
+    "io::stderr",
+    "println!",
+    "eprintln!",
+];
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
@@ -227,13 +247,6 @@ fn every_module_is_registered() {
 /// I/O routed through the library loses both.
 #[test]
 fn io_stays_in_its_module() {
-    const IO_CALLS: &[&str] = &[
-        "std::fs::",
-        "fs::read",
-        "fs::write",
-        "io::stdin",
-        "io::stdout",
-    ];
     let mut violations = Vec::new();
     for (rel, code) in all_src() {
         let Some(module) = module_of(&rel) else {

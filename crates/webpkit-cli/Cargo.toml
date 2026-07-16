@@ -36,6 +36,10 @@ name = "webp"
 path = "src/bin/webp.rs"
 
 [dependencies]
+# Both arrive with clap already, so naming them directly costs no new crates.
+# `anstream` decides per-stream whether ANSI survives; `anstyle` is the vocabulary.
+anstream = { workspace = true }
+anstyle = { workspace = true }
 clap = { workspace = true }
 png = { workspace = true }
 rayon = { workspace = true }
