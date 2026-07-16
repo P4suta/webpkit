@@ -326,7 +326,11 @@ jobs:
     name: mutants (PR --in-diff)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Sized for an incremental PR. A large diff mutates many lines, and each mutant
+    # reruns the whole `-p webpkit` suite (~2.5 min), so the wall time is
+    # mutants x suite. `--jobs` fans them across the runner's cores to keep that in
+    # budget; the timeout headroom covers an exceptionally large change.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -340,7 +344,8 @@ jobs:
           git diff "origin/${{ github.base_ref }}...HEAD" > mutants-diff.patch
           cargo mutants --in-diff mutants-diff.patch \
             -p webpkit \
-            --test-tool nextest
+            --test-tool nextest \
+            --jobs 4
 
   oracle:
     name: oracle (libwebp differential)

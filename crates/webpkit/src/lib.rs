@@ -1069,6 +1069,33 @@ mod tests {
         assert!(matches!(probe(b"tiny"), Err(Error::Truncated)));
     }
 
+    /// The length guard is `< 12`, and 12 is the smallest input that carries the
+    /// full `RIFF....WEBP` magic. 11 bytes is too short to even check the magic
+    /// (Truncated); 12 bytes is long enough, so a wrong magic is NotWebp, not
+    /// Truncated. Pins the boundary so `<` cannot become `<=`.
+    #[test]
+    fn probe_length_guard_is_exactly_twelve() {
+        assert!(matches!(probe(&[0u8; 11]), Err(Error::Truncated)));
+        assert!(matches!(probe(&[0u8; 12]), Err(Error::NotWebp)));
+    }
+
+    /// The magic check rejects when *either* `RIFF` or `WEBP` is wrong (`||`). A
+    /// file with a correct `RIFF` but a wrong `WEBP` fourcc must still be NotWebp;
+    /// with `&&` it would slip past the guard. The mirror case (wrong `RIFF`,
+    /// right `WEBP`) covers the other operand.
+    #[test]
+    fn probe_rejects_a_half_correct_magic() {
+        let mut riff_only = *b"RIFF\0\0\0\0XXXX";
+        assert_eq!(&riff_only[0..4], b"RIFF");
+        assert_ne!(&riff_only[8..12], b"WEBP");
+        assert!(matches!(probe(&riff_only), Err(Error::NotWebp)));
+
+        // The other operand: right WEBP, wrong RIFF.
+        riff_only[0..4].copy_from_slice(b"XXXX");
+        riff_only[8..12].copy_from_slice(b"WEBP");
+        assert!(matches!(probe(&riff_only), Err(Error::NotWebp)));
+    }
+
     #[test]
     fn probe_rejects_a_container_with_no_image_chunk() {
         let mut body = Vec::new();
