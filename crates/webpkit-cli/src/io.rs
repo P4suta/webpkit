@@ -5,12 +5,63 @@
 //! so a `-o -` pipe stays byte-clean.
 
 use std::{
+    collections::BTreeSet,
     fs,
     io::{self, IsTerminal as _, Read, Write},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 
 use crate::error::CliError;
+
+/// Temp files currently mid-write, so a Ctrl-C can delete them.
+///
+/// `panic = "abort"` and `process::exit` both skip `Drop`, so a
+/// [`tempfile::NamedTempFile`]'s own cleanup does not run on a signal. On the
+/// normal success/error paths that `Drop` is enough and this set is emptied
+/// before the file is dropped; the registry exists solely for the signal path.
+fn temp_registry() -> &'static Mutex<BTreeSet<PathBuf>> {
+    static REGISTRY: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
+fn register_temp(path: &Path) {
+    if let Ok(mut set) = temp_registry().lock() {
+        set.insert(path.to_path_buf());
+    }
+}
+
+fn unregister_temp(path: &Path) {
+    if let Ok(mut set) = temp_registry().lock() {
+        set.remove(path);
+    }
+}
+
+/// Delete every temp file still registered as mid-write.
+///
+/// Called from the interrupt handler, and directly from tests. Best-effort: a
+/// file that is already gone or unremovable is left, since the process is exiting
+/// regardless.
+fn clean_temps() {
+    if let Ok(mut set) = temp_registry().lock() {
+        for path in set.iter() {
+            let _ = fs::remove_file(path);
+        }
+        set.clear();
+    }
+}
+
+/// Install a Ctrl-C handler that deletes in-flight temp files, then exits `130`.
+///
+/// Idempotent by way of `ctrlc`'s single-handler contract — a second call just
+/// fails and is ignored. Without this, an interrupt during a write would leave
+/// the sibling temp file behind, since no `Drop` runs on a signal.
+pub(crate) fn install_interrupt_cleanup() {
+    let _ = ctrlc::set_handler(|| {
+        clean_temps();
+        std::process::exit(130);
+    });
+}
 
 /// The lowercased extension of a path, if it has one.
 #[must_use]
@@ -309,6 +360,11 @@ impl Sink {
 
     /// Write all bytes to the sink.
     ///
+    /// A file is written atomically: bytes go to a sibling temp file which is then
+    /// renamed over the target, so a failed or interrupted write never leaves a
+    /// half-written `.webp` that looks valid. A plain in-place write truncates the
+    /// target the instant it opens, so an interrupted one is worse than no write.
+    ///
     /// # Errors
     ///
     /// [`CliError::WriteOutput`] on any I/O failure.
@@ -319,15 +375,119 @@ impl Sink {
                 .write_all(bytes)
                 .map_err(|err| CliError::write_output(self.label(), err)),
             Self::File(path) => {
-                fs::write(path, bytes).map_err(|err| CliError::write_output(self.label(), err))
+                atomic_write(path, bytes).map_err(|err| CliError::write_output(self.label(), err))
             },
         }
     }
 }
 
+/// Write `bytes` to a sibling temp file, then rename it over `path`.
+///
+/// The temp lives in the target's own directory so the final step is a rename
+/// within one filesystem, which is atomic; a temp in the system tmp dir could be
+/// on another device, where `rename` fails. The temp is registered before the
+/// write and unregistered after, so a Ctrl-C in between deletes it.
+fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+
+    let mut temp = tempfile::Builder::new()
+        .prefix(".webp-tmp-")
+        .tempfile_in(&dir)?;
+    let temp_path = temp.path().to_path_buf();
+    register_temp(&temp_path);
+
+    // On any early return here, `temp`'s `Drop` deletes the file — the registry is
+    // only for the signal path where `Drop` never runs.
+    let result = temp
+        .write_all(bytes)
+        .and_then(|()| temp.as_file().sync_all())
+        .and_then(|()| temp.persist(path).map(|_file| ()).map_err(|err| err.error));
+
+    unregister_temp(&temp_path);
+    result
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{expand_globs, looks_like_glob};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    use super::{
+        Sink, atomic_write, clean_temps, expand_globs, looks_like_glob, register_temp,
+        temp_registry,
+    };
+
+    /// Serialize the tests that touch the process-global temp registry.
+    ///
+    /// `clean_temps` drains the whole registry, so two write tests running at once
+    /// could have one delete the other's in-flight temp. They share real process
+    /// state, so they must not run concurrently.
+    fn serial() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[test]
+    fn an_atomic_write_leaves_no_temp_and_the_right_bytes() {
+        let _guard = serial();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let target = dir.path().join("out.webp");
+        Sink::File(target.clone())
+            .write(b"payload")
+            .expect("atomic write");
+
+        assert_eq!(std::fs::read(&target).expect("read target"), b"payload");
+        // No `.webp-tmp-*` sibling survived a successful write.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".webp-tmp-"))
+            .collect();
+        assert!(leftovers.is_empty(), "a temp file survived: {leftovers:?}");
+    }
+
+    #[test]
+    fn an_atomic_write_replaces_an_existing_file_wholesale() {
+        let _guard = serial();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let target = dir.path().join("out.webp");
+        std::fs::write(&target, b"the old and much longer contents").expect("seed");
+        Sink::File(target.clone()).write(b"new").expect("overwrite");
+        assert_eq!(std::fs::read(&target).expect("read"), b"new");
+    }
+
+    #[test]
+    fn the_interrupt_cleanup_deletes_a_registered_temp() {
+        let _guard = serial();
+        let dir = tempfile::tempdir().expect("temp dir");
+        // Simulate a temp file caught mid-write when a signal arrives: it is on
+        // disk and registered, and the handler's cleanup must remove it.
+        let temp = dir.path().join(".webp-tmp-simulated");
+        std::fs::write(&temp, b"half a webp").expect("write temp");
+        register_temp(&temp);
+        assert!(temp_registry().lock().expect("lock").contains(&temp));
+
+        clean_temps();
+
+        assert!(
+            !temp.exists(),
+            "the interrupted temp file was not cleaned up"
+        );
+        assert!(temp_registry().lock().expect("lock").is_empty());
+    }
+
+    #[test]
+    fn atomic_write_writes_through_a_real_parent_directory() {
+        let _guard = serial();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let target = dir.path().join("bare.webp");
+        atomic_write(&target, b"ok").expect("write");
+        assert_eq!(std::fs::read(&target).expect("read"), b"ok");
+    }
 
     #[test]
     fn detects_glob_metacharacters() {

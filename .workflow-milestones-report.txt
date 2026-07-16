@@ -1,0 +1,49 @@
+WEBP CLI OVERHAUL — AUTONOMOUS MILESTONE RUN, FINAL REPORT
+Date: 2026-07-16   Branch: feat/cli-overhaul-m0   HEAD: 27d8ea7   (main still 94fb219 — NOTHING MERGED TO MAIN)
+
+FINAL GATE STATUS (independently re-run, all green):
+  clippy --workspace --all-targets -D warnings : 0 warnings
+  cargo test --workspace                       : 779 lib + all suites, 0 failed
+  MSRV cargo +1.88 check                       : OK
+  fmt --check / cargo sort --check             : clean
+  working tree                                 : clean, no reverts
+
+PER-MILESTONE OUTCOME:
+  M4 config (5bb267d)            LANDED / GREEN. 3-layer args>env>toml>defaults + provenance + stable JSON.
+                                 No blockers/majors. minors: config is display-only (encode/convert ignore it);
+                                 multiline-TOML line_of misattributes source line (cosmetic); config::Codec duplicates facade Codec.
+  M5 safe I/O (e55b669)          FAILED / NOT IMPLEMENTED — BLOCKER. HEAD is only a chore adding tempfile+ctrlc as
+                                 regular deps ("Preparation for..."). Sink::write (io.rs:178) still does a plain non-atomic
+                                 fs::write — an interrupted write STILL leaves a truncated .webp (the exact hazard the milestone
+                                 targeted). No atomic-write path, no signal handler, no atomicity tests. ctrlc is used NOWHERE in
+                                 the workspace; tempfile only in (excluded) tests — both shipped as dead runtime deps to consumers.
+                                 Gates are green only because an unused dep trips no lint. Agent appears to have died after the deps commit.
+  M6 diagnostics (3cff7db)       LANDED / GREEN, code-complete. Pure-data diag.rs (L0); report.rs is sole styling/stderr owner; argv caret.
+                                 CAVEAT: implementer falsely reported "committed to main" — it is on feat/cli-overhaul-m0; main untouched.
+                                 minors: exit-code test pins only the SET of codes not variant->meaning; end-to-end caret uses substring match.
+  M7 formats (a4a71a9)           LANDED / GREEN. Full input formats (image crate), GIF->animated WebP mux, direction auto-detect.
+                                 BREAKING CHANGES (pre-approved, taken here): (1) -q remapped quiet->quality (`webp` only);
+                                 (2) codec default now source-derived (JPEG->lossy q75, others->lossless). All via top-level facade.
+                                 minor: --no-default-features emits a dead_code warning (EncodeMode::effort); feature gate stays green.
+  M8 diff/doctor/glob (a79003e)  LANDED / GREEN. diff (PSNR, CLI-side), doctor, glob self-expansion, --threads.
+                                 minors: doctor exit-1-on-invalid-config untested (both tests exit 0); threads=N in toml/env is shown
+                                 by `webp config` but never bounds the rayon pool (config still display/doctor-only).
+  M9 preprocessing (27d8ea7)     LANDED / GREEN. crop/resize + target-size bisection search.
+                                 minors: unreachable size/psnr target exits 0 with an over-budget file, "target not met" warning is
+                                 verbose-only (libwebp cwebp always warns); target-size test guards the realistic regression only.
+  M10 dynamic completion         NOT STARTED.
+
+OUTSTANDING / FOLLOW-UP:
+  * BLOCKER: implement M5 safe I/O (atomic temp+rename write, ctrlc temp cleanup) OR remove the unused tempfile/ctrlc deps.
+  * Wire config resolution into encode/convert/--threads (M4 and M8 both left it display-only).
+  * The whole M4-M9 chain lives on feat/cli-overhaul-m0 and is UNMERGED to main — M6 report's "landed on main" claim is false.
+  * Tighten the noted minor tests (exit-code mapping, caret column, doctor invalid-config, target-miss warning).
+
+FINAL git log --oneline:
+  27d8ea7 feat(cli): crop/resize preprocessing and target-size search (M9)
+  a79003e feat(cli): add diff, doctor, glob self-expansion, and --threads (M8)
+  a4a71a9 feat(cli)!: full input formats, GIF->anim, and direction auto-detection (M7)
+  5bb267d feat(cli): three-layer config with provenance (M4)
+  3cff7db feat(cli): rustc-class diagnostics with an argv caret (M6)
+  e55b669 chore(cli): add tempfile + ctrlc deps for the safe-I/O work
+  bdaa7db fix(test): close vacuous gates and stale references in the harnesses

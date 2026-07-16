@@ -52,6 +52,9 @@ pub use personality::Personality;
 /// image, `9` input-format parse.
 #[must_use]
 pub fn run(personality: Personality) -> ExitCode {
+    // Before any write can start, so an interrupted write deletes its temp file
+    // rather than leaving it beside the target.
+    io::install_interrupt_cleanup();
     match personality {
         Personality::Webp => cli::brand::main(),
         Personality::Cwebp => cli::cwebp::main(),
