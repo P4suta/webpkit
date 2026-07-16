@@ -1182,6 +1182,30 @@ mod tests {
         );
     }
 
+    /// The same first-image-wins guard on the lossy `VP8 ` arm: two `VP8 ` chunks
+    /// of different sizes, and `probe` must report the first's dimensions. The
+    /// `VP8L`-only case above never exercises the `VP8 ` arm, so its `image.is_none()`
+    /// guard needs its own two-chunk fixture.
+    #[test]
+    fn probe_reports_the_first_lossy_image_chunk_when_two_are_present() {
+        let first = lossy_bytes(); // 32x32
+        let second = {
+            let rgba = vec![0x11u8; 16 * 16 * 4];
+            let d = Dimensions::new(16, 16).unwrap();
+            let img = ImageRef::new(d, PixelLayout::Rgba8, &rgba).unwrap();
+            Encoder::lossy().quality(80).encode_ref(img).unwrap()
+        };
+        let mut body = first[12..].to_vec();
+        body.extend_from_slice(&second[12..]);
+        let info = probe(&riff_envelope(&body)).unwrap();
+        assert_eq!(
+            info.dimensions,
+            dims(),
+            "the first (32x32) VP8, not the 16x16"
+        );
+        assert_eq!(info.codec, Some(Codec::Lossy));
+    }
+
     #[test]
     fn probe_rejects_what_is_not_a_webp() {
         assert!(matches!(

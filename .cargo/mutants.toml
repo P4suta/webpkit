@@ -66,6 +66,11 @@ exclude_re = [
     'build\.rs:52:16: replace < with <= in two_minima',
     # Same unique-index tiebreaker (min2 != min1), so `<` == `<=`.
     'build\.rs:55:23: replace < with <= in two_minima',
+    # count_frames' `while offset < body.len()`: `read_chunk_at` returns Some only when a
+    # full 8-byte header fits, so `next` (hence `offset`) never exceeds body.len(); the only
+    # value `<=` admits that `<` rejects is offset==body.len(), where read_chunk_at sees an
+    # empty slice, returns Ok(None), and the loop breaks before touching count/duration. Equivalent.
+    'crates/webpkit/src/anim\.rs:140:18: replace < with <= in count_frames',
     # `(alpha_green & 0xff00_ff00) | (red_blue & 0x00ff_00ff)`: complementary masks — disjoint lanes.
     'replace \| with \^ in add_pixels',
     # `(int_part << LOG2_FRAC_BITS) | frac`: high bits vs frac bits are disjoint, so | == ^.
