@@ -11,7 +11,7 @@
 //!
 //! [`put_ymode16`] / [`put_uvmode`] emit the intra prediction modes into the
 //! control partition (inverse of `mb::read_ymode16` / `read_uvmode`).
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     reason = "the small 0..=16 coefficient positions and category selectors cast \

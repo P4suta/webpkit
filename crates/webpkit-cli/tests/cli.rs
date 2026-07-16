@@ -1,6 +1,6 @@
 //! Integration tests for the `webp` CLI binary: help/version, stdin→stdout
 //! round-trips, PNG round-trips, and the meaningful exit codes.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

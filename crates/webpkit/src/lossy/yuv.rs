@@ -24,7 +24,7 @@
 //!
 //! U and V are processed together stashed into a `u32` (`u` in the low 16 bits,
 //! `v` in the high 16 bits) exactly as the C `LOAD_UV` macro does.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "reproduces the C uint8_t/int16_t wrapping and clip semantics of \

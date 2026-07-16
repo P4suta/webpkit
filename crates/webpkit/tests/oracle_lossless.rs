@@ -20,7 +20,7 @@
 //! Any divergence from the reference implementation — on any input the fuzzer or
 //! proptest reaches — fails here mechanically, without a human comparing output.
 #![cfg(feature = "oracle")]
-#![allow(
+#![expect(
     clippy::unwrap_used,
     reason = "this is a test-only integration crate where unwrap is the accepted \
               style (see clippy.toml `allow-unwrap-in-tests`); the config exempts \
@@ -567,14 +567,14 @@ proptest! {
         (width, height, frames) in arbitrary_animation(),
     ) {
         let canvas = webpkit::lossless::Dimensions::new(width, height).unwrap();
-        let frame_meta = webpkit::lossless::FrameMeta {
-            x: 0,
-            y: 0,
-            dimensions: canvas,
-            duration_ms: 40,
-            blend: webpkit::lossless::BlendMode::Blend,
-            dispose: webpkit::lossless::DisposalMode::Keep,
-        };
+        let frame_meta = webpkit::lossless::FrameMeta::new(
+            0,
+            0,
+            canvas,
+            40,
+            webpkit::lossless::BlendMode::Blend,
+            webpkit::lossless::DisposalMode::Keep,
+        );
         // The type-state builder becomes `HasFrames` after the first frame, so
         // seed it once and then fold the remaining frames into the same state.
         let first = webpkit::lossless::ImageRef::new(canvas, webpkit::lossless::PixelLayout::Rgba8, &frames[0]).unwrap();
@@ -617,21 +617,23 @@ proptest! {
         (cw, ch, frames) in arbitrary_subrect_animation(),
     ) {
         let canvas = webpkit::lossless::Dimensions::new(cw, ch).unwrap();
-        let to_meta = |f: &SubRectFrame| webpkit::lossless::FrameMeta {
-            x: f.x,
-            y: f.y,
-            dimensions: webpkit::lossless::Dimensions::new(f.w, f.h).unwrap(),
-            duration_ms: 40,
-            blend: if f.overwrite {
-                webpkit::lossless::BlendMode::Overwrite
-            } else {
-                webpkit::lossless::BlendMode::Blend
-            },
-            dispose: if f.dispose_bg {
-                webpkit::lossless::DisposalMode::Background
-            } else {
-                webpkit::lossless::DisposalMode::Keep
-            },
+        let to_meta = |f: &SubRectFrame| {
+            webpkit::lossless::FrameMeta::new(
+                f.x,
+                f.y,
+                webpkit::lossless::Dimensions::new(f.w, f.h).unwrap(),
+                40,
+                if f.overwrite {
+                    webpkit::lossless::BlendMode::Overwrite
+                } else {
+                    webpkit::lossless::BlendMode::Blend
+                },
+                if f.dispose_bg {
+                    webpkit::lossless::DisposalMode::Background
+                } else {
+                    webpkit::lossless::DisposalMode::Keep
+                },
+            )
         };
         // The type-state builder becomes `HasFrames` after the first frame.
         let dims0 = webpkit::lossless::Dimensions::new(frames[0].w, frames[0].h).unwrap();
@@ -684,11 +686,10 @@ fn encode_image_metadata_survives_libwebp() {
         webpkit::lossless::PixelLayout::Rgba8,
         rgba.clone(),
         false,
-        webpkit::lossless::Metadata {
-            icc_profile: Some(icc.clone()),
-            exif: Some(exif.clone()),
-            xmp: Some(xmp.clone()),
-        },
+        webpkit::lossless::Metadata::none()
+            .with_icc_profile(icc.clone())
+            .with_exif(exif.clone())
+            .with_xmp(xmp.clone()),
     );
 
     // Preserve (default): the reference decoder reproduces the pixels and every

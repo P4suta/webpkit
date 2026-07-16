@@ -310,13 +310,29 @@ jobs:
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
         with:
           tool: cargo-llvm-cov,cargo-nextest
-      # Gate the product crate's line coverage; tooling / test-harness crates are
-      # excluded so their (intentionally low) coverage does not mask regressions.
-      - name: line coverage floor
+      # Collect coverage once (whole workspace), then apply a per-crate floor from
+      # the same profile data. `webpkit` (the product library) and `webpkit-cli`
+      # (the binaries) each get their own floor; the tooling / test-harness crates
+      # are excluded so their intentionally-low coverage cannot mask a regression.
+      - name: collect coverage
+        run: cargo llvm-cov nextest --workspace --locked --no-report
+      # Product library: `webpkit-cli` is excluded here — it carries its own floor
+      # below. (The `webpkit/src`-only exclusion in the CLI step conversely drops
+      # the library, so the two floors partition the published crates.)
+      - name: line coverage floor (webpkit)
         run: >
-          cargo llvm-cov nextest --workspace --locked
+          cargo llvm-cov report
           --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-samples|webpkit-lossless-fuzz|webpkit-cli|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
           --fail-under-lines 90
+      # CLI crate: a regression ratchet, deliberately set below the current measured
+      # line coverage so day-to-day noise never flakes it. The measured baseline was
+      # taken on Windows; the platform-specific paths differ on this Linux runner, so
+      # the floor starts conservative — raise it once the CI baseline is confirmed.
+      - name: line coverage floor (webpkit-cli)
+        run: >
+          cargo llvm-cov report
+          --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-samples|webpkit-lossless-fuzz|webpkit[/\\]src|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
+          --fail-under-lines 80
 
   # Mutation-test only the lines this PR changes: inject bugs into the changed
   # product code and require the existing tests to catch them. PR-only (a full
@@ -327,11 +343,11 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     # Sized for an incremental PR. A large diff mutates many lines, and each mutant
-    # reruns the whole `-p webpkit` suite (~6 min with `--features image` + Best
-    # paths), so the wall time is mutants x suite / `--jobs`. `--jobs 4` saturates
-    # the runner's 4 vCPUs. The headroom absorbs an exceptionally large change: the
-    # one-time CLI-overhaul diff mutates ~45 lines and finishes in ~59 min, so the
-    # ceiling is set well above that to leave margin for runner variance.
+    # reruns the whole `-p webpkit -p webpkit-cli` suite (~6 min with `--features
+    # image` + Best paths), so the wall time is mutants x suite / `--jobs`. `--jobs
+    # 4` saturates the runner's 4 vCPUs. The headroom absorbs an exceptionally large
+    # change: the one-time CLI-overhaul diff mutates ~45 lines and finishes in ~59
+    # min, so the ceiling is set well above that to leave margin for runner variance.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -346,6 +362,7 @@ jobs:
           git diff "origin/${{ github.base_ref }}...HEAD" > mutants-diff.patch
           cargo mutants --in-diff mutants-diff.patch \
             -p webpkit \
+            -p webpkit-cli \
             --test-tool nextest \
             --jobs 4
 

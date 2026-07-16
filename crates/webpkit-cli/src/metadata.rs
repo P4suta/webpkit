@@ -78,11 +78,10 @@ impl Selection {
     /// Project a source [`Metadata`] down to the selected fields.
     #[must_use]
     pub(crate) fn apply(self, source: &Metadata) -> Metadata {
-        Metadata {
-            icc_profile: self.icc.then(|| source.icc_profile.clone()).flatten(),
-            exif: self.exif.then(|| source.exif.clone()).flatten(),
-            xmp: self.xmp.then(|| source.xmp.clone()).flatten(),
-        }
+        Metadata::none()
+            .with_icc_profile(self.icc.then(|| source.icc_profile.clone()).flatten())
+            .with_exif(self.exif.then(|| source.exif.clone()).flatten())
+            .with_xmp(self.xmp.then(|| source.xmp.clone()).flatten())
     }
 }
 
@@ -93,11 +92,10 @@ mod tests {
     use super::{MetadataField, Selection};
 
     fn full() -> Metadata {
-        Metadata {
-            icc_profile: Some(vec![1]),
-            exif: Some(vec![2]),
-            xmp: Some(vec![3]),
-        }
+        Metadata::none()
+            .with_icc_profile(vec![1])
+            .with_exif(vec![2])
+            .with_xmp(vec![3])
     }
 
     #[test]

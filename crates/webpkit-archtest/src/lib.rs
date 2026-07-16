@@ -12,7 +12,7 @@
 //! so comments and intra-doc links never count as dependencies, and only real
 //! path shapes are read. They catch the accident, not every obfuscation.
 #![forbid(unsafe_code)]
-#![allow(
+#![expect(
     clippy::panic,
     reason = "test scaffolding: a gate that cannot read its own source must fail               loudly, never pass vacuously"
 )]

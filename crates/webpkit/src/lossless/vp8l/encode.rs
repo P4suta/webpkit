@@ -17,7 +17,7 @@
 //! borrows never propagate from blue into red; and [`resolve`] is the one place
 //! the color cache is applied, so the histogram and emit passes insert pixels in
 //! the identical order the decoder does.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     reason = "channel indices are masked to 8 bits, prefix symbols index alphabets \
               bounded by the format, and pixel counts fit the validated 14-bit VP8L \

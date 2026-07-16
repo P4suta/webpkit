@@ -103,7 +103,7 @@ pub const N: usize = Counter::UpsampleRow as usize + 1;
 // A const-initializable seed for the fixed atomic array. `AtomicU64` has
 // interior mutability, so the const-item lint fires; it is used only to
 // build the `static` array, never read through, so the warning is spurious.
-#[allow(
+#[expect(
     clippy::declare_interior_mutable_const,
     reason = "array-initializer seed for the static SLOTS array; never read through this const"
 )]

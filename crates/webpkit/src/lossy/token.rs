@@ -5,7 +5,7 @@
 //! luma blocks and the eight chroma blocks, threading the top/left non-zero
 //! contexts and dequantizing every coefficient into the block's coefficient
 //! buffer in natural (de-zig-zagged) order.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     reason = "dequantized coefficients are stored into i16 with the C int16_t \
               wrapping semantics of the reference decoder, and the small u32→usize \
@@ -218,7 +218,7 @@ fn get_large_value(br: &mut BoolDecoder<'_>, p: [Prob; NUM_PROBAS]) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
+    #![expect(
         clippy::unreadable_literal,
         reason = "hand-derived packed non-zero codes and coefficient magnitudes \
                   read clearest as the exact values worked out in the comments"

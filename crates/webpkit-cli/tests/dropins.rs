@@ -1,5 +1,5 @@
 //! Integration tests for the `cwebp` / `dwebp` drop-in binaries.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

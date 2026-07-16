@@ -11,9 +11,13 @@ nextest_present := `command -v cargo-nextest >/dev/null 2>&1 && echo 1 || echo 0
 coverage_floor := "90"
 # Non-product crates excluded from the coverage gate (tooling / test harnesses).
 cov_exclude := '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-cli|webpkit-samples|webpkit-conformance|webpkit-lossless-conformance|webpkit-lossy-conformance|webpkit-fuzz|webpkit-lossless-fuzz|webpkit-lossy-fuzz|webpkit-lossy-proptest)'
-# The product crate that mutation testing (`just mutants`) targets; tooling and
-# test-harness crates are never mutated.
-mut_packages := "-p webpkit"
+# The CLI carries its own regression-ratchet floor (raise as its tests grow). The
+# exclusion drops the library (`webpkit/src`) so only `webpkit-cli` src remains.
+cli_coverage_floor := "80"
+cli_cov_exclude := '(xtask|webpkit-alloc-count|webpkit-bench|webpkit[/\\]src|webpkit-samples|webpkit-conformance|webpkit-lossless-conformance|webpkit-lossy-conformance|webpkit-fuzz|webpkit-lossless-fuzz|webpkit-lossy-fuzz|webpkit-lossy-proptest)'
+# The published crates that mutation testing (`just mutants`) targets — the
+# library and the CLI; tooling and test-harness crates are never mutated.
+mut_packages := "-p webpkit -p webpkit-cli"
 # Declared MSRV, verified by `just msrv` / the CI msrv gate. Keep == Cargo.toml.
 # Floor pinned by let-chains, `is_multiple_of`, and the optional `image` dep (all 1.88).
 msrv := "1.88"
@@ -247,9 +251,12 @@ report-vs-libwebp out="target/vs-libwebp.html":
 bench-real dir max_edge="512" iters="5" limit="0":
     cargo run --profile quick --quiet -p xtask -- bench-real "{{dir}}" --max-edge {{max_edge}} --iters {{iters}} --limit {{limit}}
 
-# Line coverage of the product crate with a hard floor (tooling crates excluded).
+# Line coverage of the published crates with per-crate floors (tooling crates
+# excluded). One instrumented run, two report checks — mirrors the CI coverage job.
 coverage:
-    cargo llvm-cov nextest --workspace --ignore-filename-regex {{cov_exclude}} --fail-under-lines {{coverage_floor}}
+    cargo llvm-cov nextest --workspace --no-report
+    cargo llvm-cov report --ignore-filename-regex {{cov_exclude}} --fail-under-lines {{coverage_floor}}
+    cargo llvm-cov report --ignore-filename-regex {{cli_cov_exclude}} --fail-under-lines {{cli_coverage_floor}}
 
 # Mutation-test the product crates; survivors mark assertion gaps. Long by
 # default — narrow with pass-through args (`just mutants --file <path>` / `--shard 0/4`).

@@ -336,7 +336,7 @@ impl IncrementalDecoder {
     /// Always `None` for a still image (the animation-only frame view). Kept for
     /// API parity with the umbrella and lossless decoders.
     #[must_use]
-    #[allow(
+    #[expect(
         clippy::unused_self,
         reason = "API parity: a still decoder has no per-frame canvas, but the \
                   umbrella and lossless decoders expose one through this method"
@@ -521,7 +521,7 @@ fn peek_vp8_info(
 
 #[cfg(test)]
 mod tests {
-    #![allow(
+    #![expect(
         clippy::cast_possible_truncation,
         reason = "test fixtures build container byte lengths with casts that fit their targets \
                   by construction"

@@ -20,7 +20,7 @@
 //! and both libwebp decode paths (RGBA and planar YUV) round-trip — so the FFI
 //! bindings and the differential plumbing are proven before we rely on them.
 #![cfg(feature = "oracle")]
-#![allow(
+#![expect(
     clippy::unwrap_used,
     clippy::panic,
     clippy::many_single_char_names,
@@ -313,7 +313,7 @@ fn mixed_rgb(width: u32, height: u32) -> Vec<u8> {
 /// (0 simple / 1 strong → the decoder's "normal" filter), `filter_strength`
 /// (0..=100), `filter_sharpness` (0..=7). Reaches the decoder's segmentation /
 /// loop-filter-delta / normal-filter paths that `WebPEncodeRGB` never emits.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "each argument is a distinct libwebp WebPConfig knob under test \
               (segments / filter_type / strength / sharpness); bundling them into \
@@ -1091,11 +1091,10 @@ fn encode_image_metadata_survives_libwebp_demux() {
         webpkit::lossy::PixelLayout::Rgba8,
         rgba,
         false,
-        webpkit::lossy::Metadata {
-            icc_profile: Some(icc.clone()),
-            exif: Some(exif.clone()),
-            xmp: Some(xmp.clone()),
-        },
+        webpkit::lossy::Metadata::none()
+            .with_icc_profile(icc.clone())
+            .with_exif(exif.clone())
+            .with_xmp(xmp.clone()),
     );
 
     // Preserve (default): the reference demuxer reproduces the canvas and every

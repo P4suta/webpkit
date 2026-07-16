@@ -419,7 +419,7 @@ fn greedy_cluster_reference(
 
 #[cfg(test)]
 mod tests {
-    #![allow(
+    #![expect(
         clippy::cast_possible_wrap,
         reason = "the estimate-bits assertions compare small entropy costs via i64; the u64 \
                   bit counts are far below i64::MAX so the cast cannot wrap"

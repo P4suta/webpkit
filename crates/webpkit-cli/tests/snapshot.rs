@@ -4,7 +4,7 @@
 //! by reading each level's own `Commands:` section, so a subcommand added later
 //! shows up in the snapshot diff automatically rather than being silently
 //! untested. Three files, however many subcommands there are.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

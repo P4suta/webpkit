@@ -89,7 +89,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// Return the next `n` bits (`n <= 24`) LSB-first **without** consuming them.
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         reason = "the accumulator is masked to n <= 24 bits; the high bits are unconsumed future bits"
     )]

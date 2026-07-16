@@ -75,7 +75,7 @@ impl HuffmanTable {
     /// Build a decode table from per-symbol `code_lengths` (0 = unused symbol).
     ///
     /// Returns `None` for an over- or under-subscribed code, or an all-zero code.
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         clippy::cast_possible_wrap,

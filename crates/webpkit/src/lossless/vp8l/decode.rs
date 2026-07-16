@@ -8,7 +8,7 @@
 //! Coverage: all four VP8L transforms (predictor, cross-color, subtract-green,
 //! and color-indexing/palette with pixel bundling), meta-Huffman entropy
 //! images, color cache, and LZ77 back-references.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     reason = "pixel packing/unpacking and size arithmetic are bounded by the 14-bit VP8L \
               dimensions and 8-bit channels"

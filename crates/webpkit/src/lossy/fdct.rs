@@ -13,7 +13,7 @@
 //! forward transform yields a self-consistent bitstream. Matching libwebp's
 //! forward constants only maximizes quality (rate/distortion), which the
 //! round-trip unit tests below pin.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     reason = "VP8 forward transforms store results into i16 with the C int16_t \
               wrapping semantics of the reference encoder; the casts reproduce \
