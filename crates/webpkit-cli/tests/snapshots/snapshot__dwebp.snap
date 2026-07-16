@@ -1,7 +1,8 @@
 ---
 source: crates/webpkit-cli/tests/snapshot.rs
-expression: "help(\"dwebp\", \"-h\")"
+expression: "dump(\"dwebp\", \"-h\")"
 ---
+$ dwebp -h
 dwebp (webpkit) — decode WebP VP8L (lossless) to PNG/PPM/PAM
 
 Usage: dwebp [options] <input.webp> -o <output>

@@ -8,7 +8,7 @@
 use std::borrow::Cow;
 
 use png::{BitDepth, ColorType, Info, Transformations, text_metadata::ITXtChunk};
-use webpkit::lossless::{Dimensions, Image, Metadata, PixelLayout};
+use webpkit::{Dimensions, Image, Metadata, PixelLayout};
 
 use crate::{error::CliError, format::to_rgba8};
 
@@ -20,7 +20,7 @@ const XMP_KEYWORD: &str = "XML:com.adobe.xmp";
 /// # Errors
 ///
 /// [`CliError::Format`] if the bytes are not a decodable PNG.
-pub fn read(bytes: &[u8]) -> Result<Image, CliError> {
+pub(crate) fn read(bytes: &[u8]) -> Result<Image, CliError> {
     // png 0.18 requires the reader to be `Read + Seek`; `&[u8]` is only `Read`.
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(Transformations::EXPAND | Transformations::STRIP_16);
@@ -83,7 +83,7 @@ fn find_exif_chunk(png: &[u8]) -> Option<Vec<u8>> {
 /// # Errors
 ///
 /// [`CliError::Format`] if PNG encoding fails.
-pub fn write(image: &Image, metadata: &Metadata) -> Result<Vec<u8>, CliError> {
+pub(crate) fn write(image: &Image, metadata: &Metadata) -> Result<Vec<u8>, CliError> {
     let rgba = to_rgba8(image);
     let mut info = Info::with_size(image.width(), image.height());
     info.color_type = ColorType::Rgba;
@@ -158,7 +158,7 @@ fn expand_to_rgba8(buf: &[u8], color: ColorType) -> Result<Vec<u8>, CliError> {
 
 #[cfg(test)]
 mod tests {
-    use webpkit::lossless::{Dimensions, Image, Metadata, PixelLayout};
+    use webpkit::{Dimensions, Image, Metadata, PixelLayout};
 
     use super::{read, write};
 

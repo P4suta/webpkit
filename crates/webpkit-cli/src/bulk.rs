@@ -7,12 +7,13 @@
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
-use webpkit::lossless::{Effort, Image, Metadata};
+use webpkit::{Effort, Image, Metadata};
 
 use crate::{
     codec::{self, EncodeMode},
     error::CliError,
     format::{self, InputFormat},
+    io::{self, Sink, Source},
     metadata::Selection,
 };
 
@@ -21,32 +22,32 @@ const IMAGE_EXTENSIONS: [&str; 5] = ["png", "ppm", "pam", "raw", "rgba"];
 
 /// Options for a bulk conversion run.
 #[derive(Debug, Clone)]
-pub struct Options {
+pub(crate) struct Options {
     /// The codec and knobs (ignored for the lossless effort search under `optimize`).
-    pub mode: EncodeMode,
+    pub(crate) mode: EncodeMode,
     /// Which metadata to carry through.
-    pub metadata: Selection,
+    pub(crate) metadata: Selection,
     /// Try every lossless effort level and keep the smallest output.
-    pub optimize: bool,
+    pub(crate) optimize: bool,
     /// Recurse into subdirectories.
-    pub recursive: bool,
+    pub(crate) recursive: bool,
     /// Output directory; when absent, each output sits beside its input.
-    pub output_dir: Option<PathBuf>,
+    pub(crate) output_dir: Option<PathBuf>,
 }
 
 /// One result line and the aggregate totals from a bulk run.
 #[derive(Debug, Default)]
-pub struct Outcome {
+pub(crate) struct Outcome {
     /// Number of files converted successfully.
-    pub converted: usize,
+    pub(crate) converted: usize,
     /// Number of files that failed.
-    pub failed: usize,
+    pub(crate) failed: usize,
     /// Total input bytes across successful files.
-    pub total_in: u64,
+    pub(crate) total_in: u64,
     /// Total output bytes across successful files.
-    pub total_out: u64,
+    pub(crate) total_out: u64,
     /// Per-file report lines paired with whether that file succeeded.
-    pub lines: Vec<(bool, String)>,
+    pub(crate) lines: Vec<(bool, String)>,
 }
 
 /// Convert every input file (expanding directories) to WebP.
@@ -56,8 +57,8 @@ pub struct Outcome {
 /// [`CliError`] only for a failure that prevents the whole run (e.g. a
 /// directory that cannot be read); per-file failures are recorded in the
 /// returned [`Outcome`].
-pub fn convert(inputs: &[PathBuf], options: &Options) -> Result<Outcome, CliError> {
-    let files = collect_files(inputs, options.recursive)?;
+pub(crate) fn convert(inputs: &[PathBuf], options: &Options) -> Result<Outcome, CliError> {
+    let files = io::collect_files(inputs, options.recursive, &is_image)?;
     let results: Vec<Result<Stat, String>> = files
         .par_iter()
         .map(|path| convert_one(path, options).map_err(|err| format!("{}: {err}", path.display())))
@@ -91,9 +92,8 @@ struct Stat {
 }
 
 fn convert_one(path: &Path, options: &Options) -> Result<Stat, CliError> {
-    let bytes = std::fs::read(path)
-        .map_err(|err| CliError::read_input(path.display().to_string(), &err))?;
-    let format = InputFormat::resolve(None, extension_of(path).as_deref(), &bytes);
+    let bytes = Source::File(path.to_path_buf()).read()?;
+    let format = InputFormat::resolve(None, io::extension_of(path).as_deref(), &bytes);
     if format == InputFormat::Raw {
         return Err(CliError::Format(
             "raw input needs explicit dimensions; use `webp encode`".to_owned(),
@@ -108,8 +108,7 @@ fn convert_one(path: &Path, options: &Options) -> Result<Stat, CliError> {
         (_, mode) => codec::encode(&image, mode, metadata)?,
     };
     let output = output_path(path, options.output_dir.as_deref());
-    std::fs::write(&output, &webp)
-        .map_err(|err| CliError::write_output(output.display().to_string(), &err))?;
+    Sink::File(output.clone()).write(&webp)?;
     Ok(Stat {
         output,
         in_len: bytes.len() as u64,
@@ -132,43 +131,8 @@ fn encode_smallest(image: &Image, metadata: &Metadata) -> Result<Vec<u8>, CliErr
     smallest.ok_or_else(|| CliError::Format("no encoder produced output".to_owned()))
 }
 
-/// Expand `inputs` (files and directories) into a flat list of files.
-fn collect_files(inputs: &[PathBuf], recursive: bool) -> Result<Vec<PathBuf>, CliError> {
-    let mut files = Vec::new();
-    for input in inputs {
-        if input.is_dir() {
-            walk(input, recursive, &mut files)?;
-        } else {
-            files.push(input.clone());
-        }
-    }
-    Ok(files)
-}
-
-fn walk(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) -> Result<(), CliError> {
-    let entries = std::fs::read_dir(dir)
-        .map_err(|err| CliError::read_input(dir.display().to_string(), &err))?;
-    for entry in entries {
-        let entry = entry.map_err(|err| CliError::read_input(dir.display().to_string(), &err))?;
-        let path = entry.path();
-        if path.is_dir() {
-            if recursive {
-                walk(&path, recursive, out)?;
-            }
-        } else if is_image(&path) {
-            out.push(path);
-        }
-    }
-    Ok(())
-}
-
 fn is_image(path: &Path) -> bool {
-    extension_of(path).is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.as_str()))
-}
-
-fn extension_of(path: &Path) -> Option<String> {
-    path.extension()
-        .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+    io::extension_of(path).is_some_and(|ext| IMAGE_EXTENSIONS.contains(&ext.as_str()))
 }
 
 /// The `.webp` output path: `<stem>.webp` in the output dir, else beside input.

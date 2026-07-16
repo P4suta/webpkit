@@ -43,7 +43,7 @@ struct GlobalArgs {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Decode a WebP VP8L file to PNG (default), PPM/PAM, or raw pixels.
+    /// Decode a WebP file to PNG (default), PPM/PAM, or raw pixels.
     Decode(DecodeArgs),
     /// Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy).
     Encode(EncodeArgs),
@@ -176,7 +176,7 @@ fn encode_mode(lossy: bool, quality: Option<u8>, method: Method) -> EncodeMode {
 
 /// Parse arguments, run the requested command, and return a process exit code.
 #[must_use]
-pub fn main() -> ExitCode {
+pub(crate) fn main() -> ExitCode {
     let cli = Cli::parse();
     let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
     match run(&cli.command, &reporter) {
@@ -244,7 +244,7 @@ fn decode(args: &DecodeArgs, reporter: &Reporter) -> Result<(), CliError> {
     let layout = if format == OutputFormat::Raw {
         args.layout.into()
     } else {
-        webpkit::lossless::PixelLayout::Rgba8
+        webpkit::PixelLayout::Rgba8
     };
     if is_animated(&bytes)? {
         return decode_animation(args, &bytes, format, &sink, reporter);
@@ -279,14 +279,14 @@ fn decode_animation(
     reporter: &Reporter,
 ) -> Result<(), CliError> {
     let frames = webpkit::decode_frames(bytes)?;
-    let images: Vec<webpkit::lossless::Image> = frames
+    let images: Vec<webpkit::Image> = frames
         .composited()
-        .map(|frame| frame.map(webpkit::lossless::CompositedFrame::into_image))
+        .map(|frame| frame.map(webpkit::CompositedFrame::into_image))
         .collect::<Result<_, _>>()?;
     if images.is_empty() {
         return Err(CliError::Format("animation has no frames".to_owned()));
     }
-    let no_meta = webpkit::lossless::Metadata::none();
+    let no_meta = webpkit::Metadata::none();
 
     if let Some(index) = args.frame {
         let image = images
@@ -404,7 +404,7 @@ fn info(args: &InfoArgs) -> Result<(), CliError> {
 
 /// Summary lines for a still image, labeling the codec from the container's
 /// image chunk (`VP8L` lossless vs `VP8 ` lossy).
-fn still_lines(bytes: &[u8], image: &webpkit::lossless::Image) -> Vec<String> {
+fn still_lines(bytes: &[u8], image: &webpkit::Image) -> Vec<String> {
     let format = if bytes.windows(4).any(|w| w == b"VP8L") {
         "WebP VP8L (lossless)"
     } else if bytes.windows(4).any(|w| w == b"VP8 ") {
@@ -443,7 +443,7 @@ fn animation_lines(bytes: &[u8]) -> Result<Vec<String>, CliError> {
 }
 
 /// Comma-list the metadata kinds present, or `none`.
-fn metadata_summary(metadata: &webpkit::lossless::Metadata) -> String {
+fn metadata_summary(metadata: &webpkit::Metadata) -> String {
     let mut parts = Vec::new();
     if metadata.icc_profile.is_some() {
         parts.push("ICC");

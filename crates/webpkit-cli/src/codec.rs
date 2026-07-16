@@ -13,7 +13,7 @@ use crate::error::CliError;
 /// The three shared binaries build this once from their own flag grammar and hand
 /// it to [`encode`], so the lossless/lossy fork lives in exactly one place.
 #[derive(Debug, Clone, Copy)]
-pub enum EncodeMode {
+pub(crate) enum EncodeMode {
     /// Lossless VP8L at the given effort [`Effort`].
     Lossless(Effort),
     /// Lossy VP8 at the given quality (`0..=100`) and effort [`Effort`].
@@ -31,7 +31,7 @@ pub enum EncodeMode {
 /// # Errors
 ///
 /// [`CliError::Codec`] if the input is not a decodable still WebP image.
-pub fn decode(bytes: &[u8], layout: PixelLayout) -> Result<Image, CliError> {
+pub(crate) fn decode(bytes: &[u8], layout: PixelLayout) -> Result<Image, CliError> {
     let options = DecodeOptions::default().layout(layout);
     Ok(webpkit::decode_with(bytes, &options)?)
 }
@@ -48,7 +48,11 @@ pub fn decode(bytes: &[u8], layout: PixelLayout) -> Result<Image, CliError> {
 ///
 /// [`CliError::Codec`] if the image is invalid (out-of-range dimensions or a
 /// buffer-length mismatch).
-pub fn encode(image: &Image, mode: EncodeMode, metadata: Metadata) -> Result<Vec<u8>, CliError> {
+pub(crate) fn encode(
+    image: &Image,
+    mode: EncodeMode,
+    metadata: Metadata,
+) -> Result<Vec<u8>, CliError> {
     let bytes = match mode {
         EncodeMode::Lossless(effort) => Encoder::lossless()
             .effort(effort)

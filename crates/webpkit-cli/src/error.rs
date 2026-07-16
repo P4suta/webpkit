@@ -1,17 +1,17 @@
 //! The CLI error type and its process exit codes.
 //!
-//! [`CliError`] wraps the codec's [`webpkit::lossless::Error`] plus the I/O and
+//! [`CliError`] wraps the codec's [`webpkit::Error`] plus the I/O and
 //! usage failures that only exist at the command-line boundary, and maps each to
 //! a meaningful, stable process exit code (see [`CliError::exit_code`]).
 
 use std::{fmt, io, process::ExitCode};
 
-use webpkit::lossless::Error as CodecError;
+use webpkit::Error as CodecError;
 
 /// A command-line failure, carrying enough context for a helpful message and a
 /// meaningful process exit code.
 #[derive(Debug)]
-pub enum CliError {
+pub(crate) enum CliError {
     /// The arguments were used incorrectly (exit code `2`, matching clap).
     Usage(String),
     /// The input could not be read (exit code `3`).
@@ -39,7 +39,7 @@ pub enum CliError {
 impl CliError {
     /// Build a [`CliError::ReadInput`] from a labeled I/O error.
     #[must_use]
-    pub fn read_input(label: String, err: &io::Error) -> Self {
+    pub(crate) fn read_input(label: String, err: &io::Error) -> Self {
         Self::ReadInput {
             label,
             kind: err.kind(),
@@ -48,7 +48,7 @@ impl CliError {
 
     /// Build a [`CliError::WriteOutput`] from a labeled I/O error.
     #[must_use]
-    pub fn write_output(label: String, err: &io::Error) -> Self {
+    pub(crate) fn write_output(label: String, err: &io::Error) -> Self {
         Self::WriteOutput {
             label,
             kind: err.kind(),
@@ -61,7 +61,7 @@ impl CliError {
     /// I/O, `5` decode/bitstream, `6` unsupported feature, `7` limit exceeded,
     /// `8` invalid image or raw config, `9` input-format parse.
     #[must_use]
-    pub fn exit_code(&self) -> ExitCode {
+    pub(crate) fn exit_code(&self) -> ExitCode {
         ExitCode::from(self.code())
     }
 

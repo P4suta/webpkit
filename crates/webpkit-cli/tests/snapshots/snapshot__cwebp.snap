@@ -1,7 +1,8 @@
 ---
 source: crates/webpkit-cli/tests/snapshot.rs
-expression: "help(\"cwebp\", \"-h\")"
+expression: "dump(\"cwebp\", \"-h\")"
 ---
+$ cwebp -h
 cwebp (webpkit) — encode PNG/PPM/PAM to WebP (lossy by default)
 
 Usage: cwebp [options] <input> -o <output.webp>

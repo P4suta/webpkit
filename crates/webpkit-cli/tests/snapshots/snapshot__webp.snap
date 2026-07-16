@@ -1,13 +1,14 @@
 ---
 source: crates/webpkit-cli/tests/snapshot.rs
-expression: "help(\"webp\", \"--help\")"
+expression: "dump(\"webp\", \"--help\")"
 ---
+$ webp --help
 Command-line tools for the webpkit WebP codec: libwebp-style cwebp (lossy by default, -lossless for VP8L) / dwebp and the webp brand tool.
 
 Usage: webp [OPTIONS] <COMMAND>
 
 Commands:
-  decode   Decode a WebP VP8L file to PNG (default), PPM/PAM, or raw pixels
+  decode   Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
   encode   Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)
   convert  Batch-convert many images (or directories) to WebP, in parallel
   info     Print a summary of a WebP file (size, alpha, metadata, animation)
@@ -18,3 +19,208 @@ Options:
   -q, --quiet       Suppress all non-error output
   -h, --help        Print help
   -V, --version     Print version
+
+$ webp decode --help
+Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
+
+Usage: webp decode [OPTIONS] --output <OUTPUT> [INPUT]
+
+Arguments:
+  [INPUT]
+          Input `.webp` file; `-` (the default) reads stdin
+          
+          [default: -]
+
+Options:
+  -o, --output <OUTPUT>
+          Output path; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --format <FORMAT>
+          Output format; defaults to the `-o` extension, else PNG
+
+          Possible values:
+          - png: PNG, RGBA8
+          - ppm: Netpbm binary PPM (`P6`, RGB; alpha dropped)
+          - pam: Netpbm binary PAM (`P7`, RGBA)
+          - raw: Raw row-major pixels in the requested `--layout`
+
+  -q, --quiet
+          Suppress all non-error output
+
+      --layout <LAYOUT>
+          Byte order for raw output only
+
+          Possible values:
+          - rgba8: `R, G, B, A`
+          - argb8: `A, R, G, B`
+          - bgra8: `B, G, R, A`
+          
+          [default: rgba8]
+
+      --frames <FRAMES>
+          For animations: which frames to emit
+
+          Possible values:
+          - first: Only the first composited frame (the default)
+          - all:   Every composited frame, numbered `<stem>-000.<ext>`, ...
+
+      --frame <FRAME>
+          For animations: emit only this 0-based frame
+
+      --metadata <METADATA>
+          Metadata to carry into the output: all,none,icc,exif,xmp (default: all)
+
+          Possible values:
+          - all:  Keep ICC, Exif, and XMP
+          - none: Strip everything (a bare `VP8L` output)
+          - icc:  Keep the ICC color profile
+          - exif: Keep Exif
+          - xmp:  Keep XMP
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp encode --help
+Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)
+
+Usage: webp encode [OPTIONS] --output <OUTPUT> [INPUT]
+
+Arguments:
+  [INPUT]
+          Input image (PNG/PPM/PAM/raw); `-` (the default) reads stdin
+          
+          [default: -]
+
+Options:
+  -o, --output <OUTPUT>
+          Output `.webp` file; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --input-format <INPUT_FORMAT>
+          Input format; defaults to the extension, else the magic bytes, else raw
+
+          Possible values:
+          - png: PNG (any color type; normalized to RGBA8)
+          - ppm: Netpbm binary PPM (`P6`, RGB)
+          - pam: Netpbm binary PAM (`P7`, RGBA)
+          - raw: Raw row-major pixels; requires `--width`/`--height`/`--layout`
+
+  -q, --quiet
+          Suppress all non-error output
+
+      --width <WIDTH>
+          Raw-input width in pixels (required for raw input)
+
+      --height <HEIGHT>
+          Raw-input height in pixels (required for raw input)
+
+      --layout <LAYOUT>
+          Byte order for raw input only
+
+          Possible values:
+          - rgba8: `R, G, B, A`
+          - argb8: `A, R, G, B`
+          - bgra8: `B, G, R, A`
+          
+          [default: rgba8]
+
+  -m, --method <METHOD>
+          Encoder effort
+
+          Possible values:
+          - fast:     Fastest: literal + subtract-green only
+          - balanced: Balanced (the default): LZ77 + color cache
+          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+          
+          [default: balanced]
+
+      --lossy
+          Encode lossily (VP8) instead of losslessly (VP8L)
+
+      --quality <QUALITY>
+          Lossy quality 0-100 (higher = larger, closer to source); selects --lossy
+
+      --metadata <METADATA>
+          Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)
+
+          Possible values:
+          - all:  Keep ICC, Exif, and XMP
+          - none: Strip everything (a bare `VP8L` output)
+          - icc:  Keep the ICC color profile
+          - exif: Keep Exif
+          - xmp:  Keep XMP
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp convert --help
+Batch-convert many images (or directories) to WebP, in parallel
+
+Usage: webp convert [OPTIONS] <INPUTS>...
+
+Arguments:
+  <INPUTS>...
+          Input images and/or directories (PNG/PPM/PAM)
+
+Options:
+  -o, --output <OUTPUT>
+          Output directory (created outputs are `<stem>.webp`); default: beside input
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+  -m, --method <METHOD>
+          Encoder effort (ignored with --optimize)
+
+          Possible values:
+          - fast:     Fastest: literal + subtract-green only
+          - balanced: Balanced (the default): LZ77 + color cache
+          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+          
+          [default: balanced]
+
+  -q, --quiet
+          Suppress all non-error output
+
+      --lossy
+          Encode lossily (VP8) instead of losslessly (VP8L)
+
+      --quality <QUALITY>
+          Lossy quality 0-100 (higher = larger, closer to source); selects --lossy
+
+      --optimize
+          Try every lossless effort level and keep the smallest output
+
+  -r, --recursive
+          Recurse into subdirectories
+
+      --metadata <METADATA>
+          Metadata to embed: all,none,icc,exif,xmp (default: all)
+
+          Possible values:
+          - all:  Keep ICC, Exif, and XMP
+          - none: Strip everything (a bare `VP8L` output)
+          - icc:  Keep the ICC color profile
+          - exif: Keep Exif
+          - xmp:  Keep XMP
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp info --help
+Print a summary of a WebP file (size, alpha, metadata, animation)
+
+Usage: webp info [OPTIONS] [INPUT]
+
+Arguments:
+  [INPUT]  Input `.webp` file; `-` (the default) reads stdin [default: -]
+
+Options:
+  -v, --verbose...  Print per-stage detail on stderr
+  -q, --quiet       Suppress all non-error output
+  -h, --help        Print help

@@ -1,7 +1,7 @@
 //! Netpbm binary PPM (`P6`, RGB) and PAM (`P7`, RGBA) I/O — dependency-free, for
 //! `cwebp` PPM/PAM inputs and `dwebp -ppm`/`-pam` outputs.
 
-use webpkit::lossless::{Dimensions, Image, Metadata, PixelLayout};
+use webpkit::{Dimensions, Image, Metadata, PixelLayout};
 
 use crate::{error::CliError, format::to_rgba8};
 
@@ -11,7 +11,7 @@ use crate::{error::CliError, format::to_rgba8};
 ///
 /// [`CliError::Format`] if the header or body is malformed or uses an
 /// unsupported feature (only 8-bit `MAXVAL 255` is supported).
-pub fn read(bytes: &[u8]) -> Result<Image, CliError> {
+pub(crate) fn read(bytes: &[u8]) -> Result<Image, CliError> {
     if bytes.starts_with(b"P6") {
         read_ppm(bytes)
     } else if bytes.starts_with(b"P7") {
@@ -25,7 +25,7 @@ pub fn read(bytes: &[u8]) -> Result<Image, CliError> {
 
 /// Encode an [`Image`] as a binary PPM (`P6`, RGB; alpha dropped).
 #[must_use]
-pub fn write_ppm(image: &Image) -> Vec<u8> {
+pub(crate) fn write_ppm(image: &Image) -> Vec<u8> {
     let rgba = to_rgba8(image);
     let mut out = format!("P6\n{} {}\n255\n", image.width(), image.height()).into_bytes();
     out.reserve(rgba.len() / 4 * 3);
@@ -37,7 +37,7 @@ pub fn write_ppm(image: &Image) -> Vec<u8> {
 
 /// Encode an [`Image`] as a binary PAM (`P7`, RGBA).
 #[must_use]
-pub fn write_pam(image: &Image) -> Vec<u8> {
+pub(crate) fn write_pam(image: &Image) -> Vec<u8> {
     let rgba = to_rgba8(image);
     let header = format!(
         "P7\nWIDTH {}\nHEIGHT {}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n",

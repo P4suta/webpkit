@@ -8,7 +8,7 @@ use crate::error::CliError;
 
 /// How much status output to emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Level {
+pub(crate) enum Level {
     /// Errors only.
     Quiet,
     /// A one-line summary per operation (the default).
@@ -19,14 +19,14 @@ pub enum Level {
 
 /// Emits status, detail, and error lines to stderr according to a [`Level`].
 #[derive(Debug)]
-pub struct Reporter {
+pub(crate) struct Reporter {
     level: Level,
 }
 
 impl Reporter {
     /// Build a reporter from the parsed `-v` count and `-q` flag. `quiet` wins.
     #[must_use]
-    pub const fn new(verbose: u8, quiet: bool) -> Self {
+    pub(crate) const fn new(verbose: u8, quiet: bool) -> Self {
         let level = if quiet {
             Level::Quiet
         } else if verbose >= 1 {
@@ -37,18 +37,12 @@ impl Reporter {
         Self { level }
     }
 
-    /// This reporter's [`Level`].
-    #[must_use]
-    pub const fn level(&self) -> Level {
-        self.level
-    }
-
     /// A one-line summary, shown at [`Level::Normal`] and above.
     #[allow(
         clippy::print_stderr,
         reason = "the CLI reports human-readable status on stderr by design"
     )]
-    pub fn status(&self, message: &str) {
+    pub(crate) fn status(&self, message: &str) {
         if self.level != Level::Quiet {
             eprintln!("{message}");
         }
@@ -59,7 +53,7 @@ impl Reporter {
         clippy::print_stderr,
         reason = "the CLI reports human-readable status on stderr by design"
     )]
-    pub fn detail(&self, message: &str) {
+    pub(crate) fn detail(&self, message: &str) {
         if self.level == Level::Verbose {
             eprintln!("{message}");
         }
@@ -74,7 +68,7 @@ impl Reporter {
     clippy::print_stderr,
     reason = "the CLI reports errors on stderr by design"
 )]
-pub fn error(err: &CliError) {
+pub(crate) fn error(err: &CliError) {
     eprintln!("error: {err}");
 }
 
@@ -83,6 +77,6 @@ pub fn error(err: &CliError) {
     clippy::print_stderr,
     reason = "the CLI reports warnings on stderr by design"
 )]
-pub fn warn(message: &str) {
+pub(crate) fn warn(message: &str) {
     eprintln!("warning: {message}");
 }

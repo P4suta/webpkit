@@ -5,7 +5,7 @@
 
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
-use webpkit::lossless::{Image, PixelLayout};
+use webpkit::{Image, PixelLayout};
 
 use crate::{
     codec,
@@ -17,7 +17,7 @@ use crate::{
 
 /// Parse `dwebp`-style arguments, decode, and return a process exit code.
 #[must_use]
-pub fn main() -> ExitCode {
+pub(crate) fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,

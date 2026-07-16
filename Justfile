@@ -155,21 +155,21 @@ corpus-bless:
 # Built --release: the encode-heavy Best search is ~13x faster than debug
 # (~42s vs ~570s), keeping the run inside its ~120s budget. Encoded sizes are
 # deterministic and profile-independent, so the release gate matches any run.
-# Pinned to the MSRV (`+1.96`) toolchain to match CI AND because the ledger's
-# peak-memory fields are toolchain-sensitive — the gate is 1.96-pinned so the
-# committed peak-memory numbers are reproducible on this exact compiler.
+# Pinned to `+1.96` to match CI because the ledger's peak-memory fields are
+# toolchain-sensitive, so the committed numbers only reproduce on this exact
+# compiler. This pin is unrelated to the MSRV ({{msrv}}) — do not sync them.
 # (The `cargo xtask` alias can't select --release, so invoke cargo directly.)
 metrics:
     cargo +1.96 run --release --quiet -p xtask -- metrics
 
 # (Re)author the compression-metrics ledger after an intended size change.
-# 1.96-pinned to match the `metrics` gate (peak-memory reproducibility).
+# `+1.96` to match the `metrics` gate (peak-memory reproducibility, not the MSRV).
 metrics-bless:
     cargo +1.96 run --release --quiet -p xtask -- metrics --bless
 
 # Measure the LOSSY encoder over the sample matrix and gate corpus/metrics-lossy.json
 # (size / ratio / reconstruction sse / peak memory, per method x quality). Same
-# --release + MSRV `+1.96` pin as `metrics` (its peak-memory fields are
+# --release + `+1.96` pin as `metrics` (its peak-memory fields are
 # toolchain-sensitive); the quality field is integer sse, so the ledger stays
 # byte-golden. Best is capped to edge<=256 for runtime.
 metrics-lossy:

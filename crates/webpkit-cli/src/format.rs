@@ -3,18 +3,18 @@
 //! The codec itself only speaks raw RGBA/ARGB/BGRA, so this layer is what makes
 //! the tools accept `.png` inputs and emit `.png` outputs.
 
-pub mod png;
-pub mod ppm;
-pub mod raw;
+pub(crate) mod png;
+pub(crate) mod ppm;
+pub(crate) mod raw;
 
 use clap::ValueEnum;
-use webpkit::lossless::{Image, Metadata, PixelLayout};
+use webpkit::{Image, Metadata, PixelLayout};
 
 use crate::{error::CliError, format::raw::RawParams};
 
 /// An image encoding the CLI can read as encoder input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum InputFormat {
+pub(crate) enum InputFormat {
     /// PNG (any color type; normalized to RGBA8).
     Png,
     /// Netpbm binary PPM (`P6`, RGB).
@@ -27,7 +27,7 @@ pub enum InputFormat {
 
 /// An image encoding the CLI can write as decoder output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum OutputFormat {
+pub(crate) enum OutputFormat {
     /// PNG, RGBA8.
     Png,
     /// Netpbm binary PPM (`P6`, RGB; alpha dropped).
@@ -42,7 +42,7 @@ impl InputFormat {
     /// Resolve the input format: an explicit choice wins, else the file
     /// extension, else the leading magic bytes, else [`InputFormat::Raw`].
     #[must_use]
-    pub fn resolve(explicit: Option<Self>, extension: Option<&str>, bytes: &[u8]) -> Self {
+    pub(crate) fn resolve(explicit: Option<Self>, extension: Option<&str>, bytes: &[u8]) -> Self {
         explicit
             .or_else(|| extension.and_then(Self::from_extension))
             .or_else(|| Self::sniff(bytes))
@@ -76,7 +76,7 @@ impl OutputFormat {
     /// Resolve the output format: an explicit choice wins, else the `-o`
     /// extension, else [`OutputFormat::Png`] (the dwebp default).
     #[must_use]
-    pub fn resolve(explicit: Option<Self>, extension: Option<&str>) -> Self {
+    pub(crate) fn resolve(explicit: Option<Self>, extension: Option<&str>) -> Self {
         explicit
             .or_else(|| extension.and_then(Self::from_extension))
             .unwrap_or(Self::Png)
@@ -101,7 +101,7 @@ impl OutputFormat {
 ///
 /// [`CliError::Format`] if a PNG/netpbm stream is malformed, or
 /// [`CliError::RawConfig`] if raw parameters are missing or inconsistent.
-pub fn read_image(
+pub(crate) fn read_image(
     bytes: &[u8],
     format: InputFormat,
     raw: Option<RawParams>,
@@ -129,7 +129,7 @@ pub fn read_image(
 /// # Errors
 ///
 /// [`CliError::Format`] if PNG encoding fails.
-pub fn write_image(
+pub(crate) fn write_image(
     image: &Image,
     format: OutputFormat,
     metadata: &Metadata,
@@ -144,7 +144,7 @@ pub fn write_image(
 
 /// Return an image's pixels as RGBA8, reordering from its stored layout.
 #[must_use]
-pub fn to_rgba8(image: &Image) -> Vec<u8> {
+pub(crate) fn to_rgba8(image: &Image) -> Vec<u8> {
     let src = image.as_bytes();
     match image.layout() {
         PixelLayout::Rgba8 => src.to_vec(),

@@ -1,7 +1,9 @@
-//! The `cwebp` drop-in command-line tool (VP8L lossless).
+//! The `cwebp` binary.
 
 use std::process::ExitCode;
 
+use webpkit_cli::Personality;
+
 fn main() -> ExitCode {
-    webpkit_cli::cli::cwebp::main()
+    webpkit_cli::run(Personality::Cwebp)
 }

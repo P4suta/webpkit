@@ -21,7 +21,7 @@ use crate::{
 
 /// Parse `cwebp`-style arguments, encode, and return a process exit code.
 #[must_use]
-pub fn main() -> ExitCode {
+pub(crate) fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,

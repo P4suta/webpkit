@@ -146,7 +146,7 @@ cargo install --path crates/webpkit-cli --locked   # installs cwebp, dwebp, webp
 cwebp in.png -o out.webp -q 80           # lossy by default (-q = quality)
 cwebp in.png -o out.webp -lossless -m 6  # -lossless (or -z) -> VP8L; -m/-z/-q = effort
 dwebp out.webp -o back.png               # decodes VP8L or VP8; default output is PNG
-cat in.png | cwebp -o - | dwebp -o - > roundtrip.png   # stdin/stdout pipes
+cat in.png | cwebp - -o - | dwebp - -o - > roundtrip.png   # `-` reads stdin
 
 # the webp brand tool:
 webp encode in.png -o out.webp           # PNG/PPM/PAM/raw in, WebP out
