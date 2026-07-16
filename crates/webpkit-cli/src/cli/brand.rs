@@ -194,6 +194,9 @@ struct GlobalArgs {
     /// parallelism, batch conversion and per-image search alike.
     #[arg(long, global = true, value_name = "N")]
     threads: Option<u16>,
+    /// Report what would be written, without encoding or writing anything.
+    #[arg(long, global = true)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -604,7 +607,7 @@ pub(crate) fn main() -> ExitCode {
         };
         term::install(cli.global.color);
         codec::configure_threads(resolved_threads(cli.global.threads));
-        let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
+        let reporter = Reporter::new(cli.global.verbose, cli.global.quiet).dry(cli.global.dry_run);
         finish(run(&cli.command, &reporter))
     } else {
         let cli = match Cli::try_parse_from(&argv) {
@@ -613,7 +616,7 @@ pub(crate) fn main() -> ExitCode {
         };
         term::install(cli.global.color);
         codec::configure_threads(resolved_threads(cli.global.threads));
-        let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
+        let reporter = Reporter::new(cli.global.verbose, cli.global.quiet).dry(cli.global.dry_run);
         let result = match &cli.command {
             Some(command) => run(command, &reporter),
             None => auto(&cli.auto, &reporter).map(|()| ExitCode::SUCCESS),
@@ -951,6 +954,24 @@ fn auto_one(
         },
         |path| (path.to_path_buf(), false),
     );
+    if reporter.is_dry_run() {
+        let direction = if codec::is_webp(&bytes) {
+            "decode"
+        } else {
+            "encode"
+        };
+        let exists = if io::exists(&output) {
+            " (overwrites existing)"
+        } else {
+            ""
+        };
+        report::plan(&format!(
+            "{direction} {} -> {}{exists}",
+            input.display(),
+            output.display(),
+        ));
+        return Ok(());
+    }
     if !clear_to_write(&output, derived, args, reporter)? {
         return Ok(());
     }
@@ -1073,6 +1094,14 @@ fn decode(args: &DecodeArgs, reporter: &Reporter) -> Result<(), CliError> {
     let sink = Sink::from_arg(&args.output);
     let bytes = source.read()?;
     let format = OutputFormat::resolve(args.format, sink.extension().as_deref());
+    if reporter.is_dry_run() {
+        report::plan(&format!(
+            "{} -> {} ({format:?})",
+            source.label(),
+            sink.label(),
+        ));
+        return Ok(());
+    }
     reporter.detail(&format!("decoding {} -> {format:?}", source.label()));
 
     // Image formats are always RGBA8; only raw honors the requested layout.
@@ -1217,6 +1246,15 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
     )?;
     let flags = flags_of(&settings, target.is_some());
     let (mode, derived) = codec::resolve_mode(format, flags)?;
+    if reporter.is_dry_run() {
+        report::plan(&format!(
+            "{} -> {} ({})",
+            source.label(),
+            sink.label(),
+            codec_note(mode, format, false),
+        ));
+        return Ok(());
+    }
     let selection = settings.metadata.value;
     let pipeline = pipeline_of(args.crop.as_deref(), args.resize.as_deref())?;
     let strategy = Strategy::resolve(mode, derived, false, target)?;

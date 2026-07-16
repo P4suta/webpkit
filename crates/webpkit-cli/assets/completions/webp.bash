@@ -104,7 +104,7 @@ _webp() {
 
     case "${cmd}" in
         webp)
-            opts="-v -o -q -m -r -h -V --verbose --quiet --color --threads --output --quality --lossless --lossy --method --metadata --crop --resize --recursive --force --no-clobber --help --version decode encode convert info diff doctor config explain completions man help"
+            opts="-v -o -q -m -r -h -V --verbose --quiet --color --threads --dry-run --output --quality --lossless --lossy --method --metadata --crop --resize --recursive --force --no-clobber --help --version decode encode convert info diff doctor config explain completions man help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -162,7 +162,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__completions)
-            opts="-v -h --verbose --quiet --color --threads --help bash elvish fish powershell zsh"
+            opts="-v -h --verbose --quiet --color --threads --dry-run --help bash elvish fish powershell zsh"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -184,7 +184,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__config)
-            opts="-v -h --json --template --quality --effort --codec --metadata --threads --max-pixels --verbose --quiet --color --help get help"
+            opts="-v -h --json --template --quality --effort --codec --metadata --threads --max-pixels --verbose --quiet --color --dry-run --help get help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -226,7 +226,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__config__subcmd__get)
-            opts="-v -h --verbose --quiet --color --help"
+            opts="-v -h --verbose --quiet --color --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -286,7 +286,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__convert)
-            opts="-o -m -q -r -v -h --output --method --lossless --lossy --quality --optimize --recursive --metadata --verbose --quiet --color --threads --help"
+            opts="-o -m -q -r -v -h --output --method --lossless --lossy --quality --optimize --recursive --metadata --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -336,7 +336,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__decode)
-            opts="-o -v -h --output --format --layout --frames --frame --metadata --verbose --quiet --color --threads --help"
+            opts="-o -v -h --output --format --layout --frames --frame --metadata --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -386,7 +386,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__diff)
-            opts="-v -h --min-psnr --json --verbose --quiet --color --threads --help"
+            opts="-v -h --min-psnr --json --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -412,7 +412,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__doctor)
-            opts="-v -h --verbose --quiet --color --threads --help"
+            opts="-v -h --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -434,7 +434,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__encode)
-            opts="-o -m -q -v -h --output --input-format --width --height --layout --method --lossless --lossy --quality --crop --resize --target-size --min-psnr --metadata --verbose --quiet --color --threads --help"
+            opts="-o -m -q -v -h --output --input-format --width --height --layout --method --lossless --lossy --quality --crop --resize --target-size --min-psnr --metadata --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -516,7 +516,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__explain)
-            opts="-v -h --verbose --quiet --color --threads --help"
+            opts="-v -h --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -720,7 +720,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__info)
-            opts="-v -h --json --verbose --quiet --color --threads --help"
+            opts="-v -h --json --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -742,7 +742,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__man)
-            opts="-v -h --verbose --quiet --color --threads --help"
+            opts="-v -h --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

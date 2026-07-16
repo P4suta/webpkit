@@ -35,6 +35,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('--lossless', '--lossless', [CompletionResultType]::ParameterName, 'Force lossless (VP8L) encoding')
             [CompletionResult]::new('--lossy', '--lossy', [CompletionResultType]::ParameterName, 'Force lossy (VP8) encoding')
             [CompletionResult]::new('-r', '-r', [CompletionResultType]::ParameterName, 'Recurse into subdirectories')
@@ -71,6 +72,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
@@ -98,6 +100,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
@@ -120,6 +123,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
@@ -131,6 +135,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
@@ -143,6 +148,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
@@ -153,6 +159,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
@@ -170,6 +177,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('get', 'get', [CompletionResultType]::ParameterValue, 'Print a single setting''s resolved value, with nothing else')
@@ -181,6 +189,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
@@ -202,6 +211,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
@@ -212,6 +222,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
@@ -222,6 +233,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break

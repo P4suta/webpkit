@@ -46,6 +46,9 @@ Options:
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
   -o, --output <OUTPUT>
           Output file, or a directory for many inputs; default: beside each input
 
@@ -158,6 +161,9 @@ Options:
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
       --frame <FRAME>
           For animations: emit only this 0-based frame
 
@@ -227,6 +233,9 @@ Options:
           Worker threads for parallel work; 0 (the default) uses one per core.
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
 
       --layout <LAYOUT>
           Byte order for raw input only
@@ -329,6 +338,9 @@ Options:
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
   -q, --quality <QUALITY>
           Lossy quality 0-100 (higher = larger, closer to source); selects --lossy
 
@@ -388,6 +400,9 @@ Options:
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -432,6 +447,9 @@ Options:
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -462,6 +480,9 @@ Options:
           Worker threads for parallel work; 0 (the default) uses one per core.
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
 
   -h, --help
           Print help (see a summary with '-h')
@@ -501,6 +522,9 @@ Options:
 
       --quality <0-100>
           Override: lossy quality 0-100
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
 
       --effort <EFFORT>
           Override: encoder effort
@@ -561,6 +585,9 @@ Options:
           
           [default: auto]
 
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -593,6 +620,9 @@ Options:
           Worker threads for parallel work; 0 (the default) uses one per core.
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
 
   -h, --help
           Print help (see a summary with '-h')
@@ -635,6 +665,9 @@ Options:
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -667,6 +700,9 @@ Options:
           Worker threads for parallel work; 0 (the default) uses one per core.
           
           One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
 
   -h, --help
           Print help (see a summary with '-h')

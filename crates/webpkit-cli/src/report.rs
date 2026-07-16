@@ -30,6 +30,7 @@ pub(crate) enum Level {
 #[derive(Debug)]
 pub(crate) struct Reporter {
     level: Level,
+    dry_run: bool,
 }
 
 impl Reporter {
@@ -43,7 +44,24 @@ impl Reporter {
         } else {
             Level::Normal
         };
-        Self { level }
+        Self {
+            level,
+            dry_run: false,
+        }
+    }
+
+    /// Mark this reporter as a `--dry-run`: callers skip writing and report the
+    /// plan instead.
+    #[must_use]
+    pub(crate) const fn dry(mut self, dry_run: bool) -> Self {
+        self.dry_run = dry_run;
+        self
+    }
+
+    /// Whether this is a dry run — no encoding, no writing, just the plan.
+    #[must_use]
+    pub(crate) const fn is_dry_run(&self) -> bool {
+        self.dry_run
     }
 
     /// A one-line summary, shown at [`Level::Normal`] and above.
@@ -127,6 +145,12 @@ fn push_labeled(out: &mut String, style: Style, label: &str, lines: &[&str]) {
 /// Print a non-fatal warning to stderr (always shown), prefixed with `warning:`.
 pub(crate) fn warn(message: &str) {
     labeled(term::warning(), "warning", message);
+}
+
+/// A `dry run:` plan line to stderr, always shown — it is the whole output of a
+/// dry run, so `--quiet` does not silence it.
+pub(crate) fn plan(message: &str) {
+    line(&format!("dry run: {message}"));
 }
 
 /// Print a report line to **stdout**.

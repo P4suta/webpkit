@@ -270,3 +270,31 @@ fn a_read_error_carries_the_os_message() {
         .code(3)
         .stderr(contains("cannot read `definitely-not-here.webp`"));
 }
+
+/// `--dry-run` reports the plan and writes nothing — and exits 0, so it composes
+/// in a script that then decides whether to run for real.
+#[test]
+fn dry_run_writes_nothing_and_reports_the_plan() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let input = dir.path().join("in.ppm");
+    let mut bytes = b"P6\n4 4\n255\n".to_vec();
+    bytes.extend(std::iter::repeat_n(0x40u8, 4 * 4 * 3));
+    std::fs::write(&input, &bytes).expect("write input");
+    let output = dir.path().join("out.webp");
+
+    Command::cargo_bin("webp")
+        .expect("binary")
+        .arg("encode")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("dry run:"));
+
+    assert!(
+        !output.exists(),
+        "--dry-run created the output file it promised not to write"
+    );
+}

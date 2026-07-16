@@ -39,6 +39,7 @@ xmp\:"Keep XMP"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '(--lossy)--lossless[Force lossless (VP8L) encoding]' \
 '--lossy[Force lossy (VP8) encoding]' \
 '-r[Recurse into subdirectories]' \
@@ -85,6 +86,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 '::input -- Input `.webp` file; `-` (the default) reads stdin:_files' \
@@ -133,6 +135,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 '::input -- Input image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw); `-` (default) reads stdin:_files' \
@@ -167,6 +170,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 '*::inputs -- Input images and/or directories (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM):_files' \
@@ -182,6 +186,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 '::input -- Input `.webp` file; `-` (the default) reads stdin:_files' \
@@ -198,6 +203,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':a -- The first image (a WebP, or any readable format):_files' \
@@ -213,6 +219,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
@@ -240,6 +247,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ":: :_webp__subcmd__config_commands" \
@@ -260,6 +268,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':key -- The setting to print, e.g. `quality`:_default' \
@@ -302,6 +311,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':code -- An exit code (`0`..`9`) or its short name (`usage`, `limit`, ...):_default' \
@@ -316,6 +326,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':shell -- The shell to generate for:(bash elvish fish powershell zsh)' \
@@ -330,6 +341,7 @@ never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 '::command -- Document this subcommand instead of the tool itself:_default' \
