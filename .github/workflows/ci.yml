@@ -327,10 +327,12 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     # Sized for an incremental PR. A large diff mutates many lines, and each mutant
-    # reruns the whole `-p webpkit` suite (~2.5 min), so the wall time is
-    # mutants x suite. `--jobs` fans them across the runner's cores to keep that in
-    # budget; the timeout headroom covers an exceptionally large change.
-    timeout-minutes: 60
+    # reruns the whole `-p webpkit` suite (~6 min with `--features image` + Best
+    # paths), so the wall time is mutants x suite / `--jobs`. `--jobs 4` saturates
+    # the runner's 4 vCPUs. The headroom absorbs an exceptionally large change: the
+    # one-time CLI-overhaul diff mutates ~45 lines and finishes in ~59 min, so the
+    # ceiling is set well above that to leave margin for runner variance.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
