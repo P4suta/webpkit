@@ -92,6 +92,7 @@ set edit:completion:arg-completer[webp] = {|@words|
         }
         &'webp;info'= {
             cand --color 'auto, always, or never'
+            cand --json 'Print the report as JSON instead of text'
             cand -v 'Print per-stage detail on stderr'
             cand --verbose 'Print per-stage detail on stderr'
             cand -q 'Suppress all non-error output'

@@ -108,6 +108,7 @@ complete -c webp -n "__fish_webp_using_subcommand convert" -s h -l help -d 'Prin
 complete -c webp -n "__fish_webp_using_subcommand info" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand info" -l json -d 'Print the report as JSON instead of text'
 complete -c webp -n "__fish_webp_using_subcommand info" -s v -l verbose -d 'Print per-stage detail on stderr'
 complete -c webp -n "__fish_webp_using_subcommand info" -s q -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand info" -s h -l help -d 'Print help (see more with \'--help\')'

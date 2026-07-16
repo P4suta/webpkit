@@ -141,6 +141,7 @@ _arguments "${_arguments_options[@]}" : \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'--json[Print the report as JSON instead of text]' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)-q[Suppress all non-error output]' \

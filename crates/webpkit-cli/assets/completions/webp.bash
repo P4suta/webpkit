@@ -359,7 +359,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__info)
-            opts="-v -q -h --verbose --quiet --color --help"
+            opts="-v -q -h --json --verbose --quiet --color --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

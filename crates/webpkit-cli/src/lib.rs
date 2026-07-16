@@ -29,6 +29,7 @@ mod codec;
 mod effort;
 mod error;
 mod format;
+mod inspect;
 mod io;
 mod metadata;
 mod personality;

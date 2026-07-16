@@ -1402,6 +1402,8 @@ dependencies = [
  "png",
  "predicates",
  "rayon",
+ "serde",
+ "serde_json",
  "tempfile",
  "webpkit",
 ]

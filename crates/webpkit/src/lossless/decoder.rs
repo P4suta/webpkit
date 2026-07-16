@@ -784,7 +784,7 @@ fn peek_info(bytes: &[u8]) -> Result<Option<ImageInfo>> {
 
 /// Build [`ImageInfo`] from a VP8L payload once at least its header is present.
 /// `has_alpha` combines the VP8L header advisory with any VP8X alpha flag.
-fn peek_vp8l_info(
+pub(crate) fn peek_vp8l_info(
     payload: Option<&[u8]>,
     has_metadata: bool,
     vp8x_alpha: bool,

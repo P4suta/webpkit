@@ -19,6 +19,7 @@ use crate::{
     codec::{self, EncodeMode},
     error::CliError,
     format::{self, InputFormat, OutputFormat, raw::RawParams},
+    inspect,
     io::{Sink, Source},
     metadata::{MetadataField, Selection},
     report::{self, Reporter},
@@ -137,6 +138,12 @@ struct InfoArgs {
     /// Input `.webp` file; `-` (the default) reads stdin.
     #[arg(default_value = "-")]
     input: PathBuf,
+    /// Print the report as JSON instead of text.
+    ///
+    /// One object, with a `schema` field to pin. Nothing is decoded either way,
+    /// so this is cheap on any size of file.
+    #[arg(long)]
+    json: bool,
 }
 
 /// Which frames of an animation to emit.
@@ -243,7 +250,7 @@ fn run(command: &Command, reporter: &Reporter) -> Result<(), CliError> {
         Command::Decode(args) => decode(args, reporter),
         Command::Encode(args) => encode(args, reporter),
         Command::Convert(args) => convert(args, reporter),
-        Command::Info(args) => info(args),
+        Command::Info(args) => info(args, reporter),
         Command::Completions(args) => {
             completions(args);
             Ok(())
@@ -477,79 +484,88 @@ fn ratio(input_len: usize, output_len: usize) -> String {
     format!("{}.{}%", permille / 10, permille % 10)
 }
 
-fn info(args: &InfoArgs) -> Result<(), CliError> {
+fn info(args: &InfoArgs, reporter: &Reporter) -> Result<(), CliError> {
     let source = Source::from_arg(&args.input);
     let bytes = source.read()?;
-    let mut lines = vec![format!("File:       {}", source.label())];
-    if is_animated(&bytes)? {
-        lines.extend(animation_lines(&bytes)?);
-    } else {
-        let image = webpkit::decode(&bytes)?;
-        lines.extend(still_lines(&bytes, &image));
+    let report = inspect::report(&bytes, source.label())?;
+
+    if args.json {
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|err| CliError::Format(format!("serializing the report: {err}")))?;
+        report::out(&json);
+        return Ok(());
     }
-    for line in &lines {
-        report::out(line);
+    for line in info_lines(&report) {
+        report::out(&line);
+    }
+    // The chunk table is the `webpinfo` half: useful when you are debugging a
+    // container, noise when you are not.
+    for line in chunk_lines(&report) {
+        reporter.detail(&line);
     }
     Ok(())
 }
 
-/// Summary lines for a still image, labeling the codec from the container's
-/// image chunk (`VP8L` lossless vs `VP8 ` lossy).
-fn still_lines(bytes: &[u8], image: &webpkit::Image) -> Vec<String> {
-    let format = if bytes.windows(4).any(|w| w == b"VP8L") {
-        "WebP VP8L (lossless)"
-    } else if bytes.windows(4).any(|w| w == b"VP8 ") {
-        "WebP VP8 (lossy)"
+/// The text report: one `Label: value` per line.
+fn info_lines(report: &inspect::Report) -> Vec<String> {
+    let mut lines = vec![
+        format!("File:       {}", report.path),
+        format!("Format:     {}", format_line(report)),
+        format!("Size:       {} bytes", report.bytes),
+    ];
+    if let Some(anim) = report.animation {
+        lines.push(format!("Canvas:     {}x{}", report.width, report.height));
+        lines.push(format!("Loop:       {}", loop_line(anim.loop_count)));
+        lines.push(format!("Frames:     {}", anim.frames));
+        lines.push(format!("Duration:   {} ms", anim.duration_ms));
     } else {
-        "WebP"
-    };
-    vec![
-        format!("Format:     {format}"),
-        format!("Dimensions: {}x{}", image.width(), image.height()),
-        format!("Alpha:      {}", yes_no(image.has_alpha())),
-        format!("Metadata:   {}", metadata_summary(image.metadata())),
-    ]
+        lines.push(format!("Dimensions: {}x{}", report.width, report.height));
+    }
+    lines.push(format!("Alpha:      {}", yes_no(report.alpha)));
+    lines.push(format!("Metadata:   {}", metadata_line(report.metadata)));
+    lines
 }
 
-/// Summary lines for an animation.
-fn animation_lines(bytes: &[u8]) -> Result<Vec<String>, CliError> {
-    let frames = webpkit::decode_frames(bytes)?;
-    let anim = frames.anim_info();
-    let loops = if anim.loop_count == 0 {
+/// `webpinfo`-style chunk dump, shown under `-v`.
+fn chunk_lines(report: &inspect::Report) -> Vec<String> {
+    let mut lines = vec!["Chunks:".to_owned()];
+    for chunk in &report.chunks {
+        lines.push(format!("  {:<6} {:>9} bytes", chunk.fourcc, chunk.bytes));
+    }
+    lines
+}
+
+fn format_line(report: &inspect::Report) -> String {
+    match report.container {
+        inspect::Container::Animation => format!("WebP animation ({})", report.codec),
+        inspect::Container::Extended => format!("WebP {} (extended)", report.codec),
+        inspect::Container::Simple => format!("WebP {}", report.codec),
+    }
+}
+
+fn loop_line(count: u16) -> String {
+    if count == 0 {
         "forever".to_owned()
     } else {
-        format!("{} time(s)", anim.loop_count)
-    };
-    let count = frames.composited().count();
-    Ok(vec![
-        "Format:     WebP animation".to_owned(),
-        format!(
-            "Canvas:     {}x{}",
-            anim.canvas.width(),
-            anim.canvas.height()
-        ),
-        format!("Loop:       {loops}"),
-        format!("Frames:     {count}"),
-    ])
+        format!("{count} time(s)")
+    }
 }
 
-/// Comma-list the metadata kinds present, or `none`.
-fn metadata_summary(metadata: &webpkit::Metadata) -> String {
-    let mut parts = Vec::new();
-    if metadata.icc_profile.is_some() {
-        parts.push("ICC");
+/// Comma-list the metadata kinds present, with sizes, or `none`.
+fn metadata_line(metadata: inspect::MetadataInfo) -> String {
+    if !metadata.any() {
+        return "none".to_owned();
     }
-    if metadata.exif.is_some() {
-        parts.push("Exif");
-    }
-    if metadata.xmp.is_some() {
-        parts.push("XMP");
-    }
-    if parts.is_empty() {
-        "none".to_owned()
-    } else {
-        parts.join(", ")
-    }
+    [
+        ("ICC", metadata.icc),
+        ("Exif", metadata.exif),
+        ("XMP", metadata.xmp),
+    ]
+    .iter()
+    .filter(|(_, field)| field.present)
+    .map(|(name, field)| format!("{name} {} bytes", field.bytes))
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 const fn yes_no(value: bool) -> &'static str {

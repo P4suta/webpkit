@@ -40,6 +40,7 @@ const CLI_LAYERS: &[(&str, u8)] = &[
     ("report", 1),
     ("term", 1),
     ("effort", 2),
+    ("inspect", 2),
     ("bulk", 4),
     ("cli", 5),
 ];
@@ -64,7 +65,81 @@ const HIDDEN_MODULES: &[&str] = &[
 ///
 /// Every entry is a standing signal that `webpkit`'s facade should grow: the CLI
 /// needs something the public API does not offer. Keep this list empty if you can.
-const FACADE_GAPS: &[(&str, &str)] = &[];
+const FACADE_GAPS: &[(&str, &str)] = &[
+    // `webpkit::ImageInfo` reports dimensions, alpha, metadata, and whether a file
+    // is animated — but not whether it is VP8L or VP8. `info` exists to answer
+    // exactly that, and the chunk walk is the only thing that can, so it reads the
+    // container directly. The facade should grow a codec field; until it does,
+    // this line is the record of why.
+    ("inspect.rs", "container"),
+];
+
+/// Split `body` on commas that are not inside a nested `{...}`.
+fn split_top_level(body: &str) -> Vec<&str> {
+    let (mut parts, mut depth, mut start) = (Vec::new(), 0_i32, 0);
+    for (index, ch) in body.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&body[start..index]);
+                start = index + 1;
+            },
+            _ => {},
+        }
+    }
+    parts.push(&body[start..]);
+    parts.into_iter().filter(|p| !p.is_empty()).collect()
+}
+
+/// Expand one `use` tree body into full paths under `prefix`.
+fn expand_tree(prefix: &str, body: &str, out: &mut Vec<String>) {
+    for item in split_top_level(body) {
+        match (item.find('{'), item.rfind('}')) {
+            (Some(open), Some(close)) if open < close => {
+                let head = format!("{prefix}{}", &item[..open]);
+                expand_tree(&head, &item[open + 1..close], out);
+            },
+            _ => out.push(format!("{prefix}{item}")),
+        }
+    }
+}
+
+/// Every path a file imports from `webpkit`, with nested `use` trees flattened:
+/// `use webpkit::{Image, container::reader::chunks};` yields `Image` and
+/// `container::reader::chunks`.
+///
+/// Flattening is the whole point. The flat spelling `use webpkit::lossless::Image;`
+/// is a substring match, but rustfmt writes the grouped form — so a check that only
+/// sees the flat one passes exactly the code it exists to catch. Matching the
+/// grouped form by substring instead over-fires: `container::anim::` would count as
+/// `webpkit::anim::`, which is a different module. Only real paths answer both.
+fn webpkit_use_paths(code: &str) -> Vec<String> {
+    let dense: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut paths = Vec::new();
+    let mut rest = dense.as_str();
+    while let Some(start) = rest.find("usewebpkit::") {
+        rest = &rest[start + "usewebpkit::".len()..];
+        let end = rest.find(';').unwrap_or(rest.len());
+        let tree = &rest[..end];
+        match (tree.find('{'), tree.rfind('}')) {
+            (Some(open), Some(close)) if open < close => {
+                expand_tree(&tree[..open], &tree[open + 1..close], &mut paths);
+            },
+            _ => paths.push(tree.to_owned()),
+        }
+        rest = &rest[end..];
+    }
+    paths
+}
+
+/// Whether `code` reaches into `webpkit::<hidden>`, by import or by inline path.
+fn names_hidden_module(code: &str, hidden: &str) -> bool {
+    code.contains(&format!("webpkit::{hidden}::"))
+        || webpkit_use_paths(code)
+            .iter()
+            .any(|path| path.split("::").next() == Some(hidden))
+}
 
 /// Modules permitted to touch the filesystem and the standard streams.
 ///
@@ -166,6 +241,65 @@ fn all_src() -> Vec<(PathBuf, String)> {
         .collect()
 }
 
+/// The scanner has been wrong in both directions — it missed a grouped `use`, then
+/// over-fired on `container::anim` as if it were `webpkit::anim`. A gate that can
+/// be wrong quietly is worse than none, so its own logic is tested.
+#[cfg(test)]
+mod scanner {
+    use super::names_hidden_module;
+
+    #[test]
+    fn a_flat_import_is_caught() {
+        assert!(names_hidden_module(
+            "use webpkit::lossless::Image;",
+            "lossless"
+        ));
+    }
+
+    #[test]
+    fn a_grouped_import_is_caught() {
+        let code = "use webpkit::{\n    Metadata,\n    lossless::Effort,\n};";
+        assert!(names_hidden_module(code, "lossless"));
+    }
+
+    #[test]
+    fn a_deeply_nested_import_is_caught() {
+        let code = "use webpkit::{container::{reader::{chunks, locate_image}}};";
+        assert!(names_hidden_module(code, "container"));
+    }
+
+    #[test]
+    fn an_inline_path_is_caught() {
+        assert!(names_hidden_module(
+            "let x = webpkit::stream::DecodeOptions::new();",
+            "stream"
+        ));
+    }
+
+    #[test]
+    fn the_facade_is_not_a_violation() {
+        let code = "use webpkit::{Codec, DecodeOptions, Image, ImageInfo, Metadata};";
+        for hidden in ["image", "error", "stream", "effort", "anim"] {
+            assert!(!names_hidden_module(code, hidden), "{hidden}");
+        }
+    }
+
+    /// `container::anim` is not `webpkit::anim`: a nested segment must not be read
+    /// as a top-level one. This is the false positive that shipped for a minute.
+    #[test]
+    fn a_nested_segment_is_not_a_top_level_module() {
+        let code = "use webpkit::{container::{anim::ANMF_HEADER_LEN, reader::chunks}};";
+        assert!(names_hidden_module(code, "container"));
+        assert!(!names_hidden_module(code, "anim"));
+    }
+
+    /// `webpkit::Error` is the facade type; `webpkit::error` is the hidden module.
+    #[test]
+    fn a_type_is_not_its_module() {
+        assert!(!names_hidden_module("webpkit::Error::Truncated", "error"));
+    }
+}
+
 /// Rule 1: name codec types through the facade, not through `webpkit`'s hidden
 /// modules.
 #[test]
@@ -174,7 +308,7 @@ fn codec_types_come_from_the_facade() {
     for (rel, code) in all_src() {
         let file = rel.to_string_lossy().replace('\\', "/");
         for hidden in HIDDEN_MODULES {
-            if !code.contains(&format!("webpkit::{hidden}::")) {
+            if !names_hidden_module(&code, hidden) {
                 continue;
             }
             let allowed = FACADE_GAPS

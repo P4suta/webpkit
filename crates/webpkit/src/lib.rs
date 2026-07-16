@@ -675,6 +675,109 @@ pub fn is_animated(input: &[u8]) -> Result<bool> {
     crate::container::reader::is_animated(input)
 }
 
+/// Read a WebP's header — dimensions, alpha, metadata, animation — without
+/// decoding a single pixel.
+///
+/// Answers the "what is this file" question that [`decode`] answers expensively:
+/// the cost is a chunk walk and one bitstream header, so it is the same on a
+/// 40-byte image and a 40-megapixel one, and it succeeds even when the pixel data
+/// is truncated or corrupt.
+///
+/// This is the one-shot counterpart to [`Progress::HeaderReady`]. The incremental
+/// decoder reports a header only as a side effect of streaming — a file small
+/// enough to decode within one `push` never emits the event at all — so it cannot
+/// be used as a probe.
+///
+/// # Examples
+///
+/// ```
+/// // Busy pixels, so the encoded body is comfortably longer than its header.
+/// let rgba: Vec<u8> = (0..64u32 * 64 * 4).map(|i| (i * 7 % 251) as u8).collect();
+/// let webp = webpkit::encode_lossless_rgba(64, 64, &rgba)?;
+///
+/// let info = webpkit::probe(&webp)?;
+/// assert_eq!((info.dimensions.width(), info.dimensions.height()), (64, 64));
+/// assert!(!info.is_animated);
+///
+/// // The header survives what the pixels do not.
+/// let truncated = &webp[..webp.len() / 2];
+/// assert!(webpkit::decode(truncated).is_err());
+/// assert_eq!(webpkit::probe(truncated)?.dimensions, info.dimensions);
+/// # Ok::<(), webpkit::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// [`Error::NotWebp`] if the container magic is wrong, [`Error::Truncated`] if the
+/// header is not fully present, [`Error::MissingImage`] if no image chunk is
+/// found, or the codec's error for a malformed bitstream header.
+#[cfg(feature = "alloc")]
+pub fn probe(input: &[u8]) -> Result<ImageInfo> {
+    if input.len() < 12 {
+        return Err(Error::Truncated);
+    }
+    if input[0..4] != FourCc::RIFF.0 || input[8..12] != FourCc::WEBP.0 {
+        return Err(Error::NotWebp);
+    }
+
+    let mut vp8x: Option<Vp8xInfo> = None;
+    for chunk in scan_chunks(input) {
+        match chunk.id {
+            FourCc::VP8X => {
+                let data = input
+                    .get(chunk.payload_start..chunk.payload_start + VP8X_PAYLOAD_LEN)
+                    .ok_or(Error::Truncated)?;
+                let info = Vp8xInfo::parse(data)?;
+                // An animation is fully described by its VP8X canvas; there is no
+                // top-level image chunk to go on and find.
+                if info.flags.is_animated() {
+                    return Ok(ImageInfo::new(
+                        info.canvas,
+                        info.flags.has_alpha(),
+                        vp8x_has_metadata(info),
+                        true,
+                    ));
+                }
+                vp8x = Some(info);
+            },
+            FourCc::VP8L => {
+                let has_metadata = vp8x.is_some_and(vp8x_has_metadata);
+                let vp8x_alpha = vp8x.is_some_and(|x| x.flags.has_alpha());
+                return crate::lossless::decoder::peek_vp8l_info(
+                    input.get(chunk.payload_start..),
+                    has_metadata,
+                    vp8x_alpha,
+                )?
+                .ok_or(Error::Truncated);
+            },
+            FourCc::VP8 => {
+                let payload = input.get(chunk.payload_start..).ok_or(Error::Truncated)?;
+                let dimensions = crate::lossy::peek_dimensions(payload)?;
+                // A bare VP8 stream carries no alpha and no metadata; an extended
+                // one says so in its VP8X flags, which is the only place to look —
+                // the sibling ALPH chunk may not have arrived yet.
+                return Ok(ImageInfo::new(
+                    dimensions,
+                    vp8x.is_some_and(|x| x.flags.has_alpha()),
+                    vp8x.is_some_and(vp8x_has_metadata),
+                    false,
+                ));
+            },
+            // Animation chunks with no preceding animated VP8X are malformed; a
+            // well-formed animation returns above.
+            FourCc::ANIM | FourCc::ANMF => return Err(Error::InvalidContainer),
+            _ => {},
+        }
+    }
+    Err(Error::MissingImage)
+}
+
+/// Whether a `VP8X` header advertises any metadata chunk.
+#[cfg(feature = "alloc")]
+const fn vp8x_has_metadata(info: Vp8xInfo) -> bool {
+    info.flags.has_icc() || info.flags.has_exif() || info.flags.has_xmp()
+}
+
 /// The crate version, as reported by Cargo.
 #[must_use]
 pub const fn version() -> &'static str {
@@ -689,8 +792,121 @@ mod tests {
     use super::{
         BlendMode, DecodeOptions, Dimensions, DisposalMode, Effort, Encoder, Error, FrameMeta,
         Image, ImageRef, IncrementalDecoder, Metadata, MetadataPolicy, PixelLayout, Progress,
-        decode, decode_with,
+        decode, decode_with, probe,
     };
+
+    /// A 32x32 image of busy pixels, encoded with `make`.
+    ///
+    /// Deliberately not a flat fill: a flat 64x64 encodes to 28 bytes, so half of
+    /// it is header and a truncation test on it would be measuring the header
+    /// rather than the body. Busy pixels give a body worth truncating.
+    fn sample(make: fn(ImageRef<'_>) -> Vec<u8>) -> Vec<u8> {
+        let rgba: Vec<u8> = (0..dims().width() * dims().height() * 4)
+            .map(|i| (i * 7 % 251) as u8)
+            .collect();
+        make(ImageRef::new(dims(), PixelLayout::Rgba8, &rgba).unwrap())
+    }
+
+    /// The sample's dimensions, named once so every probe assertion agrees.
+    fn dims() -> Dimensions {
+        Dimensions::new(32, 32).unwrap()
+    }
+
+    fn lossless_bytes() -> Vec<u8> {
+        sample(|img| Encoder::lossless().encode_ref(img).unwrap())
+    }
+
+    fn lossy_bytes() -> Vec<u8> {
+        sample(|img| Encoder::lossy().quality(80).encode_ref(img).unwrap())
+    }
+
+    #[test]
+    fn probe_reads_a_still_header_for_either_codec() {
+        for bytes in [lossless_bytes(), lossy_bytes()] {
+            let info = probe(&bytes).unwrap();
+            assert_eq!(info.dimensions, dims());
+            assert!(!info.is_animated);
+            assert!(!info.has_metadata);
+        }
+    }
+
+    /// The whole point of a probe: the header is readable when the pixels are not.
+    /// `decode` must fail on the same bytes, or this test measures nothing.
+    #[test]
+    fn probe_reads_a_header_whose_pixel_data_is_truncated() {
+        for full in [lossless_bytes(), lossy_bytes()] {
+            // Half the body, so the cut is unambiguously in the pixels.
+            let cut = &full[..full.len() / 2];
+            assert!(decode(cut).is_err(), "the truncation must break decoding");
+            let info = probe(cut).expect("probe survives a truncated body");
+            assert_eq!(info.dimensions, dims());
+        }
+    }
+
+    /// The honest boundary: a probe needs the header. Cutting into it must fail
+    /// rather than invent dimensions.
+    #[test]
+    fn probe_fails_when_the_truncation_reaches_the_header() {
+        assert!(probe(&lossless_bytes()[..14]).is_err());
+    }
+
+    #[test]
+    fn probe_reports_metadata_from_the_vp8x_header() {
+        let rgba = vec![0x20u8; 4 * 3 * 4];
+        let dims = Dimensions::new(4, 3).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        let bytes = Encoder::lossless()
+            .metadata(Metadata {
+                icc_profile: Some(vec![1, 2, 3]),
+                ..Metadata::none()
+            })
+            .encode_ref(img)
+            .unwrap();
+        assert!(probe(&bytes).unwrap().has_metadata);
+    }
+
+    #[test]
+    fn probe_reads_an_animation_canvas_without_decoding_frames() {
+        let canvas = Dimensions::new(16, 8).unwrap();
+        let rgba = vec![0x40u8; 16 * 8 * 4];
+        let frame = ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap();
+        let bytes = crate::AnimationEncoder::new(canvas)
+            .add_frame(
+                frame,
+                FrameMeta {
+                    x: 0,
+                    y: 0,
+                    dimensions: canvas,
+                    duration_ms: 100,
+                    blend: BlendMode::Blend,
+                    dispose: DisposalMode::Keep,
+                },
+            )
+            .unwrap()
+            .finish();
+        let info = probe(&bytes).unwrap();
+        assert!(info.is_animated);
+        assert_eq!(info.dimensions, canvas);
+    }
+
+    #[test]
+    fn probe_rejects_what_is_not_a_webp() {
+        assert!(matches!(
+            probe(b"not a webp file here"),
+            Err(Error::NotWebp)
+        ));
+        assert!(matches!(probe(b"tiny"), Err(Error::Truncated)));
+    }
+
+    #[test]
+    fn probe_rejects_a_container_with_no_image_chunk() {
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::EXIF, b"just metadata");
+        assert!(matches!(
+            probe(&riff_envelope(&body)),
+            Err(Error::MissingImage)
+        ));
+    }
 
     #[test]
     fn round_trips_a_lossless_image_through_the_umbrella() {

@@ -261,6 +261,11 @@ Arguments:
           [default: -]
 
 Options:
+      --json
+          Print the report as JSON instead of text.
+          
+          One object, with a `schema` field to pin. Nothing is decoded either way, so this is cheap on any size of file.
+
   -v, --verbose...
           Print per-stage detail on stderr
 

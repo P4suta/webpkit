@@ -99,6 +99,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
         }
         'webp;info' {
             [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Print the report as JSON instead of text')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
