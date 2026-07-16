@@ -133,7 +133,7 @@ pub(crate) fn report(bytes: &[u8], label: String) -> Result<Report, CliError> {
         height: info.dimensions.height(),
         alpha: info.has_alpha,
         metadata: metadata_of(&chunk_list),
-        animation: animated.then(|| animation_of(bytes)).transpose()?,
+        animation: animated.then(|| animation_of(bytes)).flatten(),
         chunks: chunk_list,
     })
 }
@@ -239,18 +239,17 @@ fn metadata_of(chunk_list: &[ChunkInfo]) -> MetadataInfo {
     }
 }
 
-fn animation_of(bytes: &[u8]) -> Result<AnimationInfo, CliError> {
-    let frames = webpkit::decode_frames(bytes)?;
-    let loop_count = frames.anim_info().loop_count;
-    let mut count = 0;
-    let mut duration_ms = 0;
-    for frame in frames {
-        duration_ms += frame?.meta().duration_ms;
-        count += 1;
-    }
-    Ok(AnimationInfo {
-        frames: count,
-        loop_count,
-        duration_ms,
+/// The animation facts, from the headers.
+///
+/// `None` when the container is too damaged to walk. This used to decode every
+/// frame's pixels to count them and sum their durations — all three facts live in
+/// the `ANIM`/`ANMF` headers — and it propagated, so one bad frame killed a report
+/// whose every other line was already computed.
+fn animation_of(bytes: &[u8]) -> Option<AnimationInfo> {
+    let anim = webpkit::probe_animation(bytes).ok()?;
+    Some(AnimationInfo {
+        frames: anim.frame_count,
+        loop_count: anim.loop_count,
+        duration_ms: anim.total_duration_ms,
     })
 }

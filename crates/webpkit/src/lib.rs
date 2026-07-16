@@ -791,6 +791,41 @@ const fn vp8x_has_metadata(info: Vp8xInfo) -> bool {
     info.flags.has_icc() || info.flags.has_exif() || info.flags.has_xmp()
 }
 
+/// Read an animation's canvas, loop count, frame count and total duration —
+/// without decoding a single frame.
+///
+/// The animation counterpart to [`probe`]. Every fact lives in the `VP8X`,
+/// `ANIM` and `ANMF` headers, so the cost is a chunk walk however many frames
+/// there are, and a file whose frame data is damaged still answers.
+///
+/// libwebp's `WebPAnimInfo` is the same idea; [`decode_frames`] is what to use
+/// when you actually want the pixels.
+///
+/// ```
+/// # fn main() -> Result<(), webpkit::Error> {
+/// # let bytes = std::fs::read(concat!(
+/// #     env!("CARGO_MANIFEST_DIR"),
+/// #     "/../webpkit-lossless-conformance/fixtures/decode/animation_frames/input.webp",
+/// # )).unwrap();
+/// let anim = webpkit::probe_animation(&bytes)?;
+/// println!("{} frames, {} ms", anim.frame_count, anim.total_duration_ms);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+///
+/// [`Error::UnsupportedFeature`] if the file is not an animation,
+/// [`Error::NotWebp`]/[`Error::Truncated`] for a non-WebP or short input, or
+/// [`Error::InvalidContainer`] for a malformed `ANIM`.
+#[cfg(feature = "alloc")]
+pub fn probe_animation(input: &[u8]) -> Result<AnimInfo> {
+    // Lifted so a canvas too large to composite can still be described; nothing
+    // here allocates per pixel.
+    let options = DecodeOptions::new().unbounded();
+    Ok(decode_frames_with(input, &options)?.anim_info())
+}
+
 /// The crate version, as reported by Cargo.
 #[must_use]
 pub const fn version() -> &'static str {

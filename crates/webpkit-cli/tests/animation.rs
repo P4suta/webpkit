@@ -95,3 +95,55 @@ fn layout_is_honored_for_animations_as_it_is_for_stills() {
     assert_eq!(rgba[2], bgra[0], "R and B are exchanged");
     assert_eq!(rgba[3], bgra[3], "alpha stays put");
 }
+
+/// A truncated animation still describes itself.
+///
+/// `info` used to fail outright here: counting frames meant decoding every
+/// frame's pixels, so one bad frame killed a report whose every other line was
+/// already computed. A still in the same state reported fine — the asymmetry was
+/// the tell. Both facts are in the `ANIM`/`ANMF` headers, which survive.
+#[test]
+fn info_describes_a_truncated_animation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let whole = std::fs::read(ANIM).expect("read fixture");
+    let cut = dir.path().join("cut.webp");
+    std::fs::write(&cut, &whole[..whole.len() * 7 / 10]).expect("write truncated");
+
+    // The premise: the frames past the break really are gone.
+    webp()
+        .args(["decode", "--frames", "all"])
+        .arg(&cut)
+        .arg("-o")
+        .arg(dir.path().join("out.png"))
+        .assert()
+        .failure();
+
+    // The point: the file describes itself anyway, and says how much survived.
+    webp()
+        .arg("info")
+        .arg(&cut)
+        .assert()
+        .success()
+        .stdout(contains("Canvas:     16x16"))
+        .stdout(contains("animation"))
+        .stdout(contains("Frames:     1"));
+}
+
+/// Reaching frame 0 must not require frames it cannot reach. The eager collect
+/// decoded every frame before using one, so a partially-downloaded animation
+/// gave an error instead of the frame that had arrived.
+#[test]
+fn the_first_frame_of_a_truncated_animation_still_decodes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let whole = std::fs::read(ANIM).expect("read fixture");
+    let cut = dir.path().join("cut.webp");
+    std::fs::write(&cut, &whole[..whole.len() * 7 / 10]).expect("write truncated");
+
+    webp()
+        .arg("decode")
+        .arg(&cut)
+        .arg("-o")
+        .arg(dir.path().join("first.png"))
+        .assert()
+        .success();
+}
