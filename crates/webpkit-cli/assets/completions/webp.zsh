@@ -151,6 +151,84 @@ never\:"Never style"))' \
 '::input -- Input `.webp` file; `-` (the default) reads stdin:_files' \
 && ret=0
 ;;
+(config)
+_arguments "${_arguments_options[@]}" : \
+'--quality=[Override\: lossy quality 0-100]:0-100:_default' \
+'--effort=[Override\: encoder effort]:EFFORT:((fast\:"Fastest\: literal + subtract-green only"
+balanced\:"Balanced (the default)\: LZ77 + color cache"
+best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
+'--codec=[Override\: lossless or lossy]:CODEC:((lossless\:"Lossless (VP8L)"
+lossy\:"Lossy (VP8)"))' \
+'*--metadata=[Override\: metadata to carry (all,none,icc,exif,xmp)]:METADATA:((all\:"Keep ICC, Exif, and XMP"
+none\:"Strip everything (a bare \`VP8L\` output)"
+icc\:"Keep the ICC color profile"
+exif\:"Keep Exif"
+xmp\:"Keep XMP"))' \
+'--threads=[Override\: worker threads (0 = one per core)]:THREADS:_default' \
+'--max-pixels=[Override\: decode pixel cap (N, 300M, 2G, or none)]:N|none:_default' \
+'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--json[Print the resolved settings as JSON (stable key order)]' \
+'(--json)--template[Print a commented \`webp.toml\` template to stdout]' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)-q[Suppress all non-error output]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_webp__subcmd__config_commands" \
+"*::: :->config" \
+&& ret=0
+
+    case $state in
+    (config)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:webp-config-command-$line[1]:"
+        case $line[1] in
+            (get)
+_arguments "${_arguments_options[@]}" : \
+'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)-q[Suppress all non-error output]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':key -- The setting to print, e.g. `quality`:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_webp__subcmd__config__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:webp-config-help-command-$line[1]:"
+        case $line[1] in
+            (get)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (explain)
 _arguments "${_arguments_options[@]}" : \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
@@ -221,6 +299,26 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(config)
+_arguments "${_arguments_options[@]}" : \
+":: :_webp__subcmd__help__subcmd__config_commands" \
+"*::: :->config" \
+&& ret=0
+
+    case $state in
+    (config)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:webp-help-config-command-$line[1]:"
+        case $line[1] in
+            (get)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (explain)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -253,6 +351,7 @@ _webp_commands() {
 'encode:Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
+'config:Show resolved settings and where each came from (args, env, file, default)' \
 'explain:Explain an exit code\: what a failing run'\''s status number means' \
 'completions:Print a shell completion script' \
 'man:Print a man page in roff, for \`man -l -\` or a package'\''s man directory' \
@@ -264,6 +363,37 @@ _webp_commands() {
 _webp__subcmd__completions_commands() {
     local commands; commands=()
     _describe -t commands 'webp completions commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__config_commands] )) ||
+_webp__subcmd__config_commands() {
+    local commands; commands=(
+'get:Print a single setting'\''s resolved value, with nothing else' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'webp config commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__config__subcmd__get_commands] )) ||
+_webp__subcmd__config__subcmd__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp config get commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__config__subcmd__help_commands] )) ||
+_webp__subcmd__config__subcmd__help_commands() {
+    local commands; commands=(
+'get:Print a single setting'\''s resolved value, with nothing else' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'webp config help commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__config__subcmd__help__subcmd__get_commands] )) ||
+_webp__subcmd__config__subcmd__help__subcmd__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp config help get commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__config__subcmd__help__subcmd__help_commands] )) ||
+_webp__subcmd__config__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp config help help commands' commands "$@"
 }
 (( $+functions[_webp__subcmd__convert_commands] )) ||
 _webp__subcmd__convert_commands() {
@@ -292,6 +422,7 @@ _webp__subcmd__help_commands() {
 'encode:Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
+'config:Show resolved settings and where each came from (args, env, file, default)' \
 'explain:Explain an exit code\: what a failing run'\''s status number means' \
 'completions:Print a shell completion script' \
 'man:Print a man page in roff, for \`man -l -\` or a package'\''s man directory' \
@@ -303,6 +434,18 @@ _webp__subcmd__help_commands() {
 _webp__subcmd__help__subcmd__completions_commands() {
     local commands; commands=()
     _describe -t commands 'webp help completions commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__config_commands] )) ||
+_webp__subcmd__help__subcmd__config_commands() {
+    local commands; commands=(
+'get:Print a single setting'\''s resolved value, with nothing else' \
+    )
+    _describe -t commands 'webp help config commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__config__subcmd__get_commands] )) ||
+_webp__subcmd__help__subcmd__config__subcmd__get_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help config get commands' commands "$@"
 }
 (( $+functions[_webp__subcmd__help__subcmd__convert_commands] )) ||
 _webp__subcmd__help__subcmd__convert_commands() {

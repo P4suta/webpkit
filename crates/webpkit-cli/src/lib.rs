@@ -26,6 +26,7 @@ use std::process::ExitCode;
 mod bulk;
 mod cli;
 mod codec;
+mod config;
 mod diag;
 mod effort;
 mod error;

@@ -12,6 +12,7 @@ Commands:
   encode       Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)
   convert      Batch-convert many images (or directories) to WebP, in parallel
   info         Print a summary of a WebP file (size, alpha, metadata, animation)
+  config       Show resolved settings and where each came from (args, env, file, default)
   explain      Explain an exit code: what a failing run's status number means
   completions  Print a shell completion script
   man          Print a man page in roff, for `man -l -` or a package's man directory
@@ -267,6 +268,100 @@ Options:
           
           One object, with a `schema` field to pin. Nothing is decoded either way, so this is cheap on any size of file.
 
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+  -q, --quiet
+          Suppress all non-error output
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp config --help
+Show resolved settings and where each came from (args, env, file, default).
+
+Settings resolve highest-priority-first: command-line arguments, then `WEBP_*` environment variables, then a `webp.toml` (found by walking up from the working directory, then in your user config directory), then the built-in defaults. Each value is printed with its origin.
+
+Usage: webp config [OPTIONS] [COMMAND]
+
+Commands:
+  get   Print a single setting's resolved value, with nothing else
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --json
+          Print the resolved settings as JSON (stable key order)
+
+  -q, --quiet
+          Suppress all non-error output
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --template
+          Print a commented `webp.toml` template to stdout
+
+      --quality <0-100>
+          Override: lossy quality 0-100
+
+      --effort <EFFORT>
+          Override: encoder effort
+
+          Possible values:
+          - fast:     Fastest: literal + subtract-green only
+          - balanced: Balanced (the default): LZ77 + color cache
+          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+
+      --codec <CODEC>
+          Override: lossless or lossy
+
+          Possible values:
+          - lossless: Lossless (VP8L)
+          - lossy:    Lossy (VP8)
+
+      --metadata <METADATA>
+          Override: metadata to carry (all,none,icc,exif,xmp)
+
+          Possible values:
+          - all:  Keep ICC, Exif, and XMP
+          - none: Strip everything (a bare `VP8L` output)
+          - icc:  Keep the ICC color profile
+          - exif: Keep Exif
+          - xmp:  Keep XMP
+
+      --threads <THREADS>
+          Override: worker threads (0 = one per core)
+
+      --max-pixels <N|none>
+          Override: decode pixel cap (N, 300M, 2G, or none)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp config get --help
+Print a single setting's resolved value, with nothing else
+
+Usage: webp config get [OPTIONS] <KEY>
+
+Arguments:
+  <KEY>
+          The setting to print, e.g. `quality`
+
+Options:
   -v, --verbose...
           Print per-stage detail on stderr
 

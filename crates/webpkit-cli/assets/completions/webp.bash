@@ -19,6 +19,9 @@ _webp() {
             webp,completions)
                 cmd="webp__subcmd__completions"
                 ;;
+            webp,config)
+                cmd="webp__subcmd__config"
+                ;;
             webp,convert)
                 cmd="webp__subcmd__convert"
                 ;;
@@ -40,8 +43,23 @@ _webp() {
             webp,man)
                 cmd="webp__subcmd__man"
                 ;;
+            webp__subcmd__config,get)
+                cmd="webp__subcmd__config__subcmd__get"
+                ;;
+            webp__subcmd__config,help)
+                cmd="webp__subcmd__config__subcmd__help"
+                ;;
+            webp__subcmd__config__subcmd__help,get)
+                cmd="webp__subcmd__config__subcmd__help__subcmd__get"
+                ;;
+            webp__subcmd__config__subcmd__help,help)
+                cmd="webp__subcmd__config__subcmd__help__subcmd__help"
+                ;;
             webp__subcmd__help,completions)
                 cmd="webp__subcmd__help__subcmd__completions"
+                ;;
+            webp__subcmd__help,config)
+                cmd="webp__subcmd__help__subcmd__config"
                 ;;
             webp__subcmd__help,convert)
                 cmd="webp__subcmd__help__subcmd__convert"
@@ -64,6 +82,9 @@ _webp() {
             webp__subcmd__help,man)
                 cmd="webp__subcmd__help__subcmd__man"
                 ;;
+            webp__subcmd__help__subcmd__config,get)
+                cmd="webp__subcmd__help__subcmd__config__subcmd__get"
+                ;;
             *)
                 ;;
         esac
@@ -71,7 +92,7 @@ _webp() {
 
     case "${cmd}" in
         webp)
-            opts="-v -q -h -V --verbose --quiet --color --help --version decode encode convert info explain completions man help"
+            opts="-v -q -h -V --verbose --quiet --color --help --version decode encode convert info config explain completions man help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -99,6 +120,108 @@ _webp() {
                     COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
                     return 0
                     ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__config)
+            opts="-v -q -h --json --template --quality --effort --codec --metadata --threads --max-pixels --verbose --quiet --color --help get help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --quality)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --effort)
+                    COMPREPLY=($(compgen -W "fast balanced best" -- "${cur}"))
+                    return 0
+                    ;;
+                --codec)
+                    COMPREPLY=($(compgen -W "lossless lossy" -- "${cur}"))
+                    return 0
+                    ;;
+                --metadata)
+                    COMPREPLY=($(compgen -W "all none icc exif xmp" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --max-pixels)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__config__subcmd__get)
+            opts="-v -q -h --verbose --quiet --color --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__config__subcmd__help)
+            opts="get help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__config__subcmd__help__subcmd__get)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__config__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 *)
                     COMPREPLY=()
                     ;;
@@ -271,7 +394,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__help)
-            opts="decode encode convert info explain completions man help"
+            opts="decode encode convert info config explain completions man help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -287,6 +410,34 @@ _webp() {
         webp__subcmd__help__subcmd__completions)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__config)
+            opts="get"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__config__subcmd__get)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi

@@ -31,6 +31,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand encode 'Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)'
             cand convert 'Batch-convert many images (or directories) to WebP, in parallel'
             cand info 'Print a summary of a WebP file (size, alpha, metadata, animation)'
+            cand config 'Show resolved settings and where each came from (args, env, file, default)'
             cand explain 'Explain an exit code: what a failing run''s status number means'
             cand completions 'Print a shell completion script'
             cand man 'Print a man page in roff, for `man -l -` or a package''s man directory'
@@ -101,6 +102,42 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand -h 'Print help (see more with ''--help'')'
             cand --help 'Print help (see more with ''--help'')'
         }
+        &'webp;config'= {
+            cand --quality 'Override: lossy quality 0-100'
+            cand --effort 'Override: encoder effort'
+            cand --codec 'Override: lossless or lossy'
+            cand --metadata 'Override: metadata to carry (all,none,icc,exif,xmp)'
+            cand --threads 'Override: worker threads (0 = one per core)'
+            cand --max-pixels 'Override: decode pixel cap (N, 300M, 2G, or none)'
+            cand --color 'auto, always, or never'
+            cand --json 'Print the resolved settings as JSON (stable key order)'
+            cand --template 'Print a commented `webp.toml` template to stdout'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand -q 'Suppress all non-error output'
+            cand --quiet 'Suppress all non-error output'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+            cand get 'Print a single setting''s resolved value, with nothing else'
+            cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'webp;config;get'= {
+            cand --color 'auto, always, or never'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand -q 'Suppress all non-error output'
+            cand --quiet 'Suppress all non-error output'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;config;help'= {
+            cand get 'Print a single setting''s resolved value, with nothing else'
+            cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'webp;config;help;get'= {
+        }
+        &'webp;config;help;help'= {
+        }
         &'webp;explain'= {
             cand --color 'auto, always, or never'
             cand -v 'Print per-stage detail on stderr'
@@ -133,6 +170,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand encode 'Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)'
             cand convert 'Batch-convert many images (or directories) to WebP, in parallel'
             cand info 'Print a summary of a WebP file (size, alpha, metadata, animation)'
+            cand config 'Show resolved settings and where each came from (args, env, file, default)'
             cand explain 'Explain an exit code: what a failing run''s status number means'
             cand completions 'Print a shell completion script'
             cand man 'Print a man page in roff, for `man -l -` or a package''s man directory'
@@ -145,6 +183,11 @@ set edit:completion:arg-completer[webp] = {|@words|
         &'webp;help;convert'= {
         }
         &'webp;help;info'= {
+        }
+        &'webp;help;config'= {
+            cand get 'Print a single setting''s resolved value, with nothing else'
+        }
+        &'webp;help;config;get'= {
         }
         &'webp;help;explain'= {
         }

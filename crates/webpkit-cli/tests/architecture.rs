@@ -43,6 +43,7 @@ const CLI_LAYERS: &[(&str, u8)] = &[
     ("metadata", 1),
     ("report", 1),
     ("term", 1),
+    ("config", 2),
     ("effort", 2),
     ("inspect", 2),
     ("bulk", 4),

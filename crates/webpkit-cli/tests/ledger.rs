@@ -43,6 +43,7 @@ fn assets() -> Vec<(PathBuf, Vec<&'static str>)> {
         "decode",
         "convert",
         "info",
+        "config",
         "explain",
         "completions",
         "man",

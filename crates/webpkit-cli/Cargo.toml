@@ -59,6 +59,9 @@ serde_json = { workspace = true }
 # Atomic output: write a sibling temp file, then rename over the target, so a
 # failed or interrupted write never leaves a truncated `.webp` that looks valid.
 tempfile = { workspace = true }
+# `webp.toml` config layer: parse the file (line numbers for provenance come from
+# a source scan) with the same crate the rest of the workspace already uses.
+toml = { workspace = true }
 # The one WebP codec crate: its type-state `Encoder` routes to lossless (VP8L) or
 # lossy (VP8) so `cwebp`/`webp` can offer libwebp-style lossy-by-default output,
 # and it re-exports the `Image`/`Metadata`/`Effort` types the CLI names.

@@ -19,6 +19,41 @@ pub(crate) fn extension_of(path: &Path) -> Option<String> {
         .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
 }
 
+/// The current working directory, or `None` if it cannot be determined.
+///
+/// The starting point for the `webp.toml` walk-up. A failure here just means no
+/// project config is found, not an error.
+#[must_use]
+pub(crate) fn current_dir() -> Option<PathBuf> {
+    std::env::current_dir().ok()
+}
+
+/// The user's config directory: `%APPDATA%` on Windows, else `$XDG_CONFIG_HOME`
+/// or `$HOME/.config`. `None` when the environment names none of them.
+#[must_use]
+pub(crate) fn config_home() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+    }
+}
+
+/// Read a file to a string, or `None` if it is absent or unreadable.
+///
+/// For optional inputs like `webp.toml`, where "not there" is the common case and
+/// not a failure. A file that is present but malformed is the caller's problem to
+/// report once it has the bytes.
+#[must_use]
+pub(crate) fn read_optional_text(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok()
+}
+
 /// Expand `inputs` into a flat file list, descending into directories.
 ///
 /// A path given explicitly is taken as-is; `keep` filters only the entries

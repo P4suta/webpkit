@@ -18,6 +18,7 @@ use crate::{
     bulk,
     cli::{Layout, Method},
     codec::{self, EncodeMode},
+    config,
     error::CliError,
     format::{self, InputFormat, OutputFormat, raw::RawParams},
     inspect,
@@ -72,6 +73,13 @@ enum Command {
     Convert(ConvertArgs),
     /// Print a summary of a WebP file (size, alpha, metadata, animation).
     Info(InfoArgs),
+    /// Show resolved settings and where each came from (args, env, file, default).
+    ///
+    /// Settings resolve highest-priority-first: command-line arguments, then
+    /// `WEBP_*` environment variables, then a `webp.toml` (found by walking up
+    /// from the working directory, then in your user config directory), then the
+    /// built-in defaults. Each value is printed with its origin.
+    Config(ConfigArgs),
     /// Explain an exit code: what a failing run's status number means.
     Explain(ExplainArgs),
     /// Print a shell completion script.
@@ -96,6 +104,56 @@ struct CompletionsArgs {
     /// The shell to generate for.
     #[arg(value_enum)]
     shell: clap_complete::Shell,
+}
+
+/// Arguments for `webp config`.
+///
+/// The override flags feed the args layer, so `webp config --quality 90` shows
+/// that setting resolving to `argument`. They are plain `Option`s with no clap
+/// default: a default would make every field claim the args layer and shadow the
+/// file, so the defaults live only in the config table's lowest layer.
+#[derive(Debug, clap::Args)]
+struct ConfigArgs {
+    #[command(subcommand)]
+    action: Option<ConfigAction>,
+    /// Print the resolved settings as JSON (stable key order).
+    #[arg(long)]
+    json: bool,
+    /// Print a commented `webp.toml` template to stdout.
+    #[arg(long, conflicts_with = "json")]
+    template: bool,
+    /// Override: lossy quality 0-100.
+    #[arg(long, value_name = "0-100")]
+    quality: Option<u8>,
+    /// Override: encoder effort.
+    #[arg(long, value_enum)]
+    effort: Option<Method>,
+    /// Override: lossless or lossy.
+    #[arg(long, value_enum)]
+    codec: Option<config::Codec>,
+    /// Override: metadata to carry (all,none,icc,exif,xmp).
+    #[arg(long, value_enum, value_delimiter = ',')]
+    metadata: Option<Vec<MetadataField>>,
+    /// Override: worker threads (0 = one per core).
+    #[arg(long)]
+    threads: Option<u16>,
+    /// Override: decode pixel cap (N, 300M, 2G, or none).
+    #[arg(long, value_name = "N|none")]
+    max_pixels: Option<String>,
+}
+
+/// A `webp config` sub-action; absent means "show the resolved table".
+#[derive(Debug, Subcommand)]
+enum ConfigAction {
+    /// Print a single setting's resolved value, with nothing else.
+    Get(ConfigGetArgs),
+}
+
+/// Arguments for `webp config get`.
+#[derive(Debug, clap::Args)]
+struct ConfigGetArgs {
+    /// The setting to print, e.g. `quality`.
+    key: String,
 }
 
 /// Arguments for `webp explain`.
@@ -262,6 +320,7 @@ fn run(command: &Command, reporter: &Reporter) -> Result<(), CliError> {
         Command::Encode(args) => encode(args, reporter),
         Command::Convert(args) => convert(args, reporter),
         Command::Info(args) => info(args, reporter),
+        Command::Config(args) => config_cmd(args),
         Command::Explain(args) => explain(&args.code),
         Command::Completions(args) => {
             completions(args);
@@ -301,6 +360,71 @@ fn man(subcommand: Option<&str>) -> Result<(), CliError> {
         .map_err(|err| CliError::write_output("<stdout>".to_owned(), err))?;
     emit(&roff);
     Ok(())
+}
+
+/// Resolve settings and print them, `config get <key>`, or the template.
+fn config_cmd(args: &ConfigArgs) -> Result<(), CliError> {
+    if args.template {
+        report::out(config::template().trim_end());
+        return Ok(());
+    }
+    let resolution = config::resolve(config_args_layer(args)?)?;
+    if let Some(ConfigAction::Get(get)) = &args.action {
+        let value = resolution.settings.get(&get.key).ok_or_else(|| {
+            CliError::Usage(format!(
+                "`{}` is not a setting; known settings are {}",
+                get.key,
+                config::KEYS.join(", "),
+            ))
+        })?;
+        report::out(&value);
+        return Ok(());
+    }
+    if args.json {
+        let json = serde_json::to_string_pretty(&resolution.settings.to_json())
+            .map_err(|err| CliError::Format(format!("serializing config: {err}")))?;
+        report::out(&json);
+        return Ok(());
+    }
+    for line in config::render_report(&resolution) {
+        report::out(&line);
+    }
+    Ok(())
+}
+
+/// Pair an args-layer value with [`config::Origin::Args`].
+const fn from_args<T>(value: T) -> config::Sourced<T> {
+    config::Sourced::new(value, config::Origin::Args)
+}
+
+/// The args layer: the config-override flags the user actually passed, each tagged
+/// [`config::Origin::Args`]. An unset flag stays absent so it cannot shadow a
+/// lower layer.
+fn config_args_layer(args: &ConfigArgs) -> Result<config::Partial, CliError> {
+    let mut partial = config::Partial::default();
+    if let Some(quality) = args.quality {
+        partial.quality = Some(from_args(
+            config::Quality::new(quality).map_err(CliError::Usage)?,
+        ));
+    }
+    if let Some(effort) = args.effort {
+        partial.effort = Some(from_args(effort.into()));
+    }
+    if let Some(codec) = args.codec {
+        partial.codec = Some(from_args(codec));
+    }
+    if let Some(fields) = &args.metadata {
+        partial.metadata = Some(from_args(Selection::from_fields(fields)));
+    }
+    if let Some(threads) = args.threads {
+        partial.threads = Some(from_args(threads));
+    }
+    if let Some(spec) = &args.max_pixels {
+        partial.max_pixels = Some(from_args(
+            config::MaxPixels::parse(spec).map_err(CliError::Usage)?,
+        ));
+    }
+    Ok(partial)
 }
 
 /// Print the meaning of an exit code, an offline reference for the contract that

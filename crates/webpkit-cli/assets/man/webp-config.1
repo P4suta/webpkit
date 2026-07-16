@@ -1,0 +1,84 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-config 1  "config " 
+.SH NAME
+config \- Show resolved settings and where each came from (args, env, file, default)
+.SH SYNOPSIS
+\fBconfig\fR [\fB\-\-json\fR] [\fB\-\-template\fR] [\fB\-\-quality\fR] [\fB\-\-effort\fR] [\fB\-\-codec\fR] [\fB\-\-metadata\fR] [\fB\-\-threads\fR] [\fB\-\-max\-pixels\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIsubcommands\fR]
+.SH DESCRIPTION
+Show resolved settings and where each came from (args, env, file, default).
+.PP
+Settings resolve highest\-priority\-first: command\-line arguments, then `WEBP_*` environment variables, then a `webp.toml` (found by walking up from the working directory, then in your user config directory), then the built\-in defaults. Each value is printed with its origin.
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Print the resolved settings as JSON (stable key order)
+.TP
+\fB\-\-template\fR
+Print a commented `webp.toml` template to stdout
+.TP
+\fB\-\-quality\fR \fI<0\-100>\fR
+Override: lossy quality 0\-100
+.TP
+\fB\-\-effort\fR \fI<EFFORT>\fR
+Override: encoder effort
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+fast: Fastest: literal + subtract\-green only
+.IP \(bu 2
+balanced: Balanced (the default): LZ77 + color cache
+.IP \(bu 2
+best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
+.RE
+.TP
+\fB\-\-codec\fR \fI<CODEC>\fR
+Override: lossless or lossy
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+lossless: Lossless (VP8L)
+.IP \(bu 2
+lossy: Lossy (VP8)
+.RE
+.TP
+\fB\-\-metadata\fR \fI<METADATA>\fR
+Override: metadata to carry (all,none,icc,exif,xmp)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+all: Keep ICC, Exif, and XMP
+.IP \(bu 2
+none: Strip everything (a bare `VP8L` output)
+.IP \(bu 2
+icc: Keep the ICC color profile
+.IP \(bu 2
+exif: Keep Exif
+.IP \(bu 2
+xmp: Keep XMP
+.RE
+.TP
+\fB\-\-threads\fR \fI<THREADS>\fR
+Override: worker threads (0 = one per core)
+.TP
+\fB\-\-max\-pixels\fR \fI<N|none>\fR
+Override: decode pixel cap (N, 300M, 2G, or none)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH SUBCOMMANDS
+.TP
+config\-get(1)
+Print a single setting\*(Aqs resolved value, with nothing else
+.TP
+config\-help(1)
+Print this message or the help of the given subcommand(s)
