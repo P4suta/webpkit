@@ -37,6 +37,11 @@ pub(crate) enum CliError {
         /// The underlying I/O error, kept whole so its OS message survives.
         source: io::Error,
     },
+    /// A derived output would overwrite an existing file (exit code `4`).
+    ///
+    /// Only the `webp` tool's implicit and directory-derived outputs are guarded;
+    /// an explicitly named `-o FILE` overwrites, as does `cwebp`/`dwebp`.
+    Clobber(String),
     /// The codec rejected the input or output (exit code `5`–`8`, by variant).
     Codec(CodecError),
     /// An input image format (PNG/PPM) could not be parsed (exit code `9`).
@@ -72,7 +77,7 @@ impl CliError {
         match self {
             Self::Usage(_) | Self::Rejected(_) => 2,
             Self::ReadInput { .. } => 3,
-            Self::WriteOutput { .. } => 4,
+            Self::WriteOutput { .. } | Self::Clobber(_) => 4,
             Self::Format(_) => 9,
             Self::RawConfig(_) => 8,
             Self::Codec(err) => match err {
@@ -104,6 +109,12 @@ impl CliError {
             Self::WriteOutput { label, source } => {
                 Diagnostic::new(format!("cannot write `{label}`: {source}"))
             },
+            Self::Clobber(path) => Diagnostic::new(format!("`{path}` already exists"))
+                .with_help(["pass --force to overwrite it, or --no-clobber to skip it"])
+                .with_note(
+                    "a derived output is guarded so `webp photo.webp` cannot silently \
+                     overwrite the photo.png it may have come from",
+                ),
             Self::Codec(err) => codec_diagnostic(err),
         }
     }
@@ -147,7 +158,8 @@ pub(crate) const EXIT_CODES: &[(u8, &str, &str)] = &[
         4,
         "write",
         "The output could not be written — the directory is missing, the disk is \
-         full, or the destination is not writable.",
+         full, the destination is not writable, or a derived output would overwrite \
+         an existing file (pass --force).",
     ),
     (
         5,
@@ -216,6 +228,7 @@ impl fmt::Display for CliError {
             Self::Rejected(diag) => f.write_str(diag.title()),
             Self::ReadInput { label, source } => write!(f, "cannot read `{label}`: {source}"),
             Self::WriteOutput { label, source } => write!(f, "cannot write `{label}`: {source}"),
+            Self::Clobber(path) => write!(f, "`{path}` already exists"),
             Self::Codec(err) => write!(f, "{err}"),
         }
     }
@@ -246,6 +259,7 @@ mod tests {
             CliError::Rejected(Box::new(crate::diag::Diagnostic::new(""))),
             CliError::read_input(String::new(), io()),
             CliError::write_output(String::new(), io()),
+            CliError::Clobber(String::new()),
             CliError::Format(String::new()),
             CliError::RawConfig(String::new()),
             CliError::Codec(CodecError::UnsupportedFeature),

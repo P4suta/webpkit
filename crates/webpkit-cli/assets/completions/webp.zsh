@@ -18,23 +18,44 @@ _webp() {
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'-o+[Output file, or a directory for many inputs; default\: beside each input]:OUTPUT:_files' \
+'--output=[Output file, or a directory for many inputs; default\: beside each input]:OUTPUT:_files' \
+'-q+[Lossy quality 0-100 (higher = larger, closer to source); selects lossy]:QUALITY:_default' \
+'--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects lossy]:QUALITY:_default' \
+'-m+[Encoder effort]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
+balanced\:"Balanced (the default)\: LZ77 + color cache"
+best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
+'--method=[Encoder effort]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
+balanced\:"Balanced (the default)\: LZ77 + color cache"
+best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
+'*--metadata=[Metadata to embed\: all,none,icc,exif,xmp (default\: all)]:METADATA:((all\:"Keep ICC, Exif, and XMP"
+none\:"Strip everything (a bare \`VP8L\` output)"
+icc\:"Keep the ICC color profile"
+exif\:"Keep Exif"
+xmp\:"Keep XMP"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
+'(--lossy)--lossless[Force lossless (VP8L) encoding]' \
+'--lossy[Force lossy (VP8) encoding]' \
+'-r[Recurse into subdirectories]' \
+'--recursive[Recurse into subdirectories]' \
+'--force[Overwrite an existing derived output]' \
+'(--force)--no-clobber[Skip an existing derived output instead of failing (still exits 0)]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 '-V[Print version]' \
 '--version[Print version]' \
+'::inputs -- Images or directories. A WebP is decoded to PNG; anything else is encoded:_files' \
 ":: :_webp_commands" \
 "*::: :->webp" \
 && ret=0
     case $state in
     (webp)
-        words=($line[1] "${words[@]}")
+        words=($line[2] "${words[@]}")
         (( CURRENT += 1 ))
-        curcontext="${curcontext%:*:*}:webp-command-$line[1]:"
-        case $line[1] in
+        curcontext="${curcontext%:*:*}:webp-command-$line[2]:"
+        case $line[2] in
             (decode)
 _arguments "${_arguments_options[@]}" : \
 '-o+[Output path; \`-\` writes stdout]:OUTPUT:_files' \
@@ -59,7 +80,6 @@ always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -73,6 +93,10 @@ _arguments "${_arguments_options[@]}" : \
 '--input-format=[Input format; defaults to the extension, else the magic bytes, else raw]:INPUT_FORMAT:((png\:"PNG (any color type; normalized to RGBA8)"
 ppm\:"Netpbm binary PPM (\`P6\`, RGB)"
 pam\:"Netpbm binary PAM (\`P7\`, RGBA)"
+jpeg\:"JPEG (decoded to RGBA8; needs the \`formats\` feature)"
+gif\:"GIF (first frame as a still; whole-file animation is a separate path)"
+tiff\:"TIFF (decoded to RGBA8; needs the \`formats\` feature)"
+bmp\:"BMP (decoded to RGBA8; needs the \`formats\` feature)"
 raw\:"Raw row-major pixels; requires \`--width\`/\`--height\`/\`--layout\`"))' \
 '--width=[Raw-input width in pixels (required for raw input)]:WIDTH:_default' \
 '--height=[Raw-input height in pixels (required for raw input)]:HEIGHT:_default' \
@@ -85,6 +109,7 @@ best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Bala
 '--method=[Encoder effort]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
 balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
+'-q+[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '*--metadata=[Metadata to embed\: all,none,icc,exif,xmp (default\: all — kinder than cwebp)]:METADATA:((all\:"Keep ICC, Exif, and XMP"
 none\:"Strip everything (a bare \`VP8L\` output)"
@@ -94,14 +119,14 @@ xmp\:"Keep XMP"))' \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'(--lossy)--lossless[Force lossless (VP8L). The default is source-derived\: JPEG → lossy, else lossless]' \
 '--lossy[Encode lossily (VP8) instead of losslessly (VP8L)]' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-'::input -- Input image (PNG/PPM/PAM/raw); `-` (the default) reads stdin:_files' \
+'::input -- Input image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw); `-` (default) reads stdin:_files' \
 && ret=0
 ;;
 (convert)
@@ -114,6 +139,7 @@ best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Bala
 '--method=[Encoder effort (ignored with --optimize)]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
 balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
+'-q+[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '*--metadata=[Metadata to embed\: all,none,icc,exif,xmp (default\: all)]:METADATA:((all\:"Keep ICC, Exif, and XMP"
 none\:"Strip everything (a bare \`VP8L\` output)"
@@ -123,17 +149,17 @@ xmp\:"Keep XMP"))' \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'(--lossy)--lossless[Force lossless (VP8L). The default is source-derived\: JPEG → lossy, else lossless]' \
 '--lossy[Encode lossily (VP8) instead of losslessly (VP8L)]' \
 '--optimize[Try every lossless effort level and keep the smallest output]' \
 '-r[Recurse into subdirectories]' \
 '--recursive[Recurse into subdirectories]' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-'*::inputs -- Input images and/or directories (PNG/PPM/PAM):_files' \
+'*::inputs -- Input images and/or directories (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM):_files' \
 && ret=0
 ;;
 (info)
@@ -144,7 +170,6 @@ never\:"Never style"))' \
 '--json[Print the report as JSON instead of text]' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -173,7 +198,6 @@ never\:"Never style"))' \
 '(--json)--template[Print a commented \`webp.toml\` template to stdout]' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -194,7 +218,6 @@ always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -236,7 +259,6 @@ always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -250,7 +272,6 @@ always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -264,7 +285,6 @@ always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
-'(-v --verbose)-q[Suppress all non-error output]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -348,7 +368,7 @@ esac
 _webp_commands() {
     local commands; commands=(
 'decode:Decode a WebP file to PNG (default), PPM/PAM, or raw pixels' \
-'encode:Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)' \
+'encode:Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
 'config:Show resolved settings and where each came from (args, env, file, default)' \
@@ -419,7 +439,7 @@ _webp__subcmd__explain_commands() {
 _webp__subcmd__help_commands() {
     local commands; commands=(
 'decode:Decode a WebP file to PNG (default), PPM/PAM, or raw pixels' \
-'encode:Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)' \
+'encode:Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
 'config:Show resolved settings and where each came from (args, env, file, default)' \

@@ -129,7 +129,14 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
     let sink = Sink::from_arg(&output);
     let bytes = source.read()?;
     let format = InputFormat::resolve(None, source.extension().as_deref(), &bytes);
-    reject_lossy_source(&bytes, format, &source.label())?;
+    reject_raw_source(format, &source.label())?;
+    // Re-encoding an already-lossy JPEG as lossy WebP compounds loss; unlike
+    // libwebp's cwebp (which rejects nothing), point at the exact-preserving path.
+    if format == InputFormat::Jpeg && matches!(mode, EncodeMode::Lossy { .. }) {
+        crate::report::warn(
+            "re-encoding a lossy JPEG as lossy WebP compounds loss; pass -lossless to keep it exact",
+        );
+    }
 
     let image = format::read_image(&bytes, format, None)?;
     let metadata = Selection::from_fields(&config.metadata).apply(image.metadata());
@@ -318,16 +325,11 @@ fn reject(args: &[String], index: usize, flag: &str) -> CliError {
     CliError::Rejected(Box::new(diag))
 }
 
-/// Reject clearly-lossy source images with an actionable message.
-fn reject_lossy_source(bytes: &[u8], format: InputFormat, label: &str) -> Result<(), CliError> {
-    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        return Err(CliError::Format(format!(
-            "{label} is a JPEG (a lossy source); convert it to PNG first"
-        )));
-    }
+/// Reject raw pixel input, which `cwebp` has no way to give dimensions to.
+fn reject_raw_source(format: InputFormat, label: &str) -> Result<(), CliError> {
     if format == InputFormat::Raw {
         return Err(CliError::Format(format!(
-            "{label}: unsupported input; encode from PNG, PPM, or PAM"
+            "{label}: unsupported input; encode from PNG/JPEG/GIF/TIFF/BMP/PPM/PAM"
         )));
     }
     Ok(())

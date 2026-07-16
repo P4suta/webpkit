@@ -2,11 +2,11 @@
 .el .ds Aq '
 .TH webp-encode 1  "encode " 
 .SH NAME
-encode \- Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or \-\-lossy)
+encode \- Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .SH SYNOPSIS
-\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossy\fR] [\fB\-\-quality\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
+\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
 .SH DESCRIPTION
-Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or \-\-lossy)
+Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .SH OPTIONS
 .TP
 \fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
@@ -25,6 +25,14 @@ png: PNG (any color type; normalized to RGBA8)
 ppm: Netpbm binary PPM (`P6`, RGB)
 .IP \(bu 2
 pam: Netpbm binary PAM (`P7`, RGBA)
+.IP \(bu 2
+jpeg: JPEG (decoded to RGBA8; needs the `formats` feature)
+.IP \(bu 2
+gif: GIF (first frame as a still; whole\-file animation is a separate path)
+.IP \(bu 2
+tiff: TIFF (decoded to RGBA8; needs the `formats` feature)
+.IP \(bu 2
+bmp: BMP (decoded to RGBA8; needs the `formats` feature)
 .IP \(bu 2
 raw: Raw row\-major pixels; requires `\-\-width`/`\-\-height`/`\-\-layout`
 .RE
@@ -65,10 +73,13 @@ balanced: Balanced (the default): LZ77 + color cache
 best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
 .RE
 .TP
+\fB\-\-lossless\fR
+Force lossless (VP8L). The default is source\-derived: JPEG → lossy, else lossless
+.TP
 \fB\-\-lossy\fR
 Encode lossily (VP8) instead of losslessly (VP8L)
 .TP
-\fB\-\-quality\fR \fI<QUALITY>\fR
+\fB\-q\fR, \fB\-\-quality\fR \fI<QUALITY>\fR
 Lossy quality 0\-100 (higher = larger, closer to source); selects \-\-lossy
 .TP
 \fB\-\-metadata\fR \fI<METADATA>\fR
@@ -94,4 +105,4 @@ xmp: Keep XMP
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fIINPUT\fR] [default: \-]
-Input image (PNG/PPM/PAM/raw); `\-` (the default) reads stdin
+Input image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw); `\-` (default) reads stdin

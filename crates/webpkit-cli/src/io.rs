@@ -19,6 +19,21 @@ pub(crate) fn extension_of(path: &Path) -> Option<String> {
         .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
 }
 
+/// Whether a path already exists (a file or a directory).
+///
+/// Routed through this module so the overwrite guard's one filesystem question
+/// stays with every other `fs` touch.
+#[must_use]
+pub(crate) fn exists(path: &Path) -> bool {
+    path.exists()
+}
+
+/// Whether a path is an existing directory.
+#[must_use]
+pub(crate) fn is_dir(path: &Path) -> bool {
+    path.is_dir()
+}
+
 /// The current working directory, or `None` if it cannot be determined.
 ///
 /// The starting point for the `webp.toml` walk-up. A failure here just means no

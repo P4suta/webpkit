@@ -6,7 +6,11 @@
 
 use webpkit::{DecodeOptions, Effort, Encoder, Image, Metadata, PixelLayout};
 
-use crate::error::CliError;
+use crate::{
+    error::CliError,
+    format::{self, InputFormat},
+    metadata::Selection,
+};
 
 /// Which codec (and its knobs) [`encode`] should use.
 ///
@@ -23,6 +27,71 @@ pub(crate) enum EncodeMode {
         /// Encoder effort tier.
         method: Effort,
     },
+}
+
+impl EncodeMode {
+    /// The encoder effort this mode selects, either codec.
+    #[must_use]
+    pub(crate) const fn effort(self) -> Effort {
+        match self {
+            Self::Lossless(effort) | Self::Lossy { method: effort, .. } => effort,
+        }
+    }
+}
+
+/// The user's codec choice before it is resolved against a source format.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CodecFlags {
+    /// `--lossless` was passed.
+    pub(crate) lossless: bool,
+    /// `--lossy` was passed.
+    pub(crate) lossy: bool,
+    /// `--quality N` was passed (also selects lossy).
+    pub(crate) quality: Option<u8>,
+    /// Encoder effort.
+    pub(crate) effort: Effort,
+}
+
+/// Resolve an [`EncodeMode`], returning whether the codec was source-derived.
+///
+/// `--lossless`/`--lossy`/`--quality` force the codec. Absent all three, the codec
+/// is derived from the source: a JPEG (already lossy) re-encodes lossy at q75, and
+/// everything else stays lossless. The returned `bool` is true when derived, so a
+/// caller can report the reason.
+///
+/// # Errors
+///
+/// [`CliError::Usage`] if `--lossless` is combined with `--lossy`/`--quality`.
+pub(crate) fn resolve_mode(
+    format: InputFormat,
+    flags: CodecFlags,
+) -> Result<(EncodeMode, bool), CliError> {
+    if flags.lossless && (flags.lossy || flags.quality.is_some()) {
+        return Err(CliError::Usage(
+            "`--lossless` cannot be combined with `--lossy`/`--quality`".to_owned(),
+        ));
+    }
+    if flags.lossless {
+        return Ok((EncodeMode::Lossless(flags.effort), false));
+    }
+    if flags.lossy || flags.quality.is_some() {
+        return Ok((
+            EncodeMode::Lossy {
+                quality: flags.quality.unwrap_or(75),
+                method: flags.effort,
+            },
+            false,
+        ));
+    }
+    let mode = if format == InputFormat::Jpeg {
+        EncodeMode::Lossy {
+            quality: 75,
+            method: flags.effort,
+        }
+    } else {
+        EncodeMode::Lossless(flags.effort)
+    };
+    Ok((mode, true))
 }
 
 /// Decode any still WebP file — lossless (`VP8L`) or lossy (`VP8 `) — into an
@@ -65,4 +134,96 @@ pub(crate) fn encode(
             .encode_ref(image.as_image_ref())?,
     };
     Ok(bytes)
+}
+
+/// The result of encoding one input file: the WebP bytes, the source dimensions,
+/// and whether the codec produced an animation (a GIF encoded as `ANIM`).
+pub(crate) struct Encoded {
+    /// The complete WebP file.
+    pub(crate) bytes: Vec<u8>,
+    /// Canvas / image width in pixels.
+    pub(crate) width: u32,
+    /// Canvas / image height in pixels.
+    pub(crate) height: u32,
+    /// True when the output is an animated WebP (GIF path).
+    pub(crate) animation: bool,
+}
+
+/// Encode an already-read input into a WebP file, choosing the still or the GIF
+/// animation path from `format`.
+///
+/// A GIF becomes an animated WebP (lossless, one `VP8L` frame each) when
+/// `gif_as_animation` is set — the `webp` tool's behavior. `cwebp`, a still
+/// encoder, passes `false` and gets the GIF's first frame as a still. Animation
+/// carries no metadata (the encoder does not model it); a still honors `selection`.
+///
+/// # Errors
+///
+/// [`CliError::Format`] for a malformed input, or [`CliError::Codec`] if the image
+/// is out of range for WebP.
+pub(crate) fn encode_input(
+    bytes: &[u8],
+    format: InputFormat,
+    mode: EncodeMode,
+    selection: Selection,
+    gif_as_animation: bool,
+) -> Result<Encoded, CliError> {
+    #[cfg(feature = "formats")]
+    if gif_as_animation && format == InputFormat::Gif {
+        let (bytes, width, height) = encode_gif_animation(bytes, mode.effort())?;
+        return Ok(Encoded {
+            bytes,
+            width,
+            height,
+            animation: true,
+        });
+    }
+    #[cfg(not(feature = "formats"))]
+    let _ = gif_as_animation;
+
+    let image = format::read_image(bytes, format, None)?;
+    let metadata = selection.apply(image.metadata());
+    Ok(Encoded {
+        width: image.width(),
+        height: image.height(),
+        bytes: encode(&image, mode, metadata)?,
+        animation: false,
+    })
+}
+
+/// Encode every GIF frame as a lossless `VP8L` frame of an animated WebP that
+/// loops forever. Metadata is not carried — the animation encoder does not model
+/// sidecar chunks.
+#[cfg(feature = "formats")]
+fn encode_gif_animation(bytes: &[u8], effort: Effort) -> Result<(Vec<u8>, u32, u32), CliError> {
+    use webpkit::{
+        AnimationEncoder, BlendMode, Dimensions, DisposalMode, FrameMeta, ImageRef, PixelLayout,
+    };
+
+    let frames = format::image_input::read_gif_frames(bytes)?;
+    let first = frames
+        .first()
+        .ok_or_else(|| CliError::Format("GIF has no frames".to_owned()))?;
+    let (width, height) = (first.image.width(), first.image.height());
+    let canvas = Dimensions::new(width, height)?;
+
+    let meta_for = |frame: &format::image_input::AnimFrame| FrameMeta {
+        x: 0,
+        y: 0,
+        dimensions: canvas,
+        duration_ms: frame.duration_ms,
+        blend: BlendMode::Overwrite,
+        dispose: DisposalMode::Keep,
+    };
+
+    let first_ref = ImageRef::new(canvas, PixelLayout::Rgba8, first.image.as_bytes())?;
+    let mut encoder = AnimationEncoder::new(canvas)
+        .with_loop_count(0)
+        .with_effort(effort)
+        .add_frame(first_ref, meta_for(first))?;
+    for frame in &frames[1..] {
+        let frame_ref = ImageRef::new(canvas, PixelLayout::Rgba8, frame.image.as_bytes())?;
+        encoder = encoder.add_frame(frame_ref, meta_for(frame))?;
+    }
+    Ok((encoder.finish(), width, height))
 }

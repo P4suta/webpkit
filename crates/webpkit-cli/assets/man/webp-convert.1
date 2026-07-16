@@ -4,7 +4,7 @@
 .SH NAME
 convert \- Batch\-convert many images (or directories) to WebP, in parallel
 .SH SYNOPSIS
-\fBconvert\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossy\fR] [\fB\-\-quality\fR] [\fB\-\-optimize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIINPUTS\fR> 
+\fBconvert\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-optimize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIINPUTS\fR> 
 .SH DESCRIPTION
 Batch\-convert many images (or directories) to WebP, in parallel
 .SH OPTIONS
@@ -27,10 +27,13 @@ balanced: Balanced (the default): LZ77 + color cache
 best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
 .RE
 .TP
+\fB\-\-lossless\fR
+Force lossless (VP8L). The default is source\-derived: JPEG → lossy, else lossless
+.TP
 \fB\-\-lossy\fR
 Encode lossily (VP8) instead of losslessly (VP8L)
 .TP
-\fB\-\-quality\fR \fI<QUALITY>\fR
+\fB\-q\fR, \fB\-\-quality\fR \fI<QUALITY>\fR
 Lossy quality 0\-100 (higher = larger, closer to source); selects \-\-lossy
 .TP
 \fB\-\-optimize\fR
@@ -62,4 +65,4 @@ xmp: Keep XMP
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 <\fIINPUTS\fR>
-Input images and/or directories (PNG/PPM/PAM)
+Input images and/or directories (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM)

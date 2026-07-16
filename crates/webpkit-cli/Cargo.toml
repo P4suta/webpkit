@@ -35,6 +35,14 @@ path = "src/bin/dwebp.rs"
 name = "webp"
 path = "src/bin/webp.rs"
 
+[features]
+# `formats` adds JPEG/GIF/TIFF/BMP input via the `image` crate and turns on
+# webpkit's `image` feature for the `DynamicImage -> Image` conversion. On by
+# default (the `webp` tool is a product, and a product reads the formats people
+# have); `--no-default-features` falls back to the zero-image-dep PNG/PPM/PAM/raw core.
+default = ["formats"]
+formats = ["dep:image", "webpkit/image"]
+
 [dependencies]
 # Both arrive with clap already, so naming them directly costs no new crates.
 # `anstream` decides per-stream whether ANSI survives; `anstyle` is the vocabulary.
@@ -50,6 +58,9 @@ clap_mangen = { workspace = true }
 # temp file's own cleanup does not run on a signal — the handler deletes in-flight
 # temps explicitly.
 ctrlc = { workspace = true }
+# JPEG/GIF/TIFF/BMP decode, behind the default `formats` feature. Optional so a
+# `--no-default-features` build keeps the PNG/PPM/PAM/raw core with no image dep.
+image = { workspace = true, optional = true }
 # `info --json` is the machine-readable contract; serde_json's Map is BTreeMap-
 # backed unless `preserve_order` is on, so key order stays deterministic.
 png = { workspace = true }
@@ -73,6 +84,9 @@ webpkit = { path = "../webpkit", version = "0.1.0", features = ["rayon"] }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+# Encode throwaway JPEG/GIF/TIFF/BMP fixtures for the input-format tests, so no
+# binary blobs are committed. The same crate the CLI decodes with.
+image = { workspace = true }
 insta = { workspace = true }
 predicates = { workspace = true }
 webpkit-archtest = { path = "../webpkit-archtest" }

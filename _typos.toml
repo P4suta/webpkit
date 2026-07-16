@@ -17,6 +17,8 @@ wht = "wht"
 iwht = "iwht"
 # `mis-` is a valid English prefix (mis-decode, mis-read), not a misspelling.
 mis = "mis"
+# `numer` is the `image` crate's spelling in `Delay::numer_denom_ms` (numerator).
+numer = "numer"
 # `ba` occurs inside committed hex digests (e.g. `7ffbbd64ba73c260`), not as a word.
 ba = "ba"
 

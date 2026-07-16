@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use webpkit::{Effort, Image, Metadata};
 
 use crate::{
-    codec::{self, EncodeMode},
+    codec::{self, CodecFlags, EncodeMode},
     error::CliError,
     format::{self, InputFormat},
     io::{self, Sink, Source},
@@ -18,13 +18,15 @@ use crate::{
 };
 
 /// Extensions treated as encodable image inputs when scanning directories.
-const IMAGE_EXTENSIONS: [&str; 5] = ["png", "ppm", "pam", "raw", "rgba"];
+const IMAGE_EXTENSIONS: [&str; 11] = [
+    "png", "ppm", "pam", "jpg", "jpeg", "gif", "tif", "tiff", "bmp", "raw", "rgba",
+];
 
 /// Options for a bulk conversion run.
 #[derive(Debug, Clone)]
 pub(crate) struct Options {
-    /// The codec and knobs (ignored for the lossless effort search under `optimize`).
-    pub(crate) mode: EncodeMode,
+    /// The user's codec choice, resolved per file against its source format.
+    pub(crate) flags: CodecFlags,
     /// Which metadata to carry through.
     pub(crate) metadata: Selection,
     /// Try every lossless effort level and keep the smallest output.
@@ -99,13 +101,19 @@ fn convert_one(path: &Path, options: &Options) -> Result<Stat, CliError> {
             "raw input needs explicit dimensions; use `webp encode`".to_owned(),
         ));
     }
-    let image = format::read_image(&bytes, format, None)?;
-    let metadata = options.metadata.apply(image.metadata());
+    let (mode, _derived) = codec::resolve_mode(format, options.flags)?;
     // `--optimize` searches the three lossless effort levels; a lossy request keeps
-    // its own single (quality, effort) rather than an effort sweep.
-    let webp = match (options.optimize, options.mode) {
-        (true, EncodeMode::Lossless(_)) => encode_smallest(&image, &metadata)?,
-        (_, mode) => codec::encode(&image, mode, metadata)?,
+    // its own single (quality, effort) rather than an effort sweep. A GIF becomes a
+    // lossless animation and is not part of the still effort search.
+    let webp = if options.optimize
+        && matches!(mode, EncodeMode::Lossless(_))
+        && format != InputFormat::Gif
+    {
+        let image = format::read_image(&bytes, format, None)?;
+        let metadata = options.metadata.apply(image.metadata());
+        encode_smallest(&image, &metadata)?
+    } else {
+        codec::encode_input(&bytes, format, mode, options.metadata, true)?.bytes
     };
     let output = output_path(path, options.output_dir.as_deref());
     Sink::File(output.clone()).write(&webp)?;

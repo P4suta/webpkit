@@ -4,7 +4,7 @@
 .SH NAME
 webp \- Command\-line tools for the webpkit WebP codec: libwebp\-style cwebp (lossy by default, \-lossless for VP8L) / dwebp and the webp brand tool.
 .SH SYNOPSIS
-\fBwebp\fR [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-color\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+\fBwebp\fR [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-quiet\fR] [\fB\-\-color\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-metadata\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIINPUTS\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 Command\-line tools for the webpkit WebP codec: libwebp\-style cwebp (lossy by default, \-lossless for VP8L) / dwebp and the webp brand tool.
 .SH OPTIONS
@@ -12,26 +12,86 @@ Command\-line tools for the webpkit WebP codec: libwebp\-style cwebp (lossy by d
 \fB\-v\fR, \fB\-\-verbose\fR
 Print per\-stage detail on stderr
 .TP
-\fB\-q\fR, \fB\-\-quiet\fR
-Suppress all non\-error output
+\fB\-\-quiet\fR
+Suppress all non\-error output.
+
+Long\-only: `\-q` is `\-\-quality`. A bare `webp \-q photo.png` therefore reads `photo.png` as a quality value and fails; use `\-\-quiet` to silence output.
 .TP
 \fB\-\-color\fR \fI<WHEN>\fR [default: auto]
 auto, always, or never
 
 `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `\-\-color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 .TP
+\fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
+Output file, or a directory for many inputs; default: beside each input
+.TP
+\fB\-q\fR, \fB\-\-quality\fR \fI<QUALITY>\fR
+Lossy quality 0\-100 (higher = larger, closer to source); selects lossy
+.TP
+\fB\-\-lossless\fR
+Force lossless (VP8L) encoding
+.TP
+\fB\-\-lossy\fR
+Force lossy (VP8) encoding
+.TP
+\fB\-m\fR, \fB\-\-method\fR \fI<METHOD>\fR [default: balanced]
+Encoder effort
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+fast: Fastest: literal + subtract\-green only
+.IP \(bu 2
+balanced: Balanced (the default): LZ77 + color cache
+.IP \(bu 2
+best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
+.RE
+.TP
+\fB\-\-metadata\fR \fI<METADATA>\fR
+Metadata to embed: all,none,icc,exif,xmp (default: all)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+all: Keep ICC, Exif, and XMP
+.IP \(bu 2
+none: Strip everything (a bare `VP8L` output)
+.IP \(bu 2
+icc: Keep the ICC color profile
+.IP \(bu 2
+exif: Keep Exif
+.IP \(bu 2
+xmp: Keep XMP
+.RE
+.TP
+\fB\-r\fR, \fB\-\-recursive\fR
+Recurse into subdirectories
+.TP
+\fB\-\-force\fR
+Overwrite an existing derived output
+.TP
+\fB\-\-no\-clobber\fR
+Skip an existing derived output instead of failing (still exits 0)
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 \fB\-V\fR, \fB\-\-version\fR
 Print version
+.TP
+[\fIINPUTS\fR]
+Images or directories. A WebP is decoded to PNG; anything else is encoded
 .SH SUBCOMMANDS
 .TP
 webp\-decode(1)
 Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
 .TP
 webp\-encode(1)
-Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or \-\-lossy)
+Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .TP
 webp\-convert(1)
 Batch\-convert many images (or directories) to WebP, in parallel

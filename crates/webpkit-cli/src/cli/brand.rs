@@ -1,15 +1,19 @@
-//! The `webp` brand tool: `encode` / `decode` / `convert` / `info`, plus
-//! `completions` and `man`.
+//! The `webp` brand tool: a bare direction-detected form plus `encode` /
+//! `decode` / `convert` / `info`, `config` / `explain`, and `completions` / `man`.
 //!
-//! It works over PNG, netpbm, and raw pixels with smart format detection and
-//! metadata-preserving defaults, decodes animations frame-by-frame, and shares
-//! the codec, format, I/O, and reporting layers with the `cwebp` / `dwebp`
-//! drop-ins.
+//! Called bare, it sniffs each input and picks a direction (WebP → PNG, anything
+//! else → WebP) with an implicit, overwrite-guarded output name. It reads
+//! PNG/JPEG/GIF/TIFF/BMP/netpbm/raw, turns a GIF into an animated WebP, keeps
+//! metadata by default, decodes animations frame-by-frame, and shares the codec,
+//! format, I/O, and reporting layers with the `cwebp` / `dwebp` drop-ins.
 //!
 //! `completions` and `man` generate from this module's own [`Cli`], so the help,
 //! the completion scripts, and the man pages cannot describe different flags.
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use clap::{CommandFactory as _, Parser, Subcommand};
 use webpkit::DecodeOptions;
@@ -22,20 +26,126 @@ use crate::{
     error::CliError,
     format::{self, InputFormat, OutputFormat, raw::RawParams},
     inspect,
-    io::{Sink, Source},
+    io::{self, Sink, Source},
     metadata::{MetadataField, Selection},
     report::{self, Reporter},
     term::{self, ColorChoice},
 };
 
 /// Encode, decode, and inspect WebP images.
+///
+/// Called bare, `webp` picks a direction from the input's content: a WebP is
+/// decoded to PNG, anything else is encoded to WebP, and the output name is
+/// derived (`photo.png` → `photo.webp`, `photo.webp` → `photo.png`). Use `encode`
+/// / `decode` to force a direction.
+#[derive(Debug, Parser)]
+#[command(
+    name = "webp",
+    version,
+    about,
+    long_about = None,
+    args_conflicts_with_subcommands = true,
+    arg_required_else_help = true
+)]
+struct Cli {
+    #[command(flatten)]
+    global: GlobalArgs,
+    #[command(flatten)]
+    auto: AutoArgs,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+/// The subcommand form: `webp <command> ...`, with a required command.
+///
+/// A bare top-level positional (the [`AutoArgs`] inputs) would swallow a
+/// subcommand name that follows a global flag (`webp --quiet encode …`), so
+/// subcommand parsing uses this positional-free struct. Both forms are generated
+/// from the same [`Command`] table, so nothing can drift; only the completions and
+/// man pages, which describe the bare form too, are built from [`Cli`].
 #[derive(Debug, Parser)]
 #[command(name = "webp", version, about, long_about = None)]
-struct Cli {
+struct SubCli {
     #[command(flatten)]
     global: GlobalArgs,
     #[command(subcommand)]
     command: Command,
+}
+
+/// The subcommands whose presence as the first positional selects [`SubCli`].
+const SUBCOMMANDS: &[&str] = &[
+    "decode",
+    "encode",
+    "convert",
+    "info",
+    "config",
+    "explain",
+    "completions",
+    "man",
+    "help",
+];
+
+/// Whether the first positional argument names a subcommand.
+///
+/// Only global flags may precede a subcommand, and of those only `--color` takes a
+/// value, so the scan skips it. Anything else at the first positional (a file, a
+/// quality value) means the bare form.
+fn first_positional_is_subcommand(argv: &[std::ffi::OsString]) -> bool {
+    let mut i = 1;
+    while let Some(arg) = argv.get(i) {
+        let token = arg.to_string_lossy();
+        if token == "--" {
+            return false;
+        }
+        if token == "-" || !token.starts_with('-') {
+            return SUBCOMMANDS.contains(&token.as_ref());
+        }
+        // `--color WHEN` consumes the next token; every other global flag does not.
+        i += usize::from(token == "--color") + 1;
+    }
+    false
+}
+
+/// The bare, direction-detected form: `webp <inputs...>`.
+///
+/// These flags are only read when no subcommand is given. `-q`/`--quality`
+/// selects lossy; `--lossless`/`--lossy` force a codec; otherwise the codec is
+/// derived from the source (JPEG → lossy, everything else → lossless).
+#[derive(Debug, clap::Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "clap flag struct: each bool is an independent switch, not modeled state"
+)]
+struct AutoArgs {
+    /// Images or directories. A WebP is decoded to PNG; anything else is encoded.
+    inputs: Vec<PathBuf>,
+    /// Output file, or a directory for many inputs; default: beside each input.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Lossy quality 0-100 (higher = larger, closer to source); selects lossy.
+    #[arg(short = 'q', long)]
+    quality: Option<u8>,
+    /// Force lossless (VP8L) encoding.
+    #[arg(long, conflicts_with = "lossy")]
+    lossless: bool,
+    /// Force lossy (VP8) encoding.
+    #[arg(long)]
+    lossy: bool,
+    /// Encoder effort.
+    #[arg(short, long, value_enum, default_value_t)]
+    method: Method,
+    /// Metadata to embed: all,none,icc,exif,xmp (default: all).
+    #[arg(long, value_enum, value_delimiter = ',')]
+    metadata: Vec<MetadataField>,
+    /// Recurse into subdirectories.
+    #[arg(short, long)]
+    recursive: bool,
+    /// Overwrite an existing derived output.
+    #[arg(long)]
+    force: bool,
+    /// Skip an existing derived output instead of failing (still exits 0).
+    #[arg(long, conflicts_with = "force")]
+    no_clobber: bool,
 }
 
 /// Flags available to every subcommand.
@@ -45,7 +155,10 @@ struct GlobalArgs {
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     verbose: u8,
     /// Suppress all non-error output.
-    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    ///
+    /// Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads
+    /// `photo.png` as a quality value and fails; use `--quiet` to silence output.
+    #[arg(long, global = true, conflicts_with = "verbose")]
     quiet: bool,
     /// auto, always, or never
     ///
@@ -67,7 +180,7 @@ struct GlobalArgs {
 enum Command {
     /// Decode a WebP file to PNG (default), PPM/PAM, or raw pixels.
     Decode(DecodeArgs),
-    /// Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy).
+    /// Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file.
     Encode(EncodeArgs),
     /// Batch-convert many images (or directories) to WebP, in parallel.
     Convert(ConvertArgs),
@@ -174,8 +287,12 @@ struct ManArgs {
 
 /// Arguments for `webp convert`.
 #[derive(Debug, clap::Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "clap flag struct: each bool is an independent switch, not modeled state"
+)]
 struct ConvertArgs {
-    /// Input images and/or directories (PNG/PPM/PAM).
+    /// Input images and/or directories (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM).
     #[arg(required = true)]
     inputs: Vec<PathBuf>,
     /// Output directory (created outputs are `<stem>.webp`); default: beside input.
@@ -184,11 +301,14 @@ struct ConvertArgs {
     /// Encoder effort (ignored with --optimize).
     #[arg(short, long, value_enum, default_value_t)]
     method: Method,
+    /// Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless.
+    #[arg(long, conflicts_with = "lossy")]
+    lossless: bool,
     /// Encode lossily (VP8) instead of losslessly (VP8L).
     #[arg(long)]
     lossy: bool,
     /// Lossy quality 0-100 (higher = larger, closer to source); selects --lossy.
-    #[arg(long)]
+    #[arg(short = 'q', long)]
     quality: Option<u8>,
     /// Try every lossless effort level and keep the smallest output.
     #[arg(long)]
@@ -254,7 +374,7 @@ struct DecodeArgs {
 /// Arguments for `webp encode`.
 #[derive(Debug, clap::Args)]
 struct EncodeArgs {
-    /// Input image (PNG/PPM/PAM/raw); `-` (the default) reads stdin.
+    /// Input image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw); `-` (default) reads stdin.
     #[arg(default_value = "-")]
     input: PathBuf,
     /// Output `.webp` file; `-` writes stdout.
@@ -275,43 +395,108 @@ struct EncodeArgs {
     /// Encoder effort.
     #[arg(short, long, value_enum, default_value_t)]
     method: Method,
+    /// Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless.
+    #[arg(long, conflicts_with = "lossy")]
+    lossless: bool,
     /// Encode lossily (VP8) instead of losslessly (VP8L).
     #[arg(long)]
     lossy: bool,
     /// Lossy quality 0-100 (higher = larger, closer to source); selects --lossy.
-    #[arg(long)]
+    #[arg(short = 'q', long)]
     quality: Option<u8>,
     /// Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp).
     #[arg(long, value_enum, value_delimiter = ',')]
     metadata: Vec<MetadataField>,
 }
 
-/// Build the [`EncodeMode`] from the shared effort/quality flags: `--lossy`, or an
-/// explicit `--quality`, selects lossy (VP8) output; otherwise lossless (VP8L).
-fn encode_mode(lossy: bool, quality: Option<u8>, method: Method) -> EncodeMode {
-    if lossy || quality.is_some() {
-        EncodeMode::Lossy {
-            quality: quality.unwrap_or(75),
-            method: method.into(),
-        }
-    } else {
-        EncodeMode::Lossless(method.into())
+/// The codec flags this invocation passed, as [`codec::CodecFlags`].
+fn codec_flags(
+    lossless: bool,
+    lossy: bool,
+    quality: Option<u8>,
+    method: Method,
+) -> codec::CodecFlags {
+    codec::CodecFlags {
+        lossless,
+        lossy,
+        quality,
+        effort: method.into(),
     }
 }
 
+/// A one-phrase description of the chosen codec for the status line, e.g.
+/// `lossless · from PNG source` or `lossy q75 · from JPEG source`.
+fn codec_note(mode: EncodeMode, format: InputFormat, animation: bool) -> String {
+    let codec = if animation {
+        "animation (lossless)".to_owned()
+    } else {
+        match mode {
+            EncodeMode::Lossless(_) => "lossless".to_owned(),
+            EncodeMode::Lossy { quality, .. } => format!("lossy q{quality}"),
+        }
+    };
+    format!("{codec} · from {format:?} source")
+}
+
 /// Parse arguments, run the requested command, and return a process exit code.
+///
+/// A subcommand invocation and the bare direction-detected form parse through
+/// different structs (see [`SubCli`]); the first positional decides which.
 #[must_use]
 pub(crate) fn main() -> ExitCode {
-    let cli = Cli::parse();
-    term::install(cli.global.color);
-    let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
-    match run(&cli.command, &reporter) {
+    let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if first_positional_is_subcommand(&argv) {
+        let cli = match SubCli::try_parse_from(&argv) {
+            Ok(cli) => cli,
+            Err(err) => return parse_error(&err),
+        };
+        term::install(cli.global.color);
+        let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
+        finish(run(&cli.command, &reporter))
+    } else {
+        let cli = match Cli::try_parse_from(&argv) {
+            Ok(cli) => cli,
+            Err(err) => return parse_error(&err),
+        };
+        term::install(cli.global.color);
+        let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
+        let result = match &cli.command {
+            Some(command) => run(command, &reporter),
+            None => auto(&cli.auto, &reporter),
+        };
+        finish(result)
+    }
+}
+
+/// Turn a command result into a process exit code, rendering any error.
+fn finish(result: Result<(), CliError>) -> ExitCode {
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            crate::report::error(&err.to_diagnostic());
+            report::error(&err.to_diagnostic());
             err.exit_code()
         },
     }
+}
+
+/// Render a clap parse failure, adding a `-q` → `--quiet` hint when the user
+/// clearly meant the old quiet flag: `-q` now takes a quality value, so a
+/// non-numeric argument to it is the tell.
+fn parse_error(err: &clap::Error) -> ExitCode {
+    use clap::error::ErrorKind;
+
+    let _ = err.print();
+    let bad_value = matches!(
+        err.kind(),
+        ErrorKind::ValueValidation | ErrorKind::InvalidValue
+    );
+    if bad_value && err.render().to_string().contains("--quality") {
+        report::warn(
+            "`-q` is now --quality (a number). To silence output, use `--quiet` (long form).",
+        );
+    }
+    // clap uses exit code 2 for both usage errors and --help/--version; mirror it.
+    ExitCode::from(u8::try_from(err.exit_code()).unwrap_or(2))
 }
 
 fn run(command: &Command, reporter: &Reporter) -> Result<(), CliError> {
@@ -446,7 +631,7 @@ fn emit(bytes: &[u8]) {
 
 fn convert(args: &ConvertArgs, reporter: &Reporter) -> Result<(), CliError> {
     let options = bulk::Options {
-        mode: encode_mode(args.lossy, args.quality, args.method),
+        flags: codec_flags(args.lossless, args.lossy, args.quality, args.method),
         metadata: Selection::from_fields(&args.metadata),
         optimize: args.optimize,
         recursive: args.recursive,
@@ -478,6 +663,183 @@ fn convert(args: &ConvertArgs, reporter: &Reporter) -> Result<(), CliError> {
         )));
     }
     Ok(())
+}
+
+/// Input file extensions the bare form considers when walking a directory. Naming
+/// a file directly bypasses this filter, so an odd extension still works.
+const CONVERTIBLE_EXTENSIONS: &[&str] = &[
+    "png", "ppm", "pam", "jpg", "jpeg", "gif", "tif", "tiff", "bmp", "raw", "rgba", "webp",
+];
+
+fn is_convertible(path: &Path) -> bool {
+    io::extension_of(path).is_some_and(|ext| CONVERTIBLE_EXTENSIONS.contains(&ext.as_str()))
+}
+
+/// Whether these bytes are a WebP file (`RIFF....WEBP`), by content not extension.
+fn is_webp(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP"
+}
+
+/// The bare, direction-detected form: `webp <inputs...>`.
+///
+/// Each input is sniffed independently — a WebP is decoded to PNG, anything else
+/// is encoded to WebP — so a mixed batch is coherent. Derived outputs are guarded
+/// against overwrite (§ overwrite policy); an explicitly named single `-o FILE`
+/// overwrites, as naming it is intent.
+fn auto(args: &AutoArgs, reporter: &Reporter) -> Result<(), CliError> {
+    if args.inputs.is_empty() {
+        return Err(CliError::Usage(
+            "no input given (try `webp photo.png`, or `webp --help`)".to_owned(),
+        ));
+    }
+    let files = io::collect_files(&args.inputs, args.recursive, &is_convertible)?;
+    if files.is_empty() {
+        return Err(CliError::Usage(
+            "no convertible images found in the given inputs".to_owned(),
+        ));
+    }
+    let out_is_dir = args.output.as_deref().is_some_and(io::is_dir);
+    if files.len() > 1 && args.output.is_some() && !out_is_dir {
+        return Err(CliError::Usage(
+            "with more than one input, `-o` must be a directory".to_owned(),
+        ));
+    }
+    // A single input with an explicit non-directory `-o` names its output exactly;
+    // every other shape derives the name (and is overwrite-guarded).
+    let explicit = (files.len() == 1 && args.output.is_some() && !out_is_dir)
+        .then(|| args.output.clone())
+        .flatten();
+    for file in &files {
+        auto_one(file, args, explicit.as_deref(), reporter)?;
+    }
+    Ok(())
+}
+
+/// Convert one file in the bare form, honoring the overwrite guard.
+fn auto_one(
+    input: &Path,
+    args: &AutoArgs,
+    explicit: Option<&Path>,
+    reporter: &Reporter,
+) -> Result<(), CliError> {
+    let bytes = Source::File(input.to_path_buf()).read()?;
+    let ext = if is_webp(&bytes) {
+        // Decode direction: honor an explicit output's extension, else PNG.
+        explicit
+            .and_then(io::extension_of)
+            .unwrap_or_else(|| "png".to_owned())
+    } else {
+        "webp".to_owned()
+    };
+    let (output, derived) = explicit.map_or_else(
+        || {
+            let stem = input.file_stem().unwrap_or(input.as_os_str());
+            let dir = args
+                .output
+                .clone()
+                .or_else(|| input.parent().map(Path::to_path_buf))
+                .unwrap_or_default();
+            (dir.join(stem).with_extension(&ext), true)
+        },
+        |path| (path.to_path_buf(), false),
+    );
+    if !clear_to_write(&output, derived, args, reporter)? {
+        return Ok(());
+    }
+
+    if is_webp(&bytes) {
+        auto_decode(input, &bytes, &output, reporter)
+    } else {
+        auto_encode(input, &bytes, &output, args, reporter)
+    }
+}
+
+/// Resolve the overwrite guard for one output. Returns `false` when the file
+/// should be skipped (`--no-clobber`), `Err` when it is refused.
+fn clear_to_write(
+    output: &Path,
+    derived: bool,
+    args: &AutoArgs,
+    reporter: &Reporter,
+) -> Result<bool, CliError> {
+    if !io::exists(output) || args.force {
+        return Ok(true);
+    }
+    if args.no_clobber {
+        reporter.detail(&format!("skipping {} (exists)", output.display()));
+        return Ok(false);
+    }
+    if derived {
+        return Err(CliError::Clobber(output.display().to_string()));
+    }
+    // An explicitly named output overwrites, as naming it is the intent.
+    Ok(true)
+}
+
+/// Encode one non-WebP input to a WebP output, reporting the chosen codec.
+fn auto_encode(
+    input: &Path,
+    bytes: &[u8],
+    output: &Path,
+    args: &AutoArgs,
+    reporter: &Reporter,
+) -> Result<(), CliError> {
+    let format = InputFormat::resolve(None, io::extension_of(input).as_deref(), bytes);
+    let flags = codec_flags(args.lossless, args.lossy, args.quality, args.method);
+    let (mode, _derived) = codec::resolve_mode(format, flags)?;
+    let selection = Selection::from_fields(&args.metadata);
+    let encoded = codec::encode_input(bytes, format, mode, selection, true)?;
+    if encoded.animation && (flags.lossy || flags.quality.is_some()) {
+        report::warn("a GIF becomes a lossless animation; --lossy/--quality do not apply");
+    }
+    Sink::File(output.to_path_buf()).write(&encoded.bytes)?;
+    reporter.status(&format!(
+        "{} -> {} ({}x{}, {} bytes, {}, {})",
+        input.display(),
+        output.display(),
+        encoded.width,
+        encoded.height,
+        encoded.bytes.len(),
+        ratio(bytes.len(), encoded.bytes.len()),
+        codec_note(mode, format, encoded.animation),
+    ));
+    Ok(())
+}
+
+/// Decode one WebP input to an image output (first frame if animated).
+fn auto_decode(
+    input: &Path,
+    bytes: &[u8],
+    output: &Path,
+    reporter: &Reporter,
+) -> Result<(), CliError> {
+    let format = OutputFormat::resolve(None, io::extension_of(output).as_deref());
+    let image = decode_still_or_first_frame(bytes)?;
+    let metadata = Selection::all().apply(image.metadata());
+    let out = format::write_image(&image, format, &metadata)?;
+    Sink::File(output.to_path_buf()).write(&out)?;
+    reporter.status(&format!(
+        "{} -> {} ({}x{}, {} bytes, from WebP)",
+        input.display(),
+        output.display(),
+        image.width(),
+        image.height(),
+        out.len(),
+    ));
+    Ok(())
+}
+
+/// Decode a still WebP, or the first composited frame of an animation.
+fn decode_still_or_first_frame(bytes: &[u8]) -> Result<webpkit::Image, CliError> {
+    if is_animated(bytes)? {
+        let frames = webpkit::decode_frames(bytes)?;
+        let first = frames
+            .composited()
+            .next()
+            .ok_or_else(|| CliError::Format("animation has no frames".to_owned()))??;
+        return Ok(first.into_image());
+    }
+    codec::decode(bytes, webpkit::PixelLayout::Rgba8)
 }
 
 fn decode(args: &DecodeArgs, reporter: &Reporter) -> Result<(), CliError> {
@@ -616,6 +978,10 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
     let format = InputFormat::resolve(args.input_format, source.extension().as_deref(), &bytes);
     reporter.detail(&format!("encoding {format:?} {}", source.label()));
 
+    let flags = codec_flags(args.lossless, args.lossy, args.quality, args.method);
+    let (mode, _derived) = codec::resolve_mode(format, flags)?;
+    let selection = Selection::from_fields(&args.metadata);
+
     let raw = match (args.width, args.height) {
         (Some(width), Some(height)) => Some(RawParams {
             width,
@@ -624,19 +990,31 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
         }),
         _ => None,
     };
-    let image = format::read_image(&bytes, format, raw)?;
-    let metadata = Selection::from_fields(&args.metadata).apply(image.metadata());
-    let mode = encode_mode(args.lossy, args.quality, args.method);
-    let webp = codec::encode(&image, mode, metadata)?;
-    sink.write(&webp)?;
+    // Raw pixels carry no container, so they take the still path with explicit
+    // dimensions; everything else may be a GIF, so it routes through `encode_input`
+    // where a GIF becomes an animation.
+    let encoded = if let Some(params) = raw {
+        let image = format::read_image(&bytes, format, Some(params))?;
+        let metadata = selection.apply(image.metadata());
+        codec::Encoded {
+            width: image.width(),
+            height: image.height(),
+            bytes: codec::encode(&image, mode, metadata)?,
+            animation: false,
+        }
+    } else {
+        codec::encode_input(&bytes, format, mode, selection, true)?
+    };
+    sink.write(&encoded.bytes)?;
     reporter.status(&format!(
-        "encoded {} -> {} ({}x{}, {} bytes, {})",
+        "encoded {} -> {} ({}x{}, {} bytes, {}, {})",
         source.label(),
         sink.label(),
-        image.width(),
-        image.height(),
-        webp.len(),
-        ratio(bytes.len(), webp.len()),
+        encoded.width,
+        encoded.height,
+        encoded.bytes.len(),
+        ratio(bytes.len(), encoded.bytes.len()),
+        codec_note(mode, format, encoded.animation),
     ));
     Ok(())
 }

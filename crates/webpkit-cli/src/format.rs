@@ -1,8 +1,13 @@
-//! Image-file encodings the CLI reads and writes: PNG, netpbm (PPM/PAM), raw.
+//! Image-file encodings the CLI reads and writes: PNG, netpbm (PPM/PAM), raw,
+//! and — behind the `formats` feature — JPEG/GIF/TIFF/BMP via the `image` crate.
 //!
 //! The codec itself only speaks raw RGBA/ARGB/BGRA, so this layer is what makes
-//! the tools accept `.png` inputs and emit `.png` outputs.
+//! the tools accept `.png` inputs and emit `.png` outputs. PNG keeps its own
+//! decoder for metadata fidelity the `image` crate cannot give; the four extra
+//! input formats route through `image_input`.
 
+#[cfg(feature = "formats")]
+pub(crate) mod image_input;
 pub(crate) mod png;
 pub(crate) mod ppm;
 pub(crate) mod raw;
@@ -21,6 +26,14 @@ pub(crate) enum InputFormat {
     Ppm,
     /// Netpbm binary PAM (`P7`, RGBA).
     Pam,
+    /// JPEG (decoded to RGBA8; needs the `formats` feature).
+    Jpeg,
+    /// GIF (first frame as a still; whole-file animation is a separate path).
+    Gif,
+    /// TIFF (decoded to RGBA8; needs the `formats` feature).
+    Tiff,
+    /// BMP (decoded to RGBA8; needs the `formats` feature).
+    Bmp,
     /// Raw row-major pixels; requires `--width`/`--height`/`--layout`.
     Raw,
 }
@@ -54,9 +67,21 @@ impl InputFormat {
             "png" => Some(Self::Png),
             "ppm" => Some(Self::Ppm),
             "pam" => Some(Self::Pam),
+            "jpg" | "jpeg" => Some(Self::Jpeg),
+            "gif" => Some(Self::Gif),
+            "tif" | "tiff" => Some(Self::Tiff),
+            "bmp" => Some(Self::Bmp),
             "raw" | "rgba" | "argb" | "bgra" => Some(Self::Raw),
             _ => None,
         }
+    }
+
+    /// Whether these bytes are a GIF, by magic (`GIF87a`/`GIF89a`). The GIF sniff
+    /// stands alone because the `webp` tool routes a GIF to the animation encoder,
+    /// not the still path — direction is decided before a format is even resolved.
+    #[must_use]
+    pub(crate) fn is_gif(bytes: &[u8]) -> bool {
+        bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")
     }
 
     fn sniff(bytes: &[u8]) -> Option<Self> {
@@ -66,6 +91,14 @@ impl InputFormat {
             Some(Self::Ppm)
         } else if bytes.starts_with(b"P7") {
             Some(Self::Pam)
+        } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+            Some(Self::Jpeg)
+        } else if Self::is_gif(bytes) {
+            Some(Self::Gif)
+        } else if bytes.starts_with(b"II*\x00") || bytes.starts_with(b"MM\x00*") {
+            Some(Self::Tiff)
+        } else if bytes.starts_with(b"BM") {
+            Some(Self::Bmp)
         } else {
             None
         }
@@ -109,6 +142,9 @@ pub(crate) fn read_image(
     match format {
         InputFormat::Png => png::read(bytes),
         InputFormat::Ppm | InputFormat::Pam => ppm::read(bytes),
+        InputFormat::Jpeg | InputFormat::Gif | InputFormat::Tiff | InputFormat::Bmp => {
+            read_via_image(bytes, format)
+        },
         InputFormat::Raw => {
             let params = raw.ok_or_else(|| {
                 CliError::RawConfig(
@@ -119,6 +155,22 @@ pub(crate) fn read_image(
             raw::read(bytes, params)
         },
     }
+}
+
+/// Decode a JPEG/GIF/TIFF/BMP still via the `image` crate. A GIF yields its first
+/// frame here; the animation path (`webp` → animated WebP) is separate.
+#[cfg(feature = "formats")]
+fn read_via_image(bytes: &[u8], format: InputFormat) -> Result<Image, CliError> {
+    image_input::read_still(bytes, format)
+}
+
+/// Without the `formats` feature the four `image`-crate formats are recognized but
+/// not decodable, so the error names the missing capability rather than misparsing.
+#[cfg(not(feature = "formats"))]
+fn read_via_image(_bytes: &[u8], format: InputFormat) -> Result<Image, CliError> {
+    Err(CliError::Format(format!(
+        "{format:?} input needs the `formats` feature, which this build was compiled without"
+    )))
 }
 
 /// Encode an [`Image`] into the given output `format`, returning file bytes.
