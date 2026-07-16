@@ -104,7 +104,7 @@ _webp() {
 
     case "${cmd}" in
         webp)
-            opts="-v -o -q -m -r -h -V --verbose --quiet --color --threads --output --quality --lossless --lossy --method --metadata --recursive --force --no-clobber --help --version decode encode convert info diff doctor config explain completions man help"
+            opts="-v -o -q -m -r -h -V --verbose --quiet --color --threads --output --quality --lossless --lossy --method --metadata --crop --resize --recursive --force --no-clobber --help --version decode encode convert info diff doctor config explain completions man help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -144,6 +144,14 @@ _webp() {
                     ;;
                 --metadata)
                     COMPREPLY=($(compgen -W "all none icc exif xmp" -- "${cur}"))
+                    return 0
+                    ;;
+                --crop)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --resize)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 *)
@@ -426,7 +434,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__encode)
-            opts="-o -m -q -v -h --output --input-format --width --height --layout --method --lossless --lossy --quality --metadata --verbose --quiet --color --threads --help"
+            opts="-o -m -q -v -h --output --input-format --width --height --layout --method --lossless --lossy --quality --crop --resize --target-size --min-psnr --metadata --verbose --quiet --color --threads --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -469,6 +477,22 @@ _webp() {
                     return 0
                     ;;
                 -q)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --crop)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --resize)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --target-size)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --min-psnr)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

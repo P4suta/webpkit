@@ -10,14 +10,16 @@
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
 use crate::{
-    codec::{self, EncodeMode},
+    codec::EncodeMode,
     diag::{self, ArgvSpan, Diagnostic},
     effort,
     error::CliError,
     format::{self, InputFormat},
     io::{Sink, Source},
     metadata::{MetadataField, Selection},
+    preprocess::{Crop, Pipeline, Resize},
     report::Reporter,
+    strategy::{Strategy, Target},
     term,
 };
 
@@ -90,6 +92,14 @@ struct Config {
     /// Lossless (`VP8L`) output; set by `-lossless` or `-z`. Default is lossy.
     lossless: bool,
     metadata: Vec<MetadataField>,
+    /// `-crop x y w h` pixel preprocessing (applied before `-resize`).
+    crop: Option<Crop>,
+    /// `-resize w h` pixel preprocessing (a `0` axis keeps aspect).
+    resize: Option<Resize>,
+    /// `-size N`: target output bytes, searched over lossy quality.
+    target_size: Option<u64>,
+    /// `-psnr N`: target reconstruction PSNR floor in dB.
+    target_psnr: Option<f64>,
     verbose: u8,
     quiet: bool,
 }
@@ -138,17 +148,32 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
         );
     }
 
-    let image = format::read_image(&bytes, format, None)?;
+    // Crop-then-resize preprocessing. Project from the header first so an
+    // out-of-bounds crop fails before the image is even decoded.
+    let pipeline = Pipeline::new(config.crop, config.resize);
+    if !pipeline.is_empty()
+        && let Some(dims) = format::dimensions_of(&bytes, format)
+    {
+        pipeline.project(dims)?;
+    }
+    let image = pipeline.apply(format::read_image(&bytes, format, None)?)?;
     let metadata = Selection::from_fields(&config.metadata).apply(image.metadata());
-    let webp = codec::encode(&image, mode, metadata)?;
-    sink.write(&webp)?;
+
+    // A `-size`/`-psnr` target makes this a quality search; otherwise a single encode.
+    let target = Target::from_flags(config.target_size, config.target_psnr);
+    let strategy = Strategy::resolve(mode, false, false, target)?;
+    let encoded = strategy.run(&image, &metadata)?;
+    sink.write(&encoded.bytes)?;
+    if let Some(search) = encoded.search_line() {
+        reporter.detail(&format!("search: {search}"));
+    }
     reporter.status(&format!(
         "{} -> {} ({}x{}, {} bytes)",
         source.label(),
         sink.label(),
         image.width(),
         image.height(),
-        webp.len(),
+        encoded.bytes.len(),
     ));
     Ok(())
 }
@@ -196,6 +221,28 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                     .extend(parse_metadata(&value(args, &mut index, "-metadata")?)?);
             },
             "-quiet" => config.quiet = true,
+            // Pixel preprocessing, applied tool-side before the encoder — the same
+            // place libwebp's cwebp does it. `-crop x y w h`, `-resize w h`.
+            "-crop" => {
+                let x = value_u32(args, &mut index, "-crop")?;
+                let y = value_u32(args, &mut index, "-crop")?;
+                let width = value_u32(args, &mut index, "-crop")?;
+                let height = value_u32(args, &mut index, "-crop")?;
+                config.crop = Some(Crop {
+                    x,
+                    y,
+                    width,
+                    height,
+                });
+            },
+            "-resize" => {
+                let width = value_u32(args, &mut index, "-resize")?;
+                let height = value_u32(args, &mut index, "-resize")?;
+                config.resize = Some(Resize::new(width, height)?);
+            },
+            // Rate control by CLI-side search over quality (lossy only).
+            "-size" => config.target_size = Some(value_u64(args, &mut index, "-size")?),
+            "-psnr" => config.target_psnr = Some(parse_f64(&value(args, &mut index, "-psnr")?)?),
             // Applied from a prescan in `main`, before parsing can fail; parsed again
             // here to consume the value and to reject a bad one by name.
             "-color" | "--color" => {
@@ -234,15 +281,15 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
     Ok(Parsed::Run(Box::new(config)))
 }
 
-/// Rate-control and preprocessing knobs this encoder does not implement. They are
+/// Internal encoder-tuning knobs this encoder does not implement. They are
 /// rejected (rather than silently ignored) so a caller is never misled into
-/// thinking, e.g., a `-size` target or `-crop` took effect.
+/// thinking an internal tuning parameter took effect. `-crop`/`-resize`/`-size`/
+/// `-psnr` are **not** here — they are now live (preprocessing and a quality
+/// search) rather than internal tuning.
 fn is_rejected(flag: &str) -> bool {
     matches!(
         flag,
         "-near_lossless"
-            | "-size"
-            | "-psnr"
             | "-pass"
             | "-sns"
             | "-f"
@@ -255,15 +302,12 @@ fn is_rejected(flag: &str) -> bool {
             | "-af"
             | "-pre"
             | "-map"
-            | "-crop"
-            | "-resize"
             | "-preset"
     )
 }
 
-/// The tailored cause and help for one rejected flag. `-crop` and `-size` want
-/// completely different answers, so the reason is per-flag rather than one flat
-/// sentence for all seventeen.
+/// The tailored cause and help for one rejected flag. Different knobs want
+/// different answers, so the reason is per-flag rather than one flat sentence.
 struct Rejection {
     cause: &'static str,
     help: &'static [&'static str],
@@ -279,19 +323,6 @@ fn rejection_of(flag: &str) -> Rejection {
                 "  cwebp -lossless <in> -o <out.webp>    # exact, larger",
                 "  cwebp -q 90     <in> -o <out.webp>    # lossy, smaller",
             ],
-        },
-        "-size" | "-psnr" => Rejection {
-            cause: "this targets an output size or quality by searching over quality \
-                    levels; webpkit's encoder does no such search.",
-            help: &[
-                "set the quality directly instead:",
-                "  cwebp -q <0-100> <in> -o <out.webp>",
-            ],
-        },
-        "-crop" | "-resize" => Rejection {
-            cause: "cropping and resizing are pixel preprocessing, not an encoder setting; \
-                    webpkit does not resample.",
-            help: &["preprocess with an image tool, then encode the result."],
         },
         "-preset" => Rejection {
             cause: "a preset bundles the internal tuning knobs below, none of which webpkit \
@@ -351,6 +382,23 @@ fn parse_i64(text: &str) -> Result<i64, CliError> {
         .map_err(|_| CliError::Usage(format!("expected an integer, got `{text}`")))
 }
 
+/// The next argument parsed as a `u32` (a crop/resize coordinate).
+fn value_u32(args: &[OsString], index: &mut usize, flag: &str) -> Result<u32, CliError> {
+    let text = value(args, index, flag)?;
+    text.parse().map_err(|_| {
+        CliError::Usage(format!(
+            "`{flag}` expected a non-negative integer, got `{text}`"
+        ))
+    })
+}
+
+/// The next argument parsed as a `u64` (a byte target).
+fn value_u64(args: &[OsString], index: &mut usize, flag: &str) -> Result<u64, CliError> {
+    let text = value(args, index, flag)?;
+    text.parse()
+        .map_err(|_| CliError::Usage(format!("`{flag}` expected a byte count, got `{text}`")))
+}
+
 fn parse_f64(text: &str) -> Result<f64, CliError> {
     text.parse()
         .map_err(|_| CliError::Usage(format!("expected a number, got `{text}`")))
@@ -382,6 +430,10 @@ fn print_help() {
          \x20 -lossless        encode losslessly (VP8L) instead of lossy (VP8)\n\
          \x20 -z <int>         lossless level 0-9 (implies -lossless)\n\
          \x20 -metadata <list> all,none,icc,exif,xmp (default: all)\n\
+         \x20 -crop x y w h    crop before encoding (dimensions match libwebp; pixels differ)\n\
+         \x20 -resize w h      resize before encoding (0 on one axis keeps aspect)\n\
+         \x20 -size <int>      target output size in bytes (searches lossy quality)\n\
+         \x20 -psnr <float>    target reconstruction PSNR floor in dB (lossy)\n\
          \x20 -quiet / -v      quieter / more verbose\n\
          \x20 -color <when>    auto (default), always, or never\n\
          \x20 -version         print version\n",

@@ -4,7 +4,7 @@
 .SH NAME
 encode \- Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .SH SYNOPSIS
-\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
+\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-crop\fR] [\fB\-\-resize\fR] [\fB\-\-target\-size\fR] [\fB\-\-min\-psnr\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
 .SH DESCRIPTION
 Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .SH OPTIONS
@@ -81,6 +81,20 @@ Encode lossily (VP8) instead of losslessly (VP8L)
 .TP
 \fB\-q\fR, \fB\-\-quality\fR \fI<QUALITY>\fR
 Lossy quality 0\-100 (higher = larger, closer to source); selects \-\-lossy
+.TP
+\fB\-\-crop\fR \fI<X,Y,W,H>\fR
+Crop before encoding: `x,y,width,height` in pixels (applied before \-\-resize)
+.TP
+\fB\-\-resize\fR \fI<WxH>\fR
+Resize before encoding: `WxH` (use 0 on one axis to keep aspect)
+.TP
+\fB\-\-target\-size\fR \fI<SIZE>\fR
+Target output size, e.g. `200k` or `2M`, found by searching lossy quality.
+
+Lossy only: it bisects quality until the encoded file fits. With `\-v`, the search is printed. Cannot combine with `\-\-lossless`.
+.TP
+\fB\-\-min\-psnr\fR \fI<DB>\fR
+Target reconstruction PSNR floor in dB (lossy only; pairs with \-\-target\-size)
 .TP
 \fB\-\-metadata\fR \fI<METADATA>\fR
 Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)

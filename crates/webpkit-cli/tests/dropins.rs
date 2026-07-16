@@ -64,15 +64,16 @@ fn cwebp_rejects_a_lossy_only_flag() {
 /// column in the reconstructed command line.
 #[test]
 fn cwebp_points_a_caret_at_the_rejected_flag() {
-    let out = run("cwebp", &["-crop", "0", "0", "8", "8", "-o", "-"], vec![]);
+    // `-sns` is an internal tuning knob that stays rejected (unlike `-crop`, now live).
+    let out = run("cwebp", &["-sns", "50", "-o", "-"], vec![]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
     assert!(
-        err.contains("cwebp -crop 0 0 8 8 -o -"),
+        err.contains("cwebp -sns 50 -o -"),
         "reconstructs the command line: {err:?}"
     );
-    // "cwebp " is six columns; "-crop" is five, so five carets sit under it.
-    assert!(err.contains("      ^^^^^"), "caret under -crop: {err:?}");
+    // "cwebp " is six columns; "-sns" is four, so four carets sit under it.
+    assert!(err.contains("      ^^^^"), "caret under -sns: {err:?}");
 }
 
 #[test]

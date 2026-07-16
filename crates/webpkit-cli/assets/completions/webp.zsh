@@ -34,6 +34,8 @@ none\:"Strip everything (a bare \`VP8L\` output)"
 icc\:"Keep the ICC color profile"
 exif\:"Keep Exif"
 xmp\:"Keep XMP"))' \
+'--crop=[Crop before encoding\: \`x,y,width,height\` in pixels (applied before --resize)]:X,Y,W,H:_default' \
+'--resize=[Resize before encoding\: \`WxH\` (use 0 on one axis to keep aspect)]:WxH:_default' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
@@ -113,6 +115,10 @@ balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
+'--crop=[Crop before encoding\: \`x,y,width,height\` in pixels (applied before --resize)]:X,Y,W,H:_default' \
+'--resize=[Resize before encoding\: \`WxH\` (use 0 on one axis to keep aspect)]:WxH:_default' \
+'--target-size=[Target output size, e.g. \`200k\` or \`2M\`, found by searching lossy quality]:SIZE:_default' \
+'--min-psnr=[Target reconstruction PSNR floor in dB (lossy only; pairs with --target-size)]:DB:_default' \
 '*--metadata=[Metadata to embed\: all,none,icc,exif,xmp (default\: all — kinder than cwebp)]:METADATA:((all\:"Keep ICC, Exif, and XMP"
 none\:"Strip everything (a bare \`VP8L\` output)"
 icc\:"Keep the ICC color profile"

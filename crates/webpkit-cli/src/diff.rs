@@ -83,7 +83,10 @@ fn load_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>), CliError> {
 /// the one place the CLI can host it is here. `None`, rather than a `99.0`
 /// sentinel, is returned for an identical pair, so it reads as identical rather
 /// than as a merely-high finite score.
-fn psnr_rgb(a: &[u8], b: &[u8]) -> Option<f64> {
+///
+/// Shared with `strategy`'s `-psnr` target search so both spell fidelity the same
+/// way.
+pub(crate) fn psnr_rgb(a: &[u8], b: &[u8]) -> Option<f64> {
     let mut se = 0.0f64;
     let mut n = 0.0f64;
     for (pa, pb) in a.chunks_exact(4).zip(b.chunks_exact(4)) {

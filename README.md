@@ -166,12 +166,21 @@ webp *.jpg -o ./out                      # batch into a directory
 webp photo.png -q 80                     # -q is QUALITY now (selects lossy)
 webp info out.webp                       # codec, dimensions, alpha, metadata, animation
 webp encode in.png -o out.webp           # force the encode direction
+webp encode photo.jpg -o small.webp --target-size 200k -v   # bisect quality to a byte budget
+webp photo.png --crop 0,0,512,512 --resize 256x256   # crop then resize before encoding
 webp decode anim.webp -o f.png --frames all   # f-000.png, f-001.png, ...
 ```
 
 Metadata (ICC/Exif/XMP) is **preserved by default** — kinder than cwebp, which
 strips it. Use `-metadata none` (or `--metadata none`) to strip. A GIF-derived
 animation carries no metadata (the animation encoder does not model it).
+
+**Preprocessing and size targets** (`-crop`/`-resize`/`-size` on `cwebp`,
+`--crop`/`--resize`/`--target-size` on `webp`) are done tool-side on the decoded
+pixels, exactly where libwebp's `cwebp` does them. Output **dimensions** match
+libwebp for the same arguments; **pixels do not** — crop is exact, but resize uses
+our own resampler, not libwebp's rescaler. `--target-size` bisects lossy quality
+(shown under `-v`) rather than libwebp's opaque internal multi-pass.
 
 > **Breaking (0.2, pre-1.0).** For the `webp` tool: (1) **`-q` is now
 > `--quality`**, not `--quiet` — `--quiet` is long-only, and a non-numeric `-q`
@@ -190,7 +199,11 @@ animation carries no metadata (the animation encoder does not model it).
 | `cwebp in.png -o out.webp -lossless` | same | switches to VP8L (`-z` too) |
 | `cwebp in.png -o out.webp -lossless -m 6` | same | `-m`/`-z`/`-q` = effort in lossless mode |
 | `cwebp in.png -o out.webp -metadata none` | same | strip all |
-| `cwebp in.png -o out.webp -crop ...` / `-resize ...` | *(error)* | preprocessing not yet implemented (planned) |
+| `cwebp in.png -o out.webp -crop x y w h` | same | supported; output **dimensions** match libwebp, **pixels differ** (own crop) |
+| `cwebp in.png -o out.webp -resize w h` | same | supported; dimensions match libwebp, pixels differ (own resampler, not libwebp's); `0` on one axis keeps aspect |
+| `cwebp in.png -o out.webp -size 200000` | same | supported; CLI-side bisection over lossy quality to hit the byte budget (`-v` shows the search) |
+| `cwebp in.png -o out.webp -psnr 40` | same | supported; a PSNR floor for the quality search |
+| `cwebp in.png -o out.webp -sns ...` / `-f` / `-sharpness` / `-segments` / `-pass` / `-jpeg_like` / `-near_lossless` | *(error)* | internal encoder-tuning knobs webpkit does not expose (rejected, not ignored) |
 | `dwebp in.webp -o out.png` | same | decodes VP8L or VP8; default PNG |
 | `dwebp in.webp -o out.ppm -ppm` | same | netpbm output |
 | `dwebp in.webp -yuv ...` | *(error)* | YUV output not implemented |

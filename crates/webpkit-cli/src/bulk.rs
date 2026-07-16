@@ -7,14 +7,14 @@
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
-use webpkit::{Effort, Image, Metadata};
 
 use crate::{
-    codec::{self, CodecFlags, EncodeMode},
+    codec::{self, CodecFlags},
     error::CliError,
     format::{self, InputFormat},
     io::{self, Sink, Source},
     metadata::Selection,
+    strategy::Strategy,
 };
 
 /// Extensions treated as encodable image inputs when scanning directories.
@@ -101,19 +101,18 @@ fn convert_one(path: &Path, options: &Options) -> Result<Stat, CliError> {
             "raw input needs explicit dimensions; use `webp encode`".to_owned(),
         ));
     }
-    let (mode, _derived) = codec::resolve_mode(format, options.flags)?;
-    // `--optimize` searches the three lossless effort levels; a lossy request keeps
-    // its own single (quality, effort) rather than an effort sweep. A GIF becomes a
-    // lossless animation and is not part of the still effort search.
-    let webp = if options.optimize
-        && matches!(mode, EncodeMode::Lossless(_))
-        && format != InputFormat::Gif
-    {
+    let (mode, derived) = codec::resolve_mode(format, options.flags)?;
+    // A GIF becomes a lossless animation, outside any still effort search. Every
+    // other input becomes a strategy: `--optimize` a lossless effort sweep, else a
+    // single encode. Resolving through `Strategy` is what makes `--optimize --lossy`
+    // a usage error rather than a silently dropped flag.
+    let webp = if format == InputFormat::Gif {
+        codec::encode_input(&bytes, format, mode, options.metadata, true)?.bytes
+    } else {
+        let strategy = Strategy::resolve(mode, derived, options.optimize, None)?;
         let image = format::read_image(&bytes, format, None)?;
         let metadata = options.metadata.apply(image.metadata());
-        encode_smallest(&image, &metadata)?
-    } else {
-        codec::encode_input(&bytes, format, mode, options.metadata, true)?.bytes
+        strategy.run(&image, &metadata)?.bytes
     };
     let output = output_path(path, options.output_dir.as_deref());
     Sink::File(output.clone()).write(&webp)?;
@@ -122,21 +121,6 @@ fn convert_one(path: &Path, options: &Options) -> Result<Stat, CliError> {
         in_len: bytes.len() as u64,
         out_len: webp.len() as u64,
     })
-}
-
-/// Encode with every lossless effort level and return the smallest output.
-fn encode_smallest(image: &Image, metadata: &Metadata) -> Result<Vec<u8>, CliError> {
-    let mut smallest: Option<Vec<u8>> = None;
-    for method in [Effort::Fast, Effort::Balanced, Effort::Best] {
-        let candidate = codec::encode(image, EncodeMode::Lossless(method), metadata.clone())?;
-        if smallest
-            .as_ref()
-            .is_none_or(|best| candidate.len() < best.len())
-        {
-            smallest = Some(candidate);
-        }
-    }
-    smallest.ok_or_else(|| CliError::Format("no encoder produced output".to_owned()))
 }
 
 fn is_image(path: &Path) -> bool {

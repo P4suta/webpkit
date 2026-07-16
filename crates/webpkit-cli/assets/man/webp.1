@@ -4,7 +4,7 @@
 .SH NAME
 webp \- Command\-line tools for the webpkit WebP codec: libwebp\-style cwebp (lossy by default, \-lossless for VP8L) / dwebp and the webp brand tool.
 .SH SYNOPSIS
-\fBwebp\fR [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-quiet\fR] [\fB\-\-color\fR] [\fB\-\-threads\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-metadata\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIINPUTS\fR] [\fIsubcommands\fR]
+\fBwebp\fR [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-quiet\fR] [\fB\-\-color\fR] [\fB\-\-threads\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-metadata\fR] [\fB\-\-crop\fR] [\fB\-\-resize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIINPUTS\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 Command\-line tools for the webpkit WebP codec: libwebp\-style cwebp (lossy by default, \-lossless for VP8L) / dwebp and the webp brand tool.
 .SH OPTIONS
@@ -72,6 +72,12 @@ exif: Keep Exif
 .IP \(bu 2
 xmp: Keep XMP
 .RE
+.TP
+\fB\-\-crop\fR \fI<X,Y,W,H>\fR
+Crop before encoding: `x,y,width,height` in pixels (applied before \-\-resize)
+.TP
+\fB\-\-resize\fR \fI<WxH>\fR
+Resize before encoding: `WxH` (use 0 on one axis to keep aspect)
 .TP
 \fB\-r\fR, \fB\-\-recursive\fR
 Recurse into subdirectories

@@ -37,7 +37,9 @@ mod inspect;
 mod io;
 mod metadata;
 mod personality;
+mod preprocess;
 mod report;
+mod strategy;
 mod term;
 
 pub use personality::Personality;

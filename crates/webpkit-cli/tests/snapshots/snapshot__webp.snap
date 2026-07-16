@@ -78,6 +78,12 @@ Options:
           - exif: Keep Exif
           - xmp:  Keep XMP
 
+      --crop <X,Y,W,H>
+          Crop before encoding: `x,y,width,height` in pixels (applied before --resize)
+
+      --resize <WxH>
+          Resize before encoding: `WxH` (use 0 on one axis to keep aspect)
+
   -r, --recursive
           Recurse into subdirectories
 
@@ -252,6 +258,20 @@ Options:
 
   -q, --quality <QUALITY>
           Lossy quality 0-100 (higher = larger, closer to source); selects --lossy
+
+      --crop <X,Y,W,H>
+          Crop before encoding: `x,y,width,height` in pixels (applied before --resize)
+
+      --resize <WxH>
+          Resize before encoding: `WxH` (use 0 on one axis to keep aspect)
+
+      --target-size <SIZE>
+          Target output size, e.g. `200k` or `2M`, found by searching lossy quality.
+          
+          Lossy only: it bisects quality until the encoded file fits. With `-v`, the search is printed. Cannot combine with `--lossless`.
+
+      --min-psnr <DB>
+          Target reconstruction PSNR floor in dB (lossy only; pairs with --target-size)
 
       --metadata <METADATA>
           Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)

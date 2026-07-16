@@ -1,6 +1,6 @@
 # Print an optspec for argparse to handle cmd's options that are independent of any subcommand.
 function __fish_webp_global_optspecs
-    string join \n v/verbose quiet color= threads= o/output= q/quality= lossless lossy m/method= metadata= r/recursive force no-clobber h/help V/version
+    string join \n v/verbose quiet color= threads= o/output= q/quality= lossless lossy m/method= metadata= crop= resize= r/recursive force no-clobber h/help V/version
 end
 
 function __fish_webp_needs_command
@@ -38,6 +38,8 @@ none\t'Strip everything (a bare `VP8L` output)'
 icc\t'Keep the ICC color profile'
 exif\t'Keep Exif'
 xmp\t'Keep XMP'"
+complete -c webp -n "__fish_webp_needs_command" -l crop -d 'Crop before encoding: `x,y,width,height` in pixels (applied before --resize)' -r
+complete -c webp -n "__fish_webp_needs_command" -l resize -d 'Resize before encoding: `WxH` (use 0 on one axis to keep aspect)' -r
 complete -c webp -n "__fish_webp_needs_command" -s v -l verbose -d 'Print per-stage detail on stderr'
 complete -c webp -n "__fish_webp_needs_command" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_needs_command" -l lossless -d 'Force lossless (VP8L) encoding'
@@ -99,6 +101,10 @@ complete -c webp -n "__fish_webp_using_subcommand encode" -s m -l method -d 'Enc
 balanced\t'Balanced (the default): LZ77 + color cache'
 best\t'Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced'"
 complete -c webp -n "__fish_webp_using_subcommand encode" -s q -l quality -d 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy' -r
+complete -c webp -n "__fish_webp_using_subcommand encode" -l crop -d 'Crop before encoding: `x,y,width,height` in pixels (applied before --resize)' -r
+complete -c webp -n "__fish_webp_using_subcommand encode" -l resize -d 'Resize before encoding: `WxH` (use 0 on one axis to keep aspect)' -r
+complete -c webp -n "__fish_webp_using_subcommand encode" -l target-size -d 'Target output size, e.g. `200k` or `2M`, found by searching lossy quality' -r
+complete -c webp -n "__fish_webp_using_subcommand encode" -l min-psnr -d 'Target reconstruction PSNR floor in dB (lossy only; pairs with --target-size)' -r
 complete -c webp -n "__fish_webp_using_subcommand encode" -l metadata -d 'Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)' -r -f -a "all\t'Keep ICC, Exif, and XMP'
 none\t'Strip everything (a bare `VP8L` output)'
 icc\t'Keep the ICC color profile'

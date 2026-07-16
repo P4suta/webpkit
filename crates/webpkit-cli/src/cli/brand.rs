@@ -29,7 +29,9 @@ use crate::{
     inspect,
     io::{self, Sink, Source},
     metadata::{MetadataField, Selection},
+    preprocess::{Crop, Pipeline, Resize},
     report::{self, Reporter},
+    strategy::{Strategy, Target},
     term::{self, ColorChoice},
 };
 
@@ -142,6 +144,12 @@ struct AutoArgs {
     /// Metadata to embed: all,none,icc,exif,xmp (default: all).
     #[arg(long, value_enum, value_delimiter = ',')]
     metadata: Vec<MetadataField>,
+    /// Crop before encoding: `x,y,width,height` in pixels (applied before --resize).
+    #[arg(long, value_name = "X,Y,W,H")]
+    crop: Option<String>,
+    /// Resize before encoding: `WxH` (use 0 on one axis to keep aspect).
+    #[arg(long, value_name = "WxH")]
+    resize: Option<String>,
     /// Recurse into subdirectories.
     #[arg(short, long)]
     recursive: bool,
@@ -441,6 +449,21 @@ struct EncodeArgs {
     /// Lossy quality 0-100 (higher = larger, closer to source); selects --lossy.
     #[arg(short = 'q', long)]
     quality: Option<u8>,
+    /// Crop before encoding: `x,y,width,height` in pixels (applied before --resize).
+    #[arg(long, value_name = "X,Y,W,H")]
+    crop: Option<String>,
+    /// Resize before encoding: `WxH` (use 0 on one axis to keep aspect).
+    #[arg(long, value_name = "WxH")]
+    resize: Option<String>,
+    /// Target output size, e.g. `200k` or `2M`, found by searching lossy quality.
+    ///
+    /// Lossy only: it bisects quality until the encoded file fits. With `-v`, the
+    /// search is printed. Cannot combine with `--lossless`.
+    #[arg(long, value_name = "SIZE")]
+    target_size: Option<String>,
+    /// Target reconstruction PSNR floor in dB (lossy only; pairs with --target-size).
+    #[arg(long, value_name = "DB")]
+    min_psnr: Option<f64>,
     /// Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp).
     #[arg(long, value_enum, value_delimiter = ',')]
     metadata: Vec<MetadataField>,
@@ -473,6 +496,39 @@ fn codec_note(mode: EncodeMode, format: InputFormat, animation: bool) -> String 
         }
     };
     format!("{codec} · from {format:?} source")
+}
+
+/// Build a crop-then-resize [`Pipeline`] from the optional `--crop`/`--resize` specs.
+fn pipeline_of(crop: Option<&str>, resize: Option<&str>) -> Result<Pipeline, CliError> {
+    let crop = crop.map(Crop::parse).transpose()?;
+    let resize = resize.map(Resize::parse).transpose()?;
+    Ok(Pipeline::new(crop, resize))
+}
+
+/// Parse a `--target-size` spec: a byte count with an optional `k`/`m`/`g` suffix
+/// (binary, `1k = 1024`), e.g. `200k`, `1024`, `2M`.
+fn parse_target_size(spec: &str) -> Result<u64, CliError> {
+    let spec = spec.trim();
+    let (digits, scale) = match spec.chars().last() {
+        Some('k' | 'K') => (&spec[..spec.len() - 1], 1u64 << 10),
+        Some('m' | 'M') => (&spec[..spec.len() - 1], 1u64 << 20),
+        Some('g' | 'G') => (&spec[..spec.len() - 1], 1u64 << 30),
+        _ => (spec, 1),
+    };
+    let number: u64 = digits.trim().parse().map_err(|_| {
+        CliError::Usage(format!(
+            "`--target-size` expected a byte count (optionally suffixed k/m/g), got `{spec}`"
+        ))
+    })?;
+    number
+        .checked_mul(scale)
+        .ok_or_else(|| CliError::Usage(format!("`--target-size` is impossibly large: `{spec}`")))
+}
+
+/// The encode target from `--target-size` / `--min-psnr`, if either was given.
+fn target_of(target_size: Option<&str>, min_psnr: Option<f64>) -> Result<Option<Target>, CliError> {
+    let bytes = target_size.map(parse_target_size).transpose()?;
+    Ok(Target::from_flags(bytes, min_psnr))
 }
 
 /// Parse arguments, run the requested command, and return a process exit code.
@@ -713,6 +769,14 @@ fn emit(bytes: &[u8]) {
 }
 
 fn convert(args: &ConvertArgs, reporter: &Reporter) -> Result<(), CliError> {
+    // `--optimize` sweeps lossless effort, so an explicit lossy request contradicts
+    // it. Caught here, once, rather than silently dropping `--optimize` per file.
+    if args.optimize && (args.lossy || args.quality.is_some()) {
+        return Err(CliError::Usage(
+            "`--optimize` sweeps lossless effort; drop `--lossy`/`--quality`, or drop `--optimize`"
+                .to_owned(),
+        ));
+    }
     let options = bulk::Options {
         flags: codec_flags(args.lossless, args.lossy, args.quality, args.method),
         metadata: Selection::from_fields(&args.metadata),
@@ -826,7 +890,7 @@ fn auto_one(
     }
 
     if codec::is_webp(&bytes) {
-        auto_decode(input, &bytes, &output, reporter)
+        auto_decode(input, &bytes, &output, args, reporter)
     } else {
         auto_encode(input, &bytes, &output, args, reporter)
     }
@@ -855,6 +919,9 @@ fn clear_to_write(
 }
 
 /// Encode one non-WebP input to a WebP output, reporting the chosen codec.
+///
+/// A crop or resize forces the still path (a preprocessed single image); without
+/// one, a GIF still becomes an animation.
 fn auto_encode(
     input: &Path,
     bytes: &[u8],
@@ -864,35 +931,56 @@ fn auto_encode(
 ) -> Result<(), CliError> {
     let format = InputFormat::resolve(None, io::extension_of(input).as_deref(), bytes);
     let flags = codec_flags(args.lossless, args.lossy, args.quality, args.method);
-    let (mode, _derived) = codec::resolve_mode(format, flags)?;
+    let (mode, derived) = codec::resolve_mode(format, flags)?;
     let selection = Selection::from_fields(&args.metadata);
-    let encoded = codec::encode_input(bytes, format, mode, selection, true)?;
-    if encoded.animation && (flags.lossy || flags.quality.is_some()) {
-        report::warn("a GIF becomes a lossless animation; --lossy/--quality do not apply");
-    }
-    Sink::File(output.to_path_buf()).write(&encoded.bytes)?;
+    let pipeline = pipeline_of(args.crop.as_deref(), args.resize.as_deref())?;
+
+    let produced = if pipeline.is_empty() {
+        let encoded = codec::encode_input(bytes, format, mode, selection, true)?;
+        if encoded.animation && (flags.lossy || flags.quality.is_some()) {
+            report::warn("a GIF becomes a lossless animation; --lossy/--quality do not apply");
+        }
+        Produced {
+            bytes: encoded.bytes,
+            width: encoded.width,
+            height: encoded.height,
+            note: codec_note(mode, format, encoded.animation),
+            search: None,
+        }
+    } else {
+        if let Some(dims) = format::dimensions_of(bytes, format) {
+            pipeline.project(dims)?;
+        }
+        let image = pipeline.apply(format::read_image(bytes, format, None)?)?;
+        let strategy = Strategy::resolve(mode, derived, false, None)?;
+        run_still(strategy, &image, selection, format)?
+    };
+    Sink::File(output.to_path_buf()).write(&produced.bytes)?;
     reporter.status(&format!(
         "{} -> {} ({}x{}, {} bytes, {}, {})",
         input.display(),
         output.display(),
-        encoded.width,
-        encoded.height,
-        encoded.bytes.len(),
-        ratio(bytes.len(), encoded.bytes.len()),
-        codec_note(mode, format, encoded.animation),
+        produced.width,
+        produced.height,
+        produced.bytes.len(),
+        ratio(bytes.len(), produced.bytes.len()),
+        produced.note,
     ));
     Ok(())
 }
 
-/// Decode one WebP input to an image output (first frame if animated).
+/// Decode one WebP input to an image output (first frame if animated), applying
+/// any `--crop`/`--resize` to the decoded pixels before writing.
 fn auto_decode(
     input: &Path,
     bytes: &[u8],
     output: &Path,
+    args: &AutoArgs,
     reporter: &Reporter,
 ) -> Result<(), CliError> {
     let format = OutputFormat::resolve(None, io::extension_of(output).as_deref());
-    let image = codec::decode_still_or_first_frame(bytes)?;
+    let pipeline = pipeline_of(args.crop.as_deref(), args.resize.as_deref())?;
+    let image = pipeline.apply(codec::decode_still_or_first_frame(bytes)?)?;
     let metadata = Selection::all().apply(image.metadata());
     let out = format::write_image(&image, format, &metadata)?;
     Sink::File(output.to_path_buf()).write(&out)?;
@@ -1043,9 +1131,16 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
     let format = InputFormat::resolve(args.input_format, source.extension().as_deref(), &bytes);
     reporter.detail(&format!("encoding {format:?} {}", source.label()));
 
-    let flags = codec_flags(args.lossless, args.lossy, args.quality, args.method);
-    let (mode, _derived) = codec::resolve_mode(format, flags)?;
+    let target = target_of(args.target_size.as_deref(), args.min_psnr)?;
+    // A size/PSNR target searches lossy quality, so it selects lossy the same way
+    // `--lossy` does — combined with `--lossless` it is a clean conflict, not a
+    // silent no-op.
+    let lossy = args.lossy || target.is_some();
+    let flags = codec_flags(args.lossless, lossy, args.quality, args.method);
+    let (mode, derived) = codec::resolve_mode(format, flags)?;
     let selection = Selection::from_fields(&args.metadata);
+    let pipeline = pipeline_of(args.crop.as_deref(), args.resize.as_deref())?;
+    let strategy = Strategy::resolve(mode, derived, false, target)?;
 
     let raw = match (args.width, args.height) {
         (Some(width), Some(height)) => Some(RawParams {
@@ -1055,22 +1150,35 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
         }),
         _ => None,
     };
-    // Raw pixels carry no container, so they take the still path with explicit
-    // dimensions; everything else may be a GIF, so it routes through `encode_input`
-    // where a GIF becomes an animation.
+    // A GIF becomes an animation only when nothing forces the still path — a crop,
+    // a resize, or a size target all operate on a single still image. Raw pixels
+    // carry no container and always take the still path with explicit dimensions.
+    let still = raw.is_some() || !pipeline.is_empty() || target.is_some();
     let encoded = if let Some(params) = raw {
-        let image = format::read_image(&bytes, format, Some(params))?;
-        let metadata = selection.apply(image.metadata());
-        codec::Encoded {
-            width: image.width(),
-            height: image.height(),
-            bytes: codec::encode(&image, mode, metadata)?,
-            animation: false,
+        let image = pipeline.apply(format::read_image(&bytes, format, Some(params))?)?;
+        run_still(strategy, &image, selection, format)?
+    } else if still {
+        if !pipeline.is_empty()
+            && let Some(dims) = format::dimensions_of(&bytes, format)
+        {
+            pipeline.project(dims)?;
         }
+        let image = pipeline.apply(format::read_image(&bytes, format, None)?)?;
+        run_still(strategy, &image, selection, format)?
     } else {
-        codec::encode_input(&bytes, format, mode, selection, true)?
+        let e = codec::encode_input(&bytes, format, mode, selection, true)?;
+        Produced {
+            bytes: e.bytes,
+            width: e.width,
+            height: e.height,
+            note: codec_note(mode, format, e.animation),
+            search: None,
+        }
     };
     sink.write(&encoded.bytes)?;
+    if let Some(search) = &encoded.search {
+        reporter.detail(&format!("search: {search}"));
+    }
     reporter.status(&format!(
         "encoded {} -> {} ({}x{}, {} bytes, {}, {})",
         source.label(),
@@ -1079,9 +1187,37 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
         encoded.height,
         encoded.bytes.len(),
         ratio(bytes.len(), encoded.bytes.len()),
-        codec_note(mode, format, encoded.animation),
+        encoded.note,
     ));
     Ok(())
+}
+
+/// One encoded still: the bytes, its dimensions, the status-line codec note, and a
+/// search narration when a target was hunted.
+struct Produced {
+    bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+    note: String,
+    search: Option<String>,
+}
+
+/// Encode a decoded still through a [`Strategy`], selecting `selection`'s metadata.
+fn run_still(
+    strategy: Strategy,
+    image: &webpkit::Image,
+    selection: Selection,
+    format: InputFormat,
+) -> Result<Produced, CliError> {
+    let metadata = selection.apply(image.metadata());
+    let report = strategy.run(image, &metadata)?;
+    Ok(Produced {
+        width: image.width(),
+        height: image.height(),
+        note: codec_note(report.mode, format, false),
+        search: report.search_line(),
+        bytes: report.bytes,
+    })
 }
 
 /// Format the output-to-input size ratio as a percentage string, e.g. `41.2%`.

@@ -13,7 +13,7 @@ pub(crate) mod ppm;
 pub(crate) mod raw;
 
 use clap::ValueEnum;
-use webpkit::{Image, Metadata, PixelLayout};
+use webpkit::{Dimensions, Image, Metadata, PixelLayout};
 
 use crate::{error::CliError, format::raw::RawParams};
 
@@ -124,6 +124,53 @@ impl OutputFormat {
             _ => None,
         }
     }
+}
+
+/// The image's dimensions read from its header alone, without decoding pixels —
+/// so a preprocessing pipeline can refuse an out-of-bounds crop from a few bytes.
+///
+/// `None` when the format carries no cheap header dimensions here (netpbm, raw) or
+/// the header is unreadable; the caller then falls back to validating against the
+/// fully decoded image, which is never skipped.
+#[must_use]
+pub(crate) fn dimensions_of(bytes: &[u8], format: InputFormat) -> Option<Dimensions> {
+    let (width, height) = match format {
+        InputFormat::Png => png_dimensions(bytes)?,
+        InputFormat::Jpeg | InputFormat::Gif | InputFormat::Tiff | InputFormat::Bmp => {
+            image_dimensions(bytes)?
+        },
+        InputFormat::Ppm | InputFormat::Pam | InputFormat::Raw => return None,
+    };
+    Dimensions::new(width, height).ok()
+}
+
+/// Width and height from a PNG `IHDR` (bytes 16..24, big-endian), or `None` if the
+/// signature or length is wrong.
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 24 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return None;
+    }
+    let read =
+        |at: usize| u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
+    Some((read(16), read(20)))
+}
+
+/// Width and height from a JPEG/GIF/TIFF/BMP header via the `image` crate's
+/// header reader (no full decode).
+#[cfg(feature = "formats")]
+fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+}
+
+/// Without the `formats` feature the four `image`-crate formats cannot be probed,
+/// so header projection falls back to the full-decode validation.
+#[cfg(not(feature = "formats"))]
+const fn image_dimensions(_bytes: &[u8]) -> Option<(u32, u32)> {
+    None
 }
 
 /// Decode `bytes` in the given `format` into an [`Image`].
