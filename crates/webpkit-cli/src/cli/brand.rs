@@ -12,6 +12,7 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{CommandFactory as _, Parser, Subcommand};
+use webpkit::DecodeOptions;
 
 use crate::{
     bulk,
@@ -348,8 +349,13 @@ fn decode(args: &DecodeArgs, reporter: &Reporter) -> Result<(), CliError> {
     } else {
         webpkit::PixelLayout::Rgba8
     };
+    // One resolved `DecodeOptions` for both paths. Passing the loose flags is how
+    // `--layout` came to be honored for stills and silently dropped for
+    // animations: `decode_animation` took `format` but not `layout`, so nothing
+    // could notice the omission.
+    let options = DecodeOptions::new().layout(layout);
     if is_animated(&bytes)? {
-        return decode_animation(args, &bytes, format, &sink, reporter);
+        return decode_animation(args, &bytes, format, &options, &sink, reporter);
     }
     let image = codec::decode(&bytes, layout)?;
     let metadata = Selection::from_fields(&args.metadata).apply(image.metadata());
@@ -373,37 +379,50 @@ fn is_animated(bytes: &[u8]) -> Result<bool, CliError> {
 }
 
 /// Decode an animation, honoring `--frame` / `--frames`.
+///
+/// Compositing is stateful — a frame is painted onto the canvas its predecessors
+/// left — so reaching frame N genuinely costs frames `0..=N`. It costs no more
+/// than that: the walk is driven per selection rather than collected up front, so
+/// the default (`--frames first`) decodes one frame of a hundred-frame animation
+/// instead of all hundred, and only `--frames all` holds more than one canvas.
 fn decode_animation(
     args: &DecodeArgs,
     bytes: &[u8],
     format: OutputFormat,
+    options: &DecodeOptions,
     sink: &Sink,
     reporter: &Reporter,
 ) -> Result<(), CliError> {
-    let frames = webpkit::decode_frames(bytes)?;
-    let images: Vec<webpkit::Image> = frames
-        .composited()
-        .map(|frame| frame.map(webpkit::CompositedFrame::into_image))
-        .collect::<Result<_, _>>()?;
-    if images.is_empty() {
-        return Err(CliError::Format("animation has no frames".to_owned()));
-    }
     let no_meta = webpkit::Metadata::none();
+    let composited = |take: Option<u32>| -> Result<Vec<webpkit::Image>, CliError> {
+        let frames = webpkit::decode_frames_with(bytes, options)?;
+        let walk = frames
+            .composited()
+            .map(|frame| frame.map(webpkit::CompositedFrame::into_image));
+        match take {
+            Some(n) => walk.take(n as usize + 1).collect::<Result<_, _>>(),
+            None => walk.collect::<Result<_, _>>(),
+        }
+        .map_err(CliError::from)
+    };
 
     if let Some(index) = args.frame {
+        let images = composited(Some(index))?;
         let image = images
             .get(index as usize)
             .ok_or_else(|| CliError::Usage(format!("frame {index} is out of range")))?;
-        let out = format::write_image(image, format, &no_meta)?;
-        sink.write(&out)?;
+        sink.write(&format::write_image(image, format, &no_meta)?)?;
         reporter.status(&format!("decoded frame {index} -> {}", sink.label()));
         return Ok(());
     }
 
     match args.frames.unwrap_or_default() {
         FrameSelection::First => {
-            let out = format::write_image(&images[0], format, &no_meta)?;
-            sink.write(&out)?;
+            let images = composited(Some(0))?;
+            let image = images
+                .first()
+                .ok_or_else(|| CliError::Format("animation has no frames".to_owned()))?;
+            sink.write(&format::write_image(image, format, &no_meta)?)?;
             reporter.status(&format!("decoded first frame -> {}", sink.label()));
         },
         FrameSelection::All => {
@@ -415,10 +434,13 @@ fn decode_animation(
                     ));
                 },
             };
+            let images = composited(None)?;
+            if images.is_empty() {
+                return Err(CliError::Format("animation has no frames".to_owned()));
+            }
             for (index, image) in images.iter().enumerate() {
-                let path = numbered_path(&base, index);
                 let out = format::write_image(image, format, &no_meta)?;
-                Sink::File(path).write(&out)?;
+                Sink::File(numbered_path(&base, index)).write(&out)?;
             }
             reporter.status(&format!(
                 "decoded {} frames -> {}",
