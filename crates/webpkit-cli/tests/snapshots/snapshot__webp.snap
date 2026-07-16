@@ -59,14 +59,12 @@ Options:
           Force lossy (VP8) encoding
 
   -m, --method <METHOD>
-          Encoder effort
+          Encoder effort [default: balanced, or from env/config]
 
           Possible values:
           - fast:     Fastest: literal + subtract-green only
           - balanced: Balanced (the default): LZ77 + color cache
           - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
-          
-          [default: balanced]
 
       --metadata <METADATA>
           Metadata to embed: all,none,icc,exif,xmp (default: all)
@@ -241,14 +239,12 @@ Options:
           [default: rgba8]
 
   -m, --method <METHOD>
-          Encoder effort
+          Encoder effort [default: balanced, or from env/config]
 
           Possible values:
           - fast:     Fastest: literal + subtract-green only
           - balanced: Balanced (the default): LZ77 + color cache
           - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
-          
-          [default: balanced]
 
       --lossless
           Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless
@@ -303,14 +299,12 @@ Options:
           Print per-stage detail on stderr
 
   -m, --method <METHOD>
-          Encoder effort (ignored with --optimize)
+          Encoder effort (ignored with --optimize) [default: balanced, or from env/config]
 
           Possible values:
           - fast:     Fastest: literal + subtract-green only
           - balanced: Balanced (the default): LZ77 + color cache
           - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
-          
-          [default: balanced]
 
       --quiet
           Suppress all non-error output.

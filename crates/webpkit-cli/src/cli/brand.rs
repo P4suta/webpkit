@@ -138,9 +138,9 @@ struct AutoArgs {
     /// Force lossy (VP8) encoding.
     #[arg(long)]
     lossy: bool,
-    /// Encoder effort.
-    #[arg(short, long, value_enum, default_value_t)]
-    method: Method,
+    /// Encoder effort [default: balanced, or from env/config].
+    #[arg(short, long, value_enum)]
+    method: Option<Method>,
     /// Metadata to embed: all,none,icc,exif,xmp (default: all).
     #[arg(long, value_enum, value_delimiter = ',')]
     metadata: Vec<MetadataField>,
@@ -328,9 +328,9 @@ struct ConvertArgs {
     /// Output directory (created outputs are `<stem>.webp`); default: beside input.
     #[arg(short, long)]
     output: Option<PathBuf>,
-    /// Encoder effort (ignored with --optimize).
-    #[arg(short, long, value_enum, default_value_t)]
-    method: Method,
+    /// Encoder effort (ignored with --optimize) [default: balanced, or from env/config].
+    #[arg(short, long, value_enum)]
+    method: Option<Method>,
     /// Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless.
     #[arg(long, conflicts_with = "lossy")]
     lossless: bool,
@@ -437,9 +437,9 @@ struct EncodeArgs {
     /// Byte order for raw input only.
     #[arg(long, value_enum, default_value_t)]
     layout: Layout,
-    /// Encoder effort.
-    #[arg(short, long, value_enum, default_value_t)]
-    method: Method,
+    /// Encoder effort [default: balanced, or from env/config].
+    #[arg(short, long, value_enum)]
+    method: Option<Method>,
     /// Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless.
     #[arg(long, conflicts_with = "lossy")]
     lossless: bool,
@@ -470,17 +470,76 @@ struct EncodeArgs {
 }
 
 /// The codec flags this invocation passed, as [`codec::CodecFlags`].
-fn codec_flags(
+/// Fold the encode CLI flags over env (`WEBP_*`) and `webp.toml`, so a setting a
+/// flag does not carry still honors the environment and the config file — the same
+/// resolution `webp config` reports.
+///
+/// This is what stops `webp config` from lying: without it, `WEBP_QUALITY` /
+/// `WEBP_CODEC` / `WEBP_EFFORT` / `WEBP_METADATA` were shown by `webp config` as
+/// applied, yet ignored by every actual encode. A flag the user passed lands in the
+/// args layer, so it still wins.
+fn encode_settings(
     lossless: bool,
     lossy: bool,
     quality: Option<u8>,
-    method: Method,
-) -> codec::CodecFlags {
+    method: Option<Method>,
+    metadata: &[MetadataField],
+) -> Result<config::Settings, CliError> {
+    let mut layer = config::Partial::default();
+    if let Some(quality) = quality {
+        layer.quality = Some(from_args(
+            config::Quality::new(quality).map_err(CliError::Usage)?,
+        ));
+    }
+    if let Some(method) = method {
+        layer.effort = Some(from_args(method.into()));
+    }
+    if lossless {
+        layer.codec = Some(from_args(config::Codec::Lossless));
+    } else if lossy {
+        layer.codec = Some(from_args(config::Codec::Lossy));
+    }
+    if !metadata.is_empty() {
+        layer.metadata = Some(from_args(Selection::from_fields(metadata)));
+    }
+    Ok(config::resolve(layer)?.settings)
+}
+
+/// The thread count after folding `--threads` over `WEBP_THREADS` and `webp.toml`.
+///
+/// Without this, `webp config` reported `WEBP_THREADS` as applied while only the
+/// `--threads` flag ever bounded the pool — the same lie the encode settings had.
+/// `0` means one worker per core; a resolution error (a malformed env/file value)
+/// falls back to the flag alone rather than failing before any work starts.
+fn resolved_threads(flag: Option<u16>) -> Option<u16> {
+    let mut layer = config::Partial::default();
+    if let Some(threads) = flag {
+        layer.threads = Some(from_args(threads));
+    }
+    config::resolve(layer).map_or(flag, |resolution| Some(resolution.settings.threads.value))
+}
+
+/// Translate resolved settings into codec flags, honoring provenance.
+///
+/// A codec or quality with a non-default origin (CLI, env, or file) selects the
+/// codec; when both are defaults, the flags stay empty so [`codec::resolve_mode`]
+/// applies the source-derived default (JPEG → lossy, else lossless). `force_lossy`
+/// covers a size/PSNR target, which selects lossy without being a config setting.
+fn flags_of(settings: &config::Settings, force_lossy: bool) -> codec::CodecFlags {
+    let codec_set = !matches!(settings.codec.origin, config::Origin::Default);
+    let quality_set = !matches!(settings.quality.origin, config::Origin::Default);
+    let lossless = codec_set && settings.codec.value == config::Codec::Lossless;
+    let lossy = force_lossy
+        || (codec_set && settings.codec.value == config::Codec::Lossy)
+        || (quality_set && !lossless);
+    // Quality is only meaningful for lossy; a lossless codec drops it (rather than
+    // tripping `resolve_mode`'s lossless-plus-quality conflict on an env value).
+    let quality = (quality_set && !lossless).then_some(settings.quality.value.0);
     codec::CodecFlags {
         lossless,
         lossy,
         quality,
-        effort: method.into(),
+        effort: settings.effort.value,
     }
 }
 
@@ -544,7 +603,7 @@ pub(crate) fn main() -> ExitCode {
             Err(err) => return parse_error(&err),
         };
         term::install(cli.global.color);
-        codec::configure_threads(cli.global.threads);
+        codec::configure_threads(resolved_threads(cli.global.threads));
         let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
         finish(run(&cli.command, &reporter))
     } else {
@@ -553,7 +612,7 @@ pub(crate) fn main() -> ExitCode {
             Err(err) => return parse_error(&err),
         };
         term::install(cli.global.color);
-        codec::configure_threads(cli.global.threads);
+        codec::configure_threads(resolved_threads(cli.global.threads));
         let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
         let result = match &cli.command {
             Some(command) => run(command, &reporter),
@@ -777,9 +836,16 @@ fn convert(args: &ConvertArgs, reporter: &Reporter) -> Result<(), CliError> {
                 .to_owned(),
         ));
     }
+    let settings = encode_settings(
+        args.lossless,
+        args.lossy,
+        args.quality,
+        args.method,
+        &args.metadata,
+    )?;
     let options = bulk::Options {
-        flags: codec_flags(args.lossless, args.lossy, args.quality, args.method),
-        metadata: Selection::from_fields(&args.metadata),
+        flags: flags_of(&settings, false),
+        metadata: settings.metadata.value,
         optimize: args.optimize,
         recursive: args.recursive,
         output_dir: args.output.clone(),
@@ -930,9 +996,16 @@ fn auto_encode(
     reporter: &Reporter,
 ) -> Result<(), CliError> {
     let format = InputFormat::resolve(None, io::extension_of(input).as_deref(), bytes);
-    let flags = codec_flags(args.lossless, args.lossy, args.quality, args.method);
+    let settings = encode_settings(
+        args.lossless,
+        args.lossy,
+        args.quality,
+        args.method,
+        &args.metadata,
+    )?;
+    let flags = flags_of(&settings, false);
     let (mode, derived) = codec::resolve_mode(format, flags)?;
-    let selection = Selection::from_fields(&args.metadata);
+    let selection = settings.metadata.value;
     let pipeline = pipeline_of(args.crop.as_deref(), args.resize.as_deref())?;
 
     let produced = if pipeline.is_empty() {
@@ -1135,10 +1208,16 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
     // A size/PSNR target searches lossy quality, so it selects lossy the same way
     // `--lossy` does — combined with `--lossless` it is a clean conflict, not a
     // silent no-op.
-    let lossy = args.lossy || target.is_some();
-    let flags = codec_flags(args.lossless, lossy, args.quality, args.method);
+    let settings = encode_settings(
+        args.lossless,
+        args.lossy,
+        args.quality,
+        args.method,
+        &args.metadata,
+    )?;
+    let flags = flags_of(&settings, target.is_some());
     let (mode, derived) = codec::resolve_mode(format, flags)?;
-    let selection = Selection::from_fields(&args.metadata);
+    let selection = settings.metadata.value;
     let pipeline = pipeline_of(args.crop.as_deref(), args.resize.as_deref())?;
     let strategy = Strategy::resolve(mode, derived, false, target)?;
 

@@ -23,10 +23,10 @@ never\:"Never style"))' \
 '--output=[Output file, or a directory for many inputs; default\: beside each input]:OUTPUT:_files' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects lossy]:QUALITY:_default' \
-'-m+[Encoder effort]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
+'-m+[Encoder effort \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
 balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
-'--method=[Encoder effort]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
+'--method=[Encoder effort \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
 balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
 '*--metadata=[Metadata to embed\: all,none,icc,exif,xmp (default\: all)]:METADATA:((all\:"Keep ICC, Exif, and XMP"
@@ -107,10 +107,10 @@ raw\:"Raw row-major pixels; requires \`--width\`/\`--height\`/\`--layout\`"))' \
 '--layout=[Byte order for raw input only]:LAYOUT:((rgba8\:"\`R, G, B, A\`"
 argb8\:"\`A, R, G, B\`"
 bgra8\:"\`B, G, R, A\`"))' \
-'-m+[Encoder effort]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
+'-m+[Encoder effort \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
 balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
-'--method=[Encoder effort]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
+'--method=[Encoder effort \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
 balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
@@ -142,10 +142,10 @@ never\:"Never style"))' \
 _arguments "${_arguments_options[@]}" : \
 '-o+[Output directory (created outputs are \`<stem>.webp\`); default\: beside input]:OUTPUT:_files' \
 '--output=[Output directory (created outputs are \`<stem>.webp\`); default\: beside input]:OUTPUT:_files' \
-'-m+[Encoder effort (ignored with --optimize)]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
+'-m+[Encoder effort (ignored with --optimize) \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
 balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
-'--method=[Encoder effort (ignored with --optimize)]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
+'--method=[Encoder effort (ignored with --optimize) \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
 balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \

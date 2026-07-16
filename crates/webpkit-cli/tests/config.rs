@@ -180,3 +180,80 @@ fn the_template_lists_every_setting_and_is_valid_toml_when_uncommented() {
     toml::from_str::<toml::Table>(&uncommented)
         .unwrap_or_else(|err| panic!("template is not valid TOML: {err}\n{uncommented}"));
 }
+
+/// `webp config` must not lie: a setting it reports as applied must actually change
+/// the encode. This is the invariant that failed — env/file settings were shown by
+/// `config` yet ignored by every encode, so `WEBP_QUALITY=10 webp config` said 10
+/// while the encode used the default.
+#[test]
+fn env_settings_reach_the_encode_not_just_the_config_report() {
+    let dir = TempDir::new().expect("temp dir");
+    // A small noisy PPM, so lossy vs lossless differ in size.
+    let ppm = dir.path().join("in.ppm");
+    let mut bytes = b"P6\n8 8\n255\n".to_vec();
+    bytes.extend((0..8u32 * 8 * 3).map(|i| u8::try_from(i * 37 % 251).unwrap_or(0)));
+    fs::write(&ppm, &bytes).expect("write ppm");
+
+    let encode = |env: &[(&str, &str)], out: &str| {
+        let path = dir.path().join(out);
+        let mut cmd = Command::cargo_bin("webp").expect("binary");
+        for var in CONFIG_VARS {
+            cmd.env_remove(var);
+        }
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        cmd.args(["encode"])
+            .arg(&ppm)
+            .arg("-o")
+            .arg(&path)
+            .assert()
+            .success();
+        fs::read(&path).expect("read output")
+    };
+
+    let plain = encode(&[], "plain.webp");
+    let lossy = encode(
+        &[("WEBP_CODEC", "lossy"), ("WEBP_QUALITY", "10")],
+        "env.webp",
+    );
+    assert_ne!(
+        plain, lossy,
+        "WEBP_CODEC/WEBP_QUALITY changed nothing — config is being ignored by encode"
+    );
+
+    // And a CLI flag still beats the environment.
+    let cli = encode_with_args(
+        dir.path(),
+        &ppm,
+        &[("WEBP_QUALITY", "10")],
+        &["--lossy", "-q", "90"],
+        "cli.webp",
+    );
+    assert_ne!(cli, lossy, "an explicit -q must override WEBP_QUALITY");
+}
+
+fn encode_with_args(
+    dir: &std::path::Path,
+    input: &std::path::Path,
+    env: &[(&str, &str)],
+    extra: &[&str],
+    out: &str,
+) -> Vec<u8> {
+    let path = dir.join(out);
+    let mut cmd = Command::cargo_bin("webp").expect("binary");
+    for var in CONFIG_VARS {
+        cmd.env_remove(var);
+    }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.args(["encode"])
+        .arg(input)
+        .arg("-o")
+        .arg(&path)
+        .args(extra)
+        .assert()
+        .success();
+    fs::read(&path).expect("read output")
+}

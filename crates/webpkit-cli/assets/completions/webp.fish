@@ -30,7 +30,7 @@ never\t'Never style'"
 complete -c webp -n "__fish_webp_needs_command" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
 complete -c webp -n "__fish_webp_needs_command" -s o -l output -d 'Output file, or a directory for many inputs; default: beside each input' -r -F
 complete -c webp -n "__fish_webp_needs_command" -s q -l quality -d 'Lossy quality 0-100 (higher = larger, closer to source); selects lossy' -r
-complete -c webp -n "__fish_webp_needs_command" -s m -l method -d 'Encoder effort' -r -f -a "fast\t'Fastest: literal + subtract-green only'
+complete -c webp -n "__fish_webp_needs_command" -s m -l method -d 'Encoder effort [default: balanced, or from env/config]' -r -f -a "fast\t'Fastest: literal + subtract-green only'
 balanced\t'Balanced (the default): LZ77 + color cache'
 best\t'Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced'"
 complete -c webp -n "__fish_webp_needs_command" -l metadata -d 'Metadata to embed: all,none,icc,exif,xmp (default: all)' -r -f -a "all\t'Keep ICC, Exif, and XMP'
@@ -97,7 +97,7 @@ complete -c webp -n "__fish_webp_using_subcommand encode" -l height -d 'Raw-inpu
 complete -c webp -n "__fish_webp_using_subcommand encode" -l layout -d 'Byte order for raw input only' -r -f -a "rgba8\t'`R, G, B, A`'
 argb8\t'`A, R, G, B`'
 bgra8\t'`B, G, R, A`'"
-complete -c webp -n "__fish_webp_using_subcommand encode" -s m -l method -d 'Encoder effort' -r -f -a "fast\t'Fastest: literal + subtract-green only'
+complete -c webp -n "__fish_webp_using_subcommand encode" -s m -l method -d 'Encoder effort [default: balanced, or from env/config]' -r -f -a "fast\t'Fastest: literal + subtract-green only'
 balanced\t'Balanced (the default): LZ77 + color cache'
 best\t'Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced'"
 complete -c webp -n "__fish_webp_using_subcommand encode" -s q -l quality -d 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy' -r
@@ -120,7 +120,7 @@ complete -c webp -n "__fish_webp_using_subcommand encode" -s v -l verbose -d 'Pr
 complete -c webp -n "__fish_webp_using_subcommand encode" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand encode" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c webp -n "__fish_webp_using_subcommand convert" -s o -l output -d 'Output directory (created outputs are `<stem>.webp`); default: beside input' -r -F
-complete -c webp -n "__fish_webp_using_subcommand convert" -s m -l method -d 'Encoder effort (ignored with --optimize)' -r -f -a "fast\t'Fastest: literal + subtract-green only'
+complete -c webp -n "__fish_webp_using_subcommand convert" -s m -l method -d 'Encoder effort (ignored with --optimize) [default: balanced, or from env/config]' -r -f -a "fast\t'Fastest: literal + subtract-green only'
 balanced\t'Balanced (the default): LZ77 + color cache'
 best\t'Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced'"
 complete -c webp -n "__fish_webp_using_subcommand convert" -s q -l quality -d 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy' -r
