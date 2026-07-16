@@ -31,6 +31,10 @@ fn cwebp_and_dwebp_report_versions() {
         .success();
 }
 
+fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
 #[test]
 fn cwebp_rejects_a_lossy_only_flag() {
     let out = run(
@@ -43,12 +47,67 @@ fn cwebp_rejects_a_lossy_only_flag() {
         Some(2),
         "lossy knob must be a usage error"
     );
+    // Its own help, not the flat one-liner every rejected flag used to share.
+    let err = stderr(&out);
+    assert!(
+        err.contains("-lossless"),
+        "should point at -lossless: {err:?}"
+    );
+    assert!(
+        err.contains("q 90"),
+        "should offer a lossy quality: {err:?}"
+    );
+    assert!(err.contains("cause:"), "should carry a cause: {err:?}");
+}
+
+/// The distinctive win: a caret drawn under the offending token, at its real
+/// column in the reconstructed command line.
+#[test]
+fn cwebp_points_a_caret_at_the_rejected_flag() {
+    let out = run("cwebp", &["-crop", "0", "0", "8", "8", "-o", "-"], vec![]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(
+        err.contains("cwebp -crop 0 0 8 8 -o -"),
+        "reconstructs the command line: {err:?}"
+    );
+    // "cwebp " is six columns; "-crop" is five, so five carets sit under it.
+    assert!(err.contains("      ^^^^^"), "caret under -crop: {err:?}");
+}
+
+#[test]
+fn cwebp_suggests_a_flag_for_a_typo() {
+    let out = run("cwebp", &["-lossles", "-", "-o", "-"], vec![0; 16]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(err.contains("unknown option `-lossles`"), "{err:?}");
+    assert!(
+        err.contains("similar option") && err.contains("-lossless"),
+        "should suggest -lossless: {err:?}"
+    );
 }
 
 #[test]
 fn dwebp_rejects_yuv_output() {
     let out = run("dwebp", &["-yuv", "-", "-o", "-"], vec![0; 16]);
     assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(
+        err.contains("-png"),
+        "should point at -png/-ppm/-pam: {err:?}"
+    );
+    assert!(err.contains('^'), "should draw a caret: {err:?}");
+}
+
+#[test]
+fn dwebp_suggests_a_flag_for_a_typo() {
+    let out = run("dwebp", &["-flp", "-", "-o", "-"], vec![0; 16]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(
+        err.contains("similar option") && err.contains("-flip"),
+        "should suggest -flip: {err:?}"
+    );
 }
 
 #[test]

@@ -72,6 +72,8 @@ enum Command {
     Convert(ConvertArgs),
     /// Print a summary of a WebP file (size, alpha, metadata, animation).
     Info(InfoArgs),
+    /// Explain an exit code: what a failing run's status number means.
+    Explain(ExplainArgs),
     /// Print a shell completion script.
     ///
     /// The script is generated from the same command tree that parses your
@@ -94,6 +96,14 @@ struct CompletionsArgs {
     /// The shell to generate for.
     #[arg(value_enum)]
     shell: clap_complete::Shell,
+}
+
+/// Arguments for `webp explain`.
+#[derive(Debug, clap::Args)]
+struct ExplainArgs {
+    /// An exit code (`0`, `2`..`9`) or its short name (`usage`, `limit`, ...).
+    #[arg(value_name = "CODE")]
+    code: String,
 }
 
 /// Arguments for `webp man`.
@@ -240,7 +250,7 @@ pub(crate) fn main() -> ExitCode {
     match run(&cli.command, &reporter) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            crate::report::error(&err);
+            crate::report::error(&err.to_diagnostic());
             err.exit_code()
         },
     }
@@ -252,6 +262,7 @@ fn run(command: &Command, reporter: &Reporter) -> Result<(), CliError> {
         Command::Encode(args) => encode(args, reporter),
         Command::Convert(args) => convert(args, reporter),
         Command::Info(args) => info(args, reporter),
+        Command::Explain(args) => explain(&args.code),
         Command::Completions(args) => {
             completions(args);
             Ok(())
@@ -287,8 +298,17 @@ fn man(subcommand: Option<&str>) -> Result<(), CliError> {
     };
     let mut roff = Vec::new();
     page.render(&mut roff)
-        .map_err(|err| CliError::write_output("<stdout>".to_owned(), &err))?;
+        .map_err(|err| CliError::write_output("<stdout>".to_owned(), err))?;
     emit(&roff);
+    Ok(())
+}
+
+/// Print the meaning of an exit code, an offline reference for the contract that
+/// `webp`'s exit status encodes.
+fn explain(code: &str) -> Result<(), CliError> {
+    for line in crate::error::explain(code)? {
+        report::out(&line);
+    }
     Ok(())
 }
 

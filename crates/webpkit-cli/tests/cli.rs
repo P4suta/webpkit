@@ -235,3 +235,38 @@ fn misused_arguments_exit_2() {
     // Missing required -o.
     webp().args(["encode", "-"]).assert().code(2);
 }
+
+#[test]
+fn explain_prints_the_limit_meaning() {
+    webp()
+        .args(["explain", "7"])
+        .assert()
+        .success()
+        .stdout(contains("limit"))
+        .stdout(contains("memory"));
+}
+
+#[test]
+fn explain_accepts_a_short_name() {
+    webp()
+        .args(["explain", "read"])
+        .assert()
+        .success()
+        .stdout(contains("could not be read"));
+}
+
+#[test]
+fn explain_rejects_an_unknown_code_with_exit_2() {
+    webp().args(["explain", "42"]).assert().code(2);
+}
+
+/// The OS message survives to the user instead of an `ErrorKind` summary: a
+/// missing file reads as "no such file", not "entity not found".
+#[test]
+fn a_read_error_carries_the_os_message() {
+    webp()
+        .args(["info", "definitely-not-here.webp"])
+        .assert()
+        .code(3)
+        .stderr(contains("cannot read `definitely-not-here.webp`"));
+}

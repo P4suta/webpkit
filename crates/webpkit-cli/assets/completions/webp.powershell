@@ -34,6 +34,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('encode', 'encode', [CompletionResultType]::ParameterValue, 'Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)')
             [CompletionResult]::new('convert', 'convert', [CompletionResultType]::ParameterValue, 'Batch-convert many images (or directories) to WebP, in parallel')
             [CompletionResult]::new('info', 'info', [CompletionResultType]::ParameterValue, 'Print a summary of a WebP file (size, alpha, metadata, animation)')
+            [CompletionResult]::new('explain', 'explain', [CompletionResultType]::ParameterValue, 'Explain an exit code: what a failing run''s status number means')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script')
             [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Print a man page in roff, for `man -l -` or a package''s man directory')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
@@ -108,6 +109,16 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             break
         }
+        'webp;explain' {
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
         'webp;completions' {
             [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
@@ -133,6 +144,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('encode', 'encode', [CompletionResultType]::ParameterValue, 'Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)')
             [CompletionResult]::new('convert', 'convert', [CompletionResultType]::ParameterValue, 'Batch-convert many images (or directories) to WebP, in parallel')
             [CompletionResult]::new('info', 'info', [CompletionResultType]::ParameterValue, 'Print a summary of a WebP file (size, alpha, metadata, animation)')
+            [CompletionResult]::new('explain', 'explain', [CompletionResultType]::ParameterValue, 'Explain an exit code: what a failing run''s status number means')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Print a shell completion script')
             [CompletionResult]::new('man', 'man', [CompletionResultType]::ParameterValue, 'Print a man page in roff, for `man -l -` or a package''s man directory')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
@@ -148,6 +160,9 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             break
         }
         'webp;help;info' {
+            break
+        }
+        'webp;help;explain' {
             break
         }
         'webp;help;completions' {

@@ -34,6 +34,7 @@ use webpkit_archtest::{all_src, names_module, slashed, use_paths};
 /// - L0 vocabulary with no dependencies   L1 the outside world (bytes, pixels, terminal)
 /// - L2 resolved intent                   L3 what to do    L4 doing it    L5 argv
 const CLI_LAYERS: &[(&str, u8)] = &[
+    ("diag", 0),
     ("error", 0),
     ("personality", 0),
     ("codec", 1),

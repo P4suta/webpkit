@@ -38,7 +38,15 @@ fn assets() -> Vec<(PathBuf, Vec<&'static str>)> {
             })
             .collect();
     rows.push((Path::new("man").join("webp.1"), vec!["man"]));
-    for command in ["encode", "decode", "convert", "info", "completions", "man"] {
+    for command in [
+        "encode",
+        "decode",
+        "convert",
+        "info",
+        "explain",
+        "completions",
+        "man",
+    ] {
         rows.push((
             Path::new("man").join(format!("webp-{command}.1")),
             vec!["man", command],

@@ -9,12 +9,43 @@ use webpkit::{Image, PixelLayout};
 
 use crate::{
     codec,
+    diag::{self, ArgvSpan, Diagnostic},
     error::CliError,
     format::{self, OutputFormat},
     io::{Sink, Source},
     report::Reporter,
     term,
 };
+
+/// Every flag `dwebp` recognizes, accepted or rejected — the search space for a
+/// did-you-mean suggestion.
+const KNOWN_FLAGS: &[&str] = &[
+    "-o",
+    "-png",
+    "-ppm",
+    "-pam",
+    "-flip",
+    "-alpha",
+    "-quiet",
+    "-v",
+    "-color",
+    "-nofancy",
+    "-nofilter",
+    "-nodither",
+    "-alpha_dither",
+    "-mt",
+    "-incremental",
+    "-noasm",
+    "-dither",
+    "-version",
+    "-yuv",
+    "-pgm",
+    "-bmp",
+    "-tiff",
+    "-crop",
+    "-resize",
+    "-scale",
+];
 
 /// Parse `dwebp`-style arguments, decode, and return a process exit code.
 #[must_use]
@@ -24,7 +55,7 @@ pub(crate) fn main() -> ExitCode {
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            crate::report::error(&err);
+            crate::report::error(&err.to_diagnostic());
             err.exit_code()
         },
     }
@@ -86,6 +117,11 @@ enum Parsed {
 
 fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
     let mut config = Config::default();
+    // The command line as strings, for the caret a rejection or a typo draws.
+    let rendered: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     let mut index = 0;
     while index < args.len() {
         let token = args[index].to_string_lossy().into_owned();
@@ -120,18 +156,8 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
             "-dither" => {
                 index += 1; // consume and ignore the strength value
             },
-            "-yuv" | "-pgm" => {
-                return Err(CliError::Usage(format!(
-                    "`{token}` needs a lossy RGB→YUV conversion; use -png/-ppm/-pam"
-                )));
-            },
-            "-bmp" | "-tiff" => {
-                return Err(CliError::Usage(format!(
-                    "`{token}` output is not supported; use -png, -ppm, or -pam"
-                )));
-            },
-            "-crop" | "-resize" | "-scale" => {
-                return Err(CliError::Usage(format!("`{token}` is not supported yet")));
+            "-yuv" | "-pgm" | "-bmp" | "-tiff" | "-crop" | "-resize" | "-scale" => {
+                return Err(reject(&rendered, index, &token));
             },
             "--" => {
                 index += 1;
@@ -140,13 +166,57 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                 }
             },
             other if other.starts_with('-') && other.len() > 1 => {
-                return Err(CliError::Usage(format!("unknown option `{other}`")));
+                return Err(CliError::Rejected(Box::new(diag::unknown_flag(
+                    "dwebp",
+                    &rendered,
+                    index,
+                    other,
+                    KNOWN_FLAGS,
+                ))));
             },
             _ => config.input = Some(PathBuf::from(&args[index])),
         }
         index += 1;
     }
     Ok(Parsed::Run(Box::new(config)))
+}
+
+/// The tailored cause and help for one rejected `dwebp` output/preprocessing flag.
+struct Rejection {
+    cause: &'static str,
+    help: &'static [&'static str],
+}
+
+fn rejection_of(flag: &str) -> Rejection {
+    match flag {
+        "-yuv" | "-pgm" => Rejection {
+            cause: "these emit a lossy RGB→YUV conversion this decoder does not perform; it \
+                    decodes to RGBA.",
+            help: &["choose an RGBA-preserving format:", "  -png | -ppm | -pam"],
+        },
+        "-bmp" | "-tiff" => Rejection {
+            cause: "this output format is not implemented.",
+            help: &["choose an available format:", "  -png | -ppm | -pam"],
+        },
+        _ => Rejection {
+            cause: "cropping, resizing, and scaling are pixel preprocessing this decoder does \
+                    not perform.",
+            help: &["decode first, then transform the result with an image tool."],
+        },
+    }
+}
+
+/// Build the rejection diagnostic for `flag` at `index`, with a caret and its own
+/// cause and help.
+fn reject(args: &[String], index: usize, flag: &str) -> CliError {
+    let rejection = rejection_of(flag);
+    let mut diag = Diagnostic::new(format!("`{flag}` is not supported by this decoder"))
+        .with_cause(rejection.cause)
+        .with_help(rejection.help.iter().copied());
+    if let Some(span) = ArgvSpan::at_token("dwebp", args, index) {
+        diag = diag.with_span(span);
+    }
+    CliError::Rejected(Box::new(diag))
 }
 
 /// Replace each pixel's RGB with its alpha value (opaque), visualizing the

@@ -11,6 +11,7 @@ use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
 use crate::{
     codec::{self, EncodeMode},
+    diag::{self, ArgvSpan, Diagnostic},
     effort,
     error::CliError,
     format::{self, InputFormat},
@@ -20,6 +21,50 @@ use crate::{
     term,
 };
 
+/// Every flag `cwebp` recognizes, accepted or rejected — the search space for a
+/// did-you-mean suggestion, so a typo of a *rejected* flag still points home.
+const KNOWN_FLAGS: &[&str] = &[
+    "-o",
+    "-q",
+    "-m",
+    "-z",
+    "-lossless",
+    "-metadata",
+    "-quiet",
+    "-v",
+    "-color",
+    "-short",
+    "-progress",
+    "-exact",
+    "-noalpha",
+    "-low_memory",
+    "-noasm",
+    "-mt",
+    "-alpha_q",
+    "-alpha_method",
+    "-alpha_filter",
+    "-blend_alpha",
+    "-version",
+    "-near_lossless",
+    "-size",
+    "-psnr",
+    "-pass",
+    "-sns",
+    "-f",
+    "-sharpness",
+    "-segments",
+    "-partition_limit",
+    "-jpeg_like",
+    "-sharp_yuv",
+    "-hint",
+    "-af",
+    "-pre",
+    "-map",
+    "-crop",
+    "-resize",
+    "-preset",
+];
+
 /// Parse `cwebp`-style arguments, encode, and return a process exit code.
 #[must_use]
 pub(crate) fn main() -> ExitCode {
@@ -28,7 +73,7 @@ pub(crate) fn main() -> ExitCode {
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            crate::report::error(&err);
+            crate::report::error(&err.to_diagnostic());
             err.exit_code()
         },
     }
@@ -112,6 +157,11 @@ enum Parsed {
 )]
 fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
     let mut config = Config::default();
+    // The command line as strings, for the caret a rejection or a typo draws.
+    let rendered: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     let mut index = 0;
     while index < args.len() {
         let token = args[index].to_string_lossy().into_owned();
@@ -160,9 +210,15 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                     config.input = Some(PathBuf::from(&args[index]));
                 }
             },
-            other if is_rejected(other) => return Err(reject(other)),
+            other if is_rejected(other) => return Err(reject(&rendered, index, other)),
             other if other.starts_with('-') && other.len() > 1 => {
-                return Err(CliError::Usage(format!("unknown option `{other}`")));
+                return Err(CliError::Rejected(Box::new(diag::unknown_flag(
+                    "cwebp",
+                    &rendered,
+                    index,
+                    other,
+                    KNOWN_FLAGS,
+                ))));
             },
             _ => config.input = Some(PathBuf::from(&args[index])),
         }
@@ -198,11 +254,68 @@ fn is_rejected(flag: &str) -> bool {
     )
 }
 
-fn reject(flag: &str) -> CliError {
-    CliError::Usage(format!(
-        "`{flag}` is a rate-control or preprocessing option unsupported by this \
-         encoder"
-    ))
+/// The tailored cause and help for one rejected flag. `-crop` and `-size` want
+/// completely different answers, so the reason is per-flag rather than one flat
+/// sentence for all seventeen.
+struct Rejection {
+    cause: &'static str,
+    help: &'static [&'static str],
+}
+
+fn rejection_of(flag: &str) -> Rejection {
+    match flag {
+        "-near_lossless" => Rejection {
+            cause: "webpkit has no near-lossless mode. libwebp's cwebp accepts this flag; \
+                    this cwebp refuses it rather than handing you a file you did not ask for.",
+            help: &[
+                "near-lossless trades exactness for size. Pick the end you want:",
+                "  cwebp -lossless <in> -o <out.webp>    # exact, larger",
+                "  cwebp -q 90     <in> -o <out.webp>    # lossy, smaller",
+            ],
+        },
+        "-size" | "-psnr" => Rejection {
+            cause: "this targets an output size or quality by searching over quality \
+                    levels; webpkit's encoder does no such search.",
+            help: &[
+                "set the quality directly instead:",
+                "  cwebp -q <0-100> <in> -o <out.webp>",
+            ],
+        },
+        "-crop" | "-resize" => Rejection {
+            cause: "cropping and resizing are pixel preprocessing, not an encoder setting; \
+                    webpkit does not resample.",
+            help: &["preprocess with an image tool, then encode the result."],
+        },
+        "-preset" => Rejection {
+            cause: "a preset bundles the internal tuning knobs below, none of which webpkit \
+                    exposes.",
+            help: &[
+                "choose effort and quality directly:",
+                "  cwebp -m <0-6> -q <0-100> <in> -o <out.webp>",
+            ],
+        },
+        _ => Rejection {
+            cause: "this is an internal encoder-tuning knob webpkit does not expose.",
+            help: &[
+                "the encoder is tuned through effort and quality only:",
+                "  cwebp -m <0-6> -q <0-100> <in> -o <out.webp>",
+            ],
+        },
+    }
+}
+
+/// Build the rejection diagnostic for `flag` at `index`, with a caret and its own
+/// cause and help.
+fn reject(args: &[String], index: usize, flag: &str) -> CliError {
+    let rejection = rejection_of(flag);
+    let mut diag = Diagnostic::new(format!("`{flag}` is not supported by this encoder"))
+        .with_cause(rejection.cause)
+        .with_help(rejection.help.iter().copied())
+        .with_note("other libwebp rate-control and preprocessing flags are rejected the same way");
+    if let Some(span) = ArgvSpan::at_token("cwebp", args, index) {
+        diag = diag.with_span(span);
+    }
+    CliError::Rejected(Box::new(diag))
 }
 
 /// Reject clearly-lossy source images with an actionable message.

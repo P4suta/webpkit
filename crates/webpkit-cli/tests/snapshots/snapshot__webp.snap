@@ -12,6 +12,7 @@ Commands:
   encode       Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)
   convert      Batch-convert many images (or directories) to WebP, in parallel
   info         Print a summary of a WebP file (size, alpha, metadata, animation)
+  explain      Explain an exit code: what a failing run's status number means
   completions  Print a shell completion script
   man          Print a man page in roff, for `man -l -` or a package's man directory
   help         Print this message or the help of the given subcommand(s)
@@ -266,6 +267,32 @@ Options:
           
           One object, with a `schema` field to pin. Nothing is decoded either way, so this is cheap on any size of file.
 
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+  -q, --quiet
+          Suppress all non-error output
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp explain --help
+Explain an exit code: what a failing run's status number means
+
+Usage: webp explain [OPTIONS] <CODE>
+
+Arguments:
+  <CODE>
+          An exit code (`0`, `2`..`9`) or its short name (`usage`, `limit`, ...)
+
+Options:
   -v, --verbose...
           Print per-stage detail on stderr
 

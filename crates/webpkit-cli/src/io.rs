@@ -51,10 +51,10 @@ fn walk(
     out: &mut Vec<PathBuf>,
 ) -> Result<(), CliError> {
     let label = || dir.display().to_string();
-    let entries = fs::read_dir(dir).map_err(|err| CliError::read_input(label(), &err))?;
+    let entries = fs::read_dir(dir).map_err(|err| CliError::read_input(label(), err))?;
     for entry in entries {
         let path = entry
-            .map_err(|err| CliError::read_input(label(), &err))?
+            .map_err(|err| CliError::read_input(label(), err))?
             .path();
         if path.is_dir() {
             if recursive {
@@ -124,11 +124,11 @@ impl Source {
                 io::stdin()
                     .lock()
                     .read_to_end(&mut buf)
-                    .map_err(|err| CliError::read_input(self.label(), &err))?;
+                    .map_err(|err| CliError::read_input(self.label(), err))?;
                 Ok(buf)
             },
             Self::File(path) => {
-                fs::read(path).map_err(|err| CliError::read_input(self.label(), &err))
+                fs::read(path).map_err(|err| CliError::read_input(self.label(), err))
             },
         }
     }
@@ -173,9 +173,9 @@ impl Sink {
             Self::Stdout => io::stdout()
                 .lock()
                 .write_all(bytes)
-                .map_err(|err| CliError::write_output(self.label(), &err)),
+                .map_err(|err| CliError::write_output(self.label(), err)),
             Self::File(path) => {
-                fs::write(path, bytes).map_err(|err| CliError::write_output(self.label(), &err))
+                fs::write(path, bytes).map_err(|err| CliError::write_output(self.label(), err))
             },
         }
     }

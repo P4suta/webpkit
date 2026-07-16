@@ -151,6 +151,20 @@ never\:"Never style"))' \
 '::input -- Input `.webp` file; `-` (the default) reads stdin:_files' \
 && ret=0
 ;;
+(explain)
+_arguments "${_arguments_options[@]}" : \
+'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)-q[Suppress all non-error output]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':code -- An exit code (`0`, `2`..`9`) or its short name (`usage`, `limit`, ...):_default' \
+&& ret=0
+;;
 (completions)
 _arguments "${_arguments_options[@]}" : \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
@@ -207,6 +221,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(explain)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (completions)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -235,6 +253,7 @@ _webp_commands() {
 'encode:Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
+'explain:Explain an exit code\: what a failing run'\''s status number means' \
 'completions:Print a shell completion script' \
 'man:Print a man page in roff, for \`man -l -\` or a package'\''s man directory' \
 'help:Print this message or the help of the given subcommand(s)' \
@@ -261,6 +280,11 @@ _webp__subcmd__encode_commands() {
     local commands; commands=()
     _describe -t commands 'webp encode commands' commands "$@"
 }
+(( $+functions[_webp__subcmd__explain_commands] )) ||
+_webp__subcmd__explain_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp explain commands' commands "$@"
+}
 (( $+functions[_webp__subcmd__help_commands] )) ||
 _webp__subcmd__help_commands() {
     local commands; commands=(
@@ -268,6 +292,7 @@ _webp__subcmd__help_commands() {
 'encode:Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
+'explain:Explain an exit code\: what a failing run'\''s status number means' \
 'completions:Print a shell completion script' \
 'man:Print a man page in roff, for \`man -l -\` or a package'\''s man directory' \
 'help:Print this message or the help of the given subcommand(s)' \
@@ -293,6 +318,11 @@ _webp__subcmd__help__subcmd__decode_commands() {
 _webp__subcmd__help__subcmd__encode_commands() {
     local commands; commands=()
     _describe -t commands 'webp help encode commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__explain_commands] )) ||
+_webp__subcmd__help__subcmd__explain_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help explain commands' commands "$@"
 }
 (( $+functions[_webp__subcmd__help__subcmd__help_commands] )) ||
 _webp__subcmd__help__subcmd__help_commands() {
