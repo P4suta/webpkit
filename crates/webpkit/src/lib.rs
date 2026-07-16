@@ -723,7 +723,15 @@ pub fn probe(input: &[u8]) -> Result<ImageInfo> {
         return Err(Error::NotWebp);
     }
 
+    // The walk mirrors `read_container`, which is what `decode` uses: the first
+    // image chunk wins, and the sidecars are collected wherever they sit. Anything
+    // narrower would let `probe` and `decode` disagree about one file — an `ALPH`
+    // needs no `VP8X` to announce it, and it may follow the image chunk.
     let mut vp8x: Option<Vp8xInfo> = None;
+    let mut image: Option<ImageInfo> = None;
+    let mut sidecar_alpha = false;
+    let mut sidecar_metadata = false;
+
     for chunk in scan_chunks(input) {
         match chunk.id {
             FourCc::VP8X => {
@@ -732,7 +740,8 @@ pub fn probe(input: &[u8]) -> Result<ImageInfo> {
                     .ok_or(Error::Truncated)?;
                 let info = Vp8xInfo::parse(data)?;
                 // An animation is fully described by its VP8X canvas; there is no
-                // top-level image chunk to go on and find.
+                // top-level image chunk to go on and find, and its frames each carry
+                // their own codec, so the file has none.
                 if info.flags.is_animated() {
                     return Ok(ImageInfo::new(
                         info.canvas,
@@ -743,37 +752,37 @@ pub fn probe(input: &[u8]) -> Result<ImageInfo> {
                 }
                 vp8x = Some(info);
             },
-            FourCc::VP8L => {
-                let has_metadata = vp8x.is_some_and(vp8x_has_metadata);
-                let vp8x_alpha = vp8x.is_some_and(|x| x.flags.has_alpha());
-                return crate::lossless::decoder::peek_vp8l_info(
+            FourCc::VP8L if image.is_none() => {
+                // The VP8X flags are folded in below, so ask only what the VP8L
+                // header itself says.
+                image = crate::lossless::decoder::peek_vp8l_info(
                     input.get(chunk.payload_start..),
-                    has_metadata,
-                    vp8x_alpha,
-                )?
-                .ok_or(Error::Truncated);
+                    false,
+                    false,
+                )?;
             },
-            FourCc::VP8 => {
+            FourCc::VP8 if image.is_none() => {
                 let payload = input.get(chunk.payload_start..).ok_or(Error::Truncated)?;
                 let dimensions = crate::lossy::peek_dimensions(payload)?;
-                // A bare VP8 stream carries no alpha and no metadata; an extended
-                // one says so in its VP8X flags, which is the only place to look —
-                // the sibling ALPH chunk may not have arrived yet.
-                return Ok(ImageInfo::new(
-                    dimensions,
-                    vp8x.is_some_and(|x| x.flags.has_alpha()),
-                    vp8x.is_some_and(vp8x_has_metadata),
-                    false,
-                )
-                .with_codec(Codec::Lossy));
+                image =
+                    Some(ImageInfo::new(dimensions, false, false, false).with_codec(Codec::Lossy));
             },
+            FourCc::ALPH => sidecar_alpha = true,
+            FourCc::ICCP | FourCc::EXIF | FourCc::XMP => sidecar_metadata = true,
             // Animation chunks with no preceding animated VP8X are malformed; a
             // well-formed animation returns above.
             FourCc::ANIM | FourCc::ANMF => return Err(Error::InvalidContainer),
             _ => {},
         }
     }
-    Err(Error::MissingImage)
+
+    let mut info = image.ok_or(Error::MissingImage)?;
+    // A chunk that is present outranks a flag that is absent: `has_alpha` and
+    // `has_metadata` describe what the file carries, not what its header claims,
+    // and a malformed VP8X must not talk the report out of a chunk that is there.
+    info.has_alpha |= sidecar_alpha || vp8x.is_some_and(|x| x.flags.has_alpha());
+    info.has_metadata |= sidecar_metadata || vp8x.is_some_and(vp8x_has_metadata);
+    Ok(info)
 }
 
 /// Whether a `VP8X` header advertises any metadata chunk.
@@ -901,6 +910,71 @@ mod tests {
                 streamed,
                 Some(expected),
                 "HeaderReady must report the codec probe reports"
+            );
+        }
+    }
+
+    /// A bare `VP8 ` + `ALPH` with no `VP8X`: alpha announced by a chunk that no
+    /// header flag mentions, which is the shape
+    /// `composites_a_raw_alpha_chunk_onto_a_lossy_image` pins for `decode`.
+    fn lossy_with_bare_alpha() -> Vec<u8> {
+        let vp8_key_frame = [0x10u8, 0x00, 0x00, 0x9d, 0x01, 0x2a, 16, 0, 16, 0];
+        let mut alph = vec![0x00u8];
+        alph.resize(1 + 16 * 16, 0x80);
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::VP8, &vp8_key_frame);
+        push_chunk(&mut body, FourCc::ALPH, &alph);
+        riff_envelope(&body)
+    }
+
+    /// Metadata written *after* the image chunk, so a walk that stops at the image
+    /// never sees it.
+    fn lossless_with_trailing_metadata() -> Vec<u8> {
+        let rgba = vec![0x11u8; 4 * 4 * 4];
+        let dims = Dimensions::new(4, 4).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        Encoder::lossless()
+            .metadata(Metadata {
+                exif: Some(vec![9, 9, 9, 9]),
+                ..Metadata::none()
+            })
+            .encode_ref(img)
+            .unwrap()
+    }
+
+    /// The invariant, not an example of it: two ways of asking one file must not
+    /// disagree. `probe` is a promise about what `decode` will produce, so every
+    /// field they share is checked over every container shape the crate builds —
+    /// simple, extended, sidecar-alpha-without-a-flag, trailing metadata.
+    ///
+    /// This exists because `probe` shipped believing a `VP8X` flag was "the only
+    /// place to look" for alpha. That is true of the streaming classifier it was
+    /// copied from, which has not buffered the trailing chunks yet. It is false of
+    /// a probe, which is handed the whole file.
+    #[test]
+    fn probe_never_contradicts_decode() {
+        let cases: [(&str, Vec<u8>); 4] = [
+            ("lossless", lossless_bytes()),
+            ("lossy", lossy_bytes()),
+            ("lossy + bare ALPH", lossy_with_bare_alpha()),
+            (
+                "lossless + trailing metadata",
+                lossless_with_trailing_metadata(),
+            ),
+        ];
+        for (name, bytes) in cases {
+            let probed = probe(&bytes).unwrap_or_else(|e| panic!("{name}: probe: {e:?}"));
+            let decoded = decode(&bytes).unwrap_or_else(|e| panic!("{name}: decode: {e:?}"));
+            assert_eq!(
+                probed.dimensions,
+                decoded.dimensions(),
+                "{name}: dimensions"
+            );
+            assert_eq!(probed.has_alpha, decoded.has_alpha(), "{name}: has_alpha");
+            assert_eq!(
+                probed.has_metadata,
+                !decoded.metadata().is_empty(),
+                "{name}: has_metadata"
             );
         }
     }
