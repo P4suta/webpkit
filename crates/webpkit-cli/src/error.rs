@@ -308,6 +308,40 @@ mod tests {
         assert_eq!(EXIT_CODES.len(), 10);
     }
 
+    /// The set test above cannot see a swap: give `ReadInput` code 4 and
+    /// `WriteOutput` code 3 and the set `{3,4}` is unchanged. This pins each
+    /// variant to its exact code, so a transposed mapping fails.
+    #[test]
+    fn each_variant_maps_to_its_documented_code() {
+        let io = || std::io::Error::from(std::io::ErrorKind::NotFound);
+        let cases: &[(CliError, u8)] = &[
+            (CliError::Usage(String::new()), 2),
+            (
+                CliError::Rejected(Box::new(crate::diag::Diagnostic::new(""))),
+                2,
+            ),
+            (CliError::read_input(String::new(), io()), 3),
+            (CliError::write_output(String::new(), io()), 4),
+            (CliError::Clobber(String::new()), 4),
+            (CliError::Codec(CodecError::UnsupportedFeature), 6),
+            (
+                CliError::Codec(CodecError::LimitExceeded {
+                    pixels: 1,
+                    limit: 0,
+                }),
+                7,
+            ),
+            (CliError::Codec(CodecError::InvalidDimensions), 8),
+            (CliError::Codec(CodecError::PixelBufferMismatch), 8),
+            (CliError::RawConfig(String::new()), 8),
+            (CliError::Format(String::new()), 9),
+            (CliError::Codec(CodecError::NotWebp), 5),
+        ];
+        for (err, code) in cases {
+            assert_eq!(err.code(), *code, "{err:?} must map to exit code {code}");
+        }
+    }
+
     #[test]
     fn explain_finds_a_code_by_number_and_by_name() {
         let by_number = explain("7").expect("7 is documented");

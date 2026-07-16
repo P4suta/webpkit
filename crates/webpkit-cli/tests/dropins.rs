@@ -68,12 +68,26 @@ fn cwebp_points_a_caret_at_the_rejected_flag() {
     let out = run("cwebp", &["-sns", "50", "-o", "-"], vec![]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
-    assert!(
-        err.contains("cwebp -sns 50 -o -"),
-        "reconstructs the command line: {err:?}"
+
+    // Find the echoed command line and the caret line beneath it, and check the
+    // carets sit *exactly* under `-sns`. A substring assertion would tolerate a
+    // caret shifted one column right (the actual column becomes a substring of a
+    // wider run of spaces), so this compares real offsets.
+    let lines: Vec<&str> = err.lines().collect();
+    let command = lines
+        .iter()
+        .position(|l| l.contains("cwebp -sns 50 -o -"))
+        .expect("the command line is echoed");
+    let caret_line = lines.get(command + 1).expect("a caret line follows");
+
+    let flag_col = lines[command].find("-sns").expect("`-sns` is in the echo");
+    let caret_col = caret_line.find('^').expect("a caret is drawn");
+    assert_eq!(caret_col, flag_col, "the caret must start under `-sns`");
+    assert_eq!(
+        caret_line.trim(),
+        "^^^^",
+        "exactly four carets, one per character of `-sns`: {caret_line:?}"
     );
-    // "cwebp " is six columns; "-sns" is four, so four carets sit under it.
-    assert!(err.contains("      ^^^^"), "caret under -sns: {err:?}");
 }
 
 #[test]
