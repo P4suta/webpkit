@@ -409,12 +409,15 @@ jobs:
     # still runnable on demand via the Actions "Run workflow" button.
     #
     # NOTE: continuous regression coverage does NOT depend on this job. Every
-    # committed seed is replayed through the exact same decode entry points on
-    # *stable* by `tests/replay_seeds.rs` in each fuzz crate (run by the `build +
-    # test` nextest job, with overflow-checks on). Integer overflow is
-    # input-determined, not optimization-determined, so a wrap a release build could
-    # hit is reachable — and trapped — there too. This libFuzzer job adds *new* input
-    # discovery on top; the replay net guards against regressions meanwhile.
+    # committed seed is replayed through the fuzz targets *themselves* on *stable*
+    # by `tests/replay_seeds.rs` in each fuzz crate (run by the `build + test`
+    # nextest job, with overflow-checks on). The targets' bodies are library
+    # functions the replay calls directly — not a hand-written imitation — so the
+    # round-trip and encode invariants run here too, not only decode, and cannot
+    # drift from what the fuzzer runs. Integer overflow is input-determined, not
+    # optimization-determined, so a wrap a release build could hit is reachable —
+    # and trapped — there too. This libFuzzer job adds *new* input discovery on top;
+    # the replay net guards against regressions meanwhile.
     #
     # Upstream tracker: https://github.com/rust-fuzz/cargo-fuzz/issues
     # RE-ENABLE when fixed: bump the cargo-fuzz install below (and NIGHTLY_TOOLCHAIN

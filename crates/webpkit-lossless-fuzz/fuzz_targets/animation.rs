@@ -1,30 +1,12 @@
-//! Fuzz target: decoding arbitrary bytes as an animation must never panic.
+//! Fuzz target: the lazy frame walk and the compositing pass.
 //!
-//! Drives [`webpkit::lossless::decode_frames`] over hostile input, iterating every lazy
-//! frame and then compositing the whole sequence — exercising the `ANIM`/`ANMF`
-//! parser, the per-frame VP8L decode, and the canvas compositor. Inert under a
-//! normal build.
+//! The body is [`webpkit_lossless_fuzz::animation`], so `tests/replay_seeds.rs` runs
+//! this target rather than an imitation of it. Inert under a normal build: the
+//! `fuzzing` feature is what pulls in libFuzzer.
 #![cfg_attr(feature = "fuzzing", no_main)]
 
 #[cfg(feature = "fuzzing")]
-libfuzzer_sys::fuzz_target!(|data: &[u8]| {
-    // Lazy per-frame decode: pull every frame (errors are fine, panics are not).
-    if let Ok(frames) = webpkit::lossless::decode_frames(data) {
-        for frame in frames {
-            if frame.is_err() {
-                break;
-            }
-        }
-    }
-    // Compositing pass over the same input.
-    if let Ok(frames) = webpkit::lossless::decode_frames(data) {
-        for composited in frames.composited() {
-            if composited.is_err() {
-                break;
-            }
-        }
-    }
-});
+libfuzzer_sys::fuzz_target!(|data: &[u8]| webpkit_lossless_fuzz::animation(data));
 
 #[cfg(not(feature = "fuzzing"))]
 fn main() {

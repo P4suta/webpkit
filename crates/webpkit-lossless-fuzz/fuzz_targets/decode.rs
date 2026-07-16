@@ -1,16 +1,12 @@
-//! Fuzz target: feed arbitrary bytes to the webpkit-lossless VP8L decoder.
+//! Fuzz target: an arbitrary-bytes decode that must never panic.
 //!
-//! Run: `cargo +nightly fuzz run decode --fuzz-dir crates/webpkit-lossless-fuzz --features fuzzing`.
-//! Gated on the `fuzzing` feature (which pulls in `libfuzzer-sys`); a normal
-//! `cargo build --workspace` compiles this to an inert binary so the libFuzzer
-//! runtime is never linked outside a fuzzing build.
+//! The body is [`webpkit_lossless_fuzz::decode`], so `tests/replay_seeds.rs` runs
+//! this target rather than an imitation of it. Inert under a normal build: the
+//! `fuzzing` feature is what pulls in libFuzzer.
 #![cfg_attr(feature = "fuzzing", no_main)]
 
 #[cfg(feature = "fuzzing")]
-libfuzzer_sys::fuzz_target!(|data: &[u8]| {
-    // The decoder must never panic on hostile input.
-    let _ = webpkit::lossless::decode(data);
-});
+libfuzzer_sys::fuzz_target!(|data: &[u8]| webpkit_lossless_fuzz::decode(data));
 
 #[cfg(not(feature = "fuzzing"))]
 fn main() {
