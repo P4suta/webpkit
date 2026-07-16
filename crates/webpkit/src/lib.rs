@@ -1071,8 +1071,8 @@ mod tests {
 
     /// The length guard is `< 12`, and 12 is the smallest input that carries the
     /// full `RIFF....WEBP` magic. 11 bytes is too short to even check the magic
-    /// (Truncated); 12 bytes is long enough, so a wrong magic is NotWebp, not
-    /// Truncated. Pins the boundary so `<` cannot become `<=`.
+    /// (`Truncated`); 12 bytes is long enough, so a wrong magic is `NotWebp`, not
+    /// `Truncated`. Pins the boundary so `<` cannot become `<=`.
     #[test]
     fn probe_length_guard_is_exactly_twelve() {
         assert!(matches!(probe(&[0u8; 11]), Err(Error::Truncated)));
@@ -1080,7 +1080,7 @@ mod tests {
     }
 
     /// The magic check rejects when *either* `RIFF` or `WEBP` is wrong (`||`). A
-    /// file with a correct `RIFF` but a wrong `WEBP` fourcc must still be NotWebp;
+    /// file with a correct `RIFF` but a wrong `WEBP` fourcc must still be `NotWebp`;
     /// with `&&` it would slip past the guard. The mirror case (wrong `RIFF`,
     /// right `WEBP`) covers the other operand.
     #[test]
