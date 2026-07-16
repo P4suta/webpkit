@@ -570,7 +570,8 @@ fn classify(buf: &[u8]) -> Result<Decision> {
             FourCc::VP8L | FourCc::ANIM | FourCc::ANMF => return Ok(Decision::Lossless),
             FourCc::VP8 => {
                 if let Some(info) = vp8x_info {
-                    return Ok(Decision::Deferred(info)); // extended lossy (has VP8X)
+                    // Extended lossy (has VP8X); the chunk we just reached says VP8.
+                    return Ok(Decision::Deferred(info.with_codec(Codec::Lossy)));
                 }
                 // Bare VP8: row-stream only if it spans the whole declared RIFF
                 // body (`chunk.next` is the padded end), so no trailing
@@ -596,7 +597,9 @@ fn bare_deferred(vp8_payload: Option<&[u8]>) -> Decision {
     vp8_payload
         .and_then(|p| crate::lossy::peek_dimensions(p).ok())
         .map_or(Decision::NeedMore, |dimensions| {
-            Decision::Deferred(ImageInfo::new(dimensions, false, false, false))
+            Decision::Deferred(
+                ImageInfo::new(dimensions, false, false, false).with_codec(Codec::Lossy),
+            )
         })
 }
 
@@ -761,7 +764,8 @@ pub fn probe(input: &[u8]) -> Result<ImageInfo> {
                     vp8x.is_some_and(|x| x.flags.has_alpha()),
                     vp8x.is_some_and(vp8x_has_metadata),
                     false,
-                ));
+                )
+                .with_codec(Codec::Lossy));
             },
             // Animation chunks with no preceding animated VP8X are malformed; a
             // well-formed animation returns above.
@@ -790,9 +794,9 @@ mod tests {
     use crate::container::writer::{push_chunk, riff_envelope};
 
     use super::{
-        BlendMode, DecodeOptions, Dimensions, DisposalMode, Effort, Encoder, Error, FrameMeta,
-        Image, ImageRef, IncrementalDecoder, Metadata, MetadataPolicy, PixelLayout, Progress,
-        decode, decode_with, probe,
+        BlendMode, Codec, DecodeOptions, Dimensions, DisposalMode, Effort, Encoder, Error,
+        FrameMeta, Image, ImageRef, IncrementalDecoder, Metadata, MetadataPolicy, PixelLayout,
+        Progress, decode, decode_with, probe,
     };
 
     /// A 32x32 image of busy pixels, encoded with `make`.
@@ -840,6 +844,64 @@ mod tests {
             assert!(decode(cut).is_err(), "the truncation must break decoding");
             let info = probe(cut).expect("probe survives a truncated body");
             assert_eq!(info.dimensions, dims());
+        }
+    }
+
+    #[test]
+    fn probe_reports_which_codec_coded_a_still() {
+        assert_eq!(
+            probe(&lossless_bytes()).unwrap().codec,
+            Some(Codec::Lossless)
+        );
+        assert_eq!(probe(&lossy_bytes()).unwrap().codec, Some(Codec::Lossy));
+    }
+
+    /// An animation's frames each carry their own image chunk and need not agree,
+    /// so the container header cannot answer for the file. `None` says that; it
+    /// does not mean "unknown codec".
+    #[test]
+    fn probe_leaves_an_animations_codec_unanswered() {
+        let canvas = Dimensions::new(16, 8).unwrap();
+        let rgba = vec![0x40u8; 16 * 8 * 4];
+        let frame = ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap();
+        let bytes = crate::AnimationEncoder::new(canvas)
+            .add_frame(
+                frame,
+                FrameMeta {
+                    x: 0,
+                    y: 0,
+                    dimensions: canvas,
+                    duration_ms: 100,
+                    blend: BlendMode::Blend,
+                    dispose: DisposalMode::Keep,
+                },
+            )
+            .unwrap()
+            .finish();
+        assert_eq!(probe(&bytes).unwrap().codec, None);
+    }
+
+    /// One file, two ways of asking: a probe and a stream must not disagree about
+    /// what coded it. Nothing else keeps these two paths in step.
+    #[test]
+    fn probe_and_streaming_agree_on_the_codec() {
+        for bytes in [lossless_bytes(), lossy_bytes()] {
+            let expected = probe(&bytes).unwrap().codec;
+            assert!(expected.is_some(), "a still always has a codec");
+
+            let mut decoder = IncrementalDecoder::new();
+            let mut streamed = None;
+            for slice in bytes.chunks(16) {
+                if let Progress::HeaderReady(info) = decoder.push(slice).unwrap() {
+                    streamed = Some(info.codec);
+                    break;
+                }
+            }
+            assert_eq!(
+                streamed,
+                Some(expected),
+                "HeaderReady must report the codec probe reports"
+            );
         }
     }
 

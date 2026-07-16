@@ -12,10 +12,13 @@
 //! which is exactly when someone runs `info`.
 
 use serde::Serialize;
-use webpkit::container::{
-    anim::ANMF_HEADER_LEN,
-    fourcc::FourCc,
-    reader::{chunks, read_chunk_at},
+use webpkit::{
+    Codec, ImageInfo,
+    container::{
+        anim::ANMF_HEADER_LEN,
+        fourcc::FourCc,
+        reader::{chunks, read_chunk_at},
+    },
 };
 
 use crate::error::CliError;
@@ -125,7 +128,7 @@ pub(crate) fn report(bytes: &[u8], label: String) -> Result<Report, CliError> {
         path: label,
         bytes: bytes.len(),
         container: container_of(&chunk_list, animated),
-        codec: codec_name(bytes, &chunk_list, animated),
+        codec: codec_name(bytes, info),
         width: info.dimensions.width(),
         height: info.dimensions.height(),
         alpha: info.has_alpha,
@@ -159,22 +162,16 @@ fn fourcc_str(id: FourCc) -> String {
     String::from_utf8_lossy(&id.0).into_owned()
 }
 
-/// `lossless`, `lossy`, `mixed`, or `unknown`, from the container's image chunks.
+/// `lossless`, `lossy`, or — for an animation — whatever its frames say.
 ///
-/// `VP8L` and `VP8 ` are the only image chunks WebP defines, so their presence in
-/// the walk is the answer — no search of the file body, which is what made the
-/// old check report the codec of whatever four bytes it happened to hit first.
-fn codec_name(bytes: &[u8], chunk_list: &[ChunkInfo], animated: bool) -> &'static str {
-    if animated {
-        return animation_codec(bytes);
-    }
-    let has = |tag: &str| chunk_list.iter().any(|c| c.fourcc == tag);
-    match (has("VP8L"), has("VP8 ")) {
-        (true, false) => "lossless",
-        (false, true) => "lossy",
-        // Both, or neither: the file is malformed or its image chunk was past a
-        // truncation. `info` exists to report that, not to refuse.
-        _ => "unknown",
+/// A still's codec comes straight from the probed header. An animation's does not
+/// exist at that level: its frames each carry their own image chunk and nothing
+/// requires them to agree, so they are read individually.
+fn codec_name(bytes: &[u8], info: ImageInfo) -> &'static str {
+    match info.codec {
+        Some(Codec::Lossless) => "lossless",
+        Some(Codec::Lossy) => "lossy",
+        None => animation_codec(bytes),
     }
 }
 

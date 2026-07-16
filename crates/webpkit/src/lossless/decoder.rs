@@ -537,7 +537,8 @@ impl<D: FrameDecoder + Clone> IncrementalDecoder<D> {
                             alpha || st.info.has_alpha,
                             st.info.has_metadata,
                             false,
-                        );
+                        )
+                        .with_codec(Codec::Lossless);
                         st.info = info;
                         return Ok(Progress::HeaderReady(info));
                     }
@@ -799,12 +800,10 @@ pub(crate) fn peek_vp8l_info(
     let dimensions = Dimensions::new(width, height).map_err(|_| Error::InvalidBitstream {
         codec: Codec::Lossless,
     })?;
-    Ok(Some(ImageInfo::new(
-        dimensions,
-        header_alpha || vp8x_alpha,
-        has_metadata,
-        false,
-    )))
+    Ok(Some(
+        ImageInfo::new(dimensions, header_alpha || vp8x_alpha, has_metadata, false)
+            .with_codec(Codec::Lossless),
+    ))
 }
 
 /// A `std` decoder that reads a whole WebP from an [`std::io::Read`] source.
