@@ -46,12 +46,19 @@ clap = { workspace = true }
 # help, the completions, and the man page cannot describe different flags.
 clap_complete = { workspace = true }
 clap_mangen = { workspace = true }
+# Ctrl-C cleanup: `panic = "abort"` and `process::exit` both skip `Drop`, so a
+# temp file's own cleanup does not run on a signal — the handler deletes in-flight
+# temps explicitly.
+ctrlc = { workspace = true }
 # `info --json` is the machine-readable contract; serde_json's Map is BTreeMap-
 # backed unless `preserve_order` is on, so key order stays deterministic.
 png = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Atomic output: write a sibling temp file, then rename over the target, so a
+# failed or interrupted write never leaves a truncated `.webp` that looks valid.
+tempfile = { workspace = true }
 # The one WebP codec crate: its type-state `Encoder` routes to lossless (VP8L) or
 # lossy (VP8) so `cwebp`/`webp` can offer libwebp-style lossy-by-default output,
 # and it re-exports the `Image`/`Metadata`/`Effort` types the CLI names.
@@ -65,7 +72,6 @@ webpkit = { path = "../webpkit", version = "0.1.0", features = ["rayon"] }
 assert_cmd = { workspace = true }
 insta = { workspace = true }
 predicates = { workspace = true }
-tempfile = { workspace = true }
 webpkit-archtest = { path = "../webpkit-archtest" }
 
 [lints]

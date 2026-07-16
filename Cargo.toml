@@ -41,6 +41,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"                                                  # CLI-only: shell completion scripts
 clap_mangen = "0.3"                                                  # CLI-only: man pages
 criterion = { version = "0.8", features = ["html_reports"] }
+ctrlc = "3"                                                          # CLI-only: delete in-flight temp files on Ctrl-C
 insta = { version = "1", features = ["yaml", "json", "redactions"] }
 libfuzzer-sys = "0.4"                                                # webpkit-lossless-fuzz targets
 libwebp-sys = "0.14"                                                 # oracle / differential path (optional at use site)
