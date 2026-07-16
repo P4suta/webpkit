@@ -7,7 +7,7 @@
 //! computing the prefix symbols for each emitted unit — the single place the
 //! per-pixel cache-insertion order lives, so the histogram pass and the emit
 //! pass (both in [`crate::lossless::vp8l::encode`]) can never disagree with the decoder.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     reason = "cache keys are < 1<<cache_bits (<= 2047, fit u16), copy lengths are \
               <= MAX_COPY_LENGTH and distances <= WINDOW_SIZE, and pixel positions are \

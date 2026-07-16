@@ -131,7 +131,7 @@ impl Frame {
 
     /// RFC §9.6: the base quantizer plus the five DC/AC deltas, expanded into a
     /// per-segment [`crate::lossy::decode::QuantMatrix`]. Port of `VP8ParseQuant`.
-    #[allow(
+    #[expect(
         clippy::similar_names,
         reason = "the delta bindings mirror the libwebp field names \
                   (dqy1_dc, dqy2_dc, dqy2_ac, dquv_dc, dquv_ac) verbatim so the \
@@ -211,7 +211,7 @@ fn clip_uv(v: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
+    #![expect(
         clippy::cast_possible_truncation,
         reason = "test fixtures build header field values with casts that fit their targets \
                   by construction"

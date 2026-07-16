@@ -624,14 +624,7 @@ impl<D: FrameDecoder + Clone> IncrementalDecoder<D> {
     /// let canvas = Dimensions::new(2, 2).unwrap();
     /// let red = [255u8, 0, 0, 255].repeat(4);
     /// let blue = [0u8, 0, 255, 255].repeat(4);
-    /// let meta = |ms| FrameMeta {
-    ///     x: 0,
-    ///     y: 0,
-    ///     dimensions: canvas,
-    ///     duration_ms: ms,
-    ///     blend: BlendMode::Blend,
-    ///     dispose: DisposalMode::Keep,
-    /// };
+    /// let meta = |ms| FrameMeta::new(0, 0, canvas, ms, BlendMode::Blend, DisposalMode::Keep);
     /// let bytes = AnimationEncoder::new(canvas)
     ///     .add_frame(ImageRef::new(canvas, PixelLayout::Rgba8, &red).unwrap(), meta(100))
     ///     .unwrap()
@@ -889,7 +882,7 @@ impl<R: Read> Decoder<R> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
+    #![expect(
         clippy::cast_possible_truncation,
         reason = "test fixtures build container byte lengths with casts that fit their targets \
                   by construction"

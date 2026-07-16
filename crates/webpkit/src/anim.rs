@@ -530,7 +530,7 @@ impl Compositor {
 /// This mirrors libwebp `BlendPixelNonPremult` / `BlendPixelRowNonPremult`
 /// exactly: an opaque source overwrites, a fully transparent source keeps the
 /// destination, and otherwise the non-premultiplied integer blend is applied.
-#[allow(
+#[expect(
     clippy::cast_possible_truncation,
     reason = "blended channels are provably in 0..=255 (libwebp BlendPixelNonPremult); \
               the shift/mask arithmetic reproduces the reference bit for bit"

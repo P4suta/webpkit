@@ -36,7 +36,7 @@
 //! returned planes with the exact per-macroblock strengths the decoder re-derives,
 //! `crate::lossy::decode` of the output is byte-identical to the (filtered)
 //! reconstruction built here — the self-consistency invariant the tests pin.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     reason = "residual samples (src - pred) lie in -255..=255 and the broadcast DC \
               in i16 range, so the casts reproduce the reference encoder's int16_t \
@@ -614,7 +614,7 @@ fn plan_frame(
 /// macroblock placed at local `(0, 0)` (the wavefront scheduler), provided the
 /// caller supplies the true `has_top`/`has_left`/`is_rightmost` grid geometry (the
 /// intra-4×4 top-right lane depends on it).
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the per-macroblock plan is a pure function of its position, the three \
               independent edge flags, its segment/quantizer and the search gates; \
@@ -1127,7 +1127,7 @@ fn emit_best_partitions(
 ///
 /// `(default, optimized)` where each is the `(part0, token)` byte pair.
 #[cfg(not(feature = "rayon"))]
-#[allow(
+#[expect(
     clippy::type_complexity,
     reason = "returns the two candidates' (part0, token) byte pairs; naming a \
               struct for this one internal call-site would not aid clarity"
@@ -1159,7 +1159,7 @@ fn emit_partition_candidates(
 /// via `join`. Byte-identical to the serial version — `join` returns both results
 /// and the caller's comparison is order-independent (ties resolve to default).
 #[cfg(feature = "rayon")]
-#[allow(
+#[expect(
     clippy::type_complexity,
     reason = "returns the two candidates' (part0, token) byte pairs; naming a \
               struct for this one internal call-site would not aid clarity"
@@ -1757,7 +1757,7 @@ fn luma16_reconstruction_sse(
 /// Each sub-block picks the least-SSE `B_PRED` mode (fixed `B_DC..B_HU` order, so
 /// ties resolve to `B_DC`), quantizes the residual with `first = 0` (DC coded per
 /// sub-block — no Y2), and reconstructs in place.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the i4x4 search needs the plane, its offset, the source, the grid \
               position (for source indexing) and the two top-right-lane edge flags; \
@@ -1848,7 +1848,7 @@ fn search_luma_i4x4(
 /// sides. `lambda` rises with the luma-AC dequant step (see [`i4x4_lambda`]); using
 /// proper post-quant distortion — not raw prediction SSE — is what stops i4x4 from
 /// being over-selected on smooth content.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the i4x4-vs-16×16 decision needs the plane, the 16×16 coeffs/tokens to \
               score against, the source, the grid position and the two top-right-lane \
@@ -2100,7 +2100,7 @@ fn select_chroma8_mode_rd(
 
 #[cfg(test)]
 mod tests {
-    #![allow(
+    #![expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         clippy::cast_possible_wrap,

@@ -438,7 +438,7 @@ pub(crate) fn to_image(planes: &Planes, width: usize, height: usize) -> Result<I
 
 #[cfg(test)]
 mod tests {
-    #![allow(
+    #![expect(
         clippy::doc_markdown,
         clippy::inconsistent_struct_constructor,
         reason = "these KATs construct FInfo / header literals and cite informal \

@@ -131,7 +131,12 @@ pub fn argb_has_alpha(argb: &[u32]) -> bool {
 }
 
 /// Optional sidecar metadata carried by a WebP extended (`VP8X`) container.
+///
+/// `#[non_exhaustive]`: WebP can carry further sidecar chunk kinds, so new fields
+/// can be added without a breaking change (the existing fields stay `pub` to
+/// read). Build one from [`Metadata::none`] and the `with_*` setters.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[non_exhaustive]
 pub struct Metadata {
     /// ICC color profile (`ICCP` chunk).
     pub icc_profile: Option<Vec<u8>>,
@@ -150,6 +155,28 @@ impl Metadata {
             exif: None,
             xmp: None,
         }
+    }
+
+    /// Set the ICC color profile (`ICCP`). Accepts a `Vec<u8>`, `Some(..)`, or
+    /// `None`; chain from [`Metadata::none`].
+    #[must_use]
+    pub fn with_icc_profile(mut self, icc_profile: impl Into<Option<Vec<u8>>>) -> Self {
+        self.icc_profile = icc_profile.into();
+        self
+    }
+
+    /// Set the Exif sidecar (`EXIF`). Accepts a `Vec<u8>`, `Some(..)`, or `None`.
+    #[must_use]
+    pub fn with_exif(mut self, exif: impl Into<Option<Vec<u8>>>) -> Self {
+        self.exif = exif.into();
+        self
+    }
+
+    /// Set the XMP sidecar (`XMP `). Accepts a `Vec<u8>`, `Some(..)`, or `None`.
+    #[must_use]
+    pub fn with_xmp(mut self, xmp: impl Into<Option<Vec<u8>>>) -> Self {
+        self.xmp = xmp.into();
+        self
     }
 
     /// Whether no metadata is present (so a bare `VP8L` file suffices).
@@ -473,6 +500,23 @@ mod tests {
             ..Metadata::none()
         };
         assert!(!with_icc.is_empty());
+    }
+
+    #[test]
+    fn metadata_with_setters_target_the_right_field() {
+        let m = Metadata::none()
+            .with_icc_profile(vec![1])
+            .with_exif(vec![2])
+            .with_xmp(vec![3]);
+        assert_eq!(m.icc_profile, Some(vec![1]));
+        assert_eq!(m.exif, Some(vec![2]));
+        assert_eq!(m.xmp, Some(vec![3]));
+
+        // Each setter also accepts an `Option`, and `None` clears just that field.
+        let cleared = m.with_exif(None::<Vec<u8>>);
+        assert_eq!(cleared.icc_profile, Some(vec![1]));
+        assert_eq!(cleared.exif, None);
+        assert_eq!(cleared.xmp, Some(vec![3]));
     }
 
     /// A source carrying all three sidecars.

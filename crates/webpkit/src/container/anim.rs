@@ -187,7 +187,12 @@ pub enum DisposalMode {
 }
 
 /// A single frame's placement and timing within the animation.
+///
+/// `#[non_exhaustive]`: further per-frame header facts can be added without a
+/// breaking change (the fields stay `pub` to read). Construct one with
+/// [`FrameMeta::new`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub struct FrameMeta {
     /// Pixel X offset of the frame's top-left corner (always even).
     pub x: u32,
@@ -203,13 +208,59 @@ pub struct FrameMeta {
     pub dispose: DisposalMode,
 }
 
+impl FrameMeta {
+    /// A frame's placement and timing: its top-left offset (`x`, `y`, both even),
+    /// its own `dimensions`, its display `duration_ms`, and its `blend`/`dispose`
+    /// compositing methods.
+    #[must_use]
+    pub const fn new(
+        x: u32,
+        y: u32,
+        dimensions: Dimensions,
+        duration_ms: u32,
+        blend: BlendMode,
+        dispose: DisposalMode,
+    ) -> Self {
+        Self {
+            x,
+            y,
+            dimensions,
+            duration_ms,
+            blend,
+            dispose,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
 
-    use super::{ANIM_PAYLOAD_LEN, ANMF_HEADER_LEN, AnimChunk, AnmfFlags, AnmfHeader};
+    use super::{
+        ANIM_PAYLOAD_LEN, ANMF_HEADER_LEN, AnimChunk, AnmfFlags, AnmfHeader, BlendMode,
+        DisposalMode, FrameMeta,
+    };
     use crate::error::Error;
     use crate::image::Dimensions;
+
+    #[test]
+    fn frame_meta_new_carries_every_field() {
+        let dims = Dimensions::new(3, 4).unwrap();
+        let meta = FrameMeta::new(
+            2,
+            6,
+            dims,
+            40,
+            BlendMode::Overwrite,
+            DisposalMode::Background,
+        );
+        assert_eq!(meta.x, 2);
+        assert_eq!(meta.y, 6);
+        assert_eq!(meta.dimensions, dims);
+        assert_eq!(meta.duration_ms, 40);
+        assert_eq!(meta.blend, BlendMode::Overwrite);
+        assert_eq!(meta.dispose, DisposalMode::Background);
+    }
 
     proptest! {
         #[test]

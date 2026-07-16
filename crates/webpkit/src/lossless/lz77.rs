@@ -84,7 +84,7 @@ pub(crate) const fn prefix_encode(value: u32) -> (u32, u32, u32) {
 /// [`PlaneCodeMap`], which the encoder builds once per width and looks up in
 /// O(log n); `plane_code_map_matches_reference` pins the two equal.
 #[cfg(test)]
-#[allow(
+#[expect(
     clippy::cast_possible_truncation,
     reason = "CODE_TO_PLANE_CODES is 120 and every emitted distance is bounded by \
               WINDOW_SIZE, so both narrowing casts are value-preserving"
@@ -119,7 +119,7 @@ pub(crate) struct PlaneCodeMap {
 
 impl PlaneCodeMap {
     /// Build the reverse lookup for width `xsize`.
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         reason = "CODE_TO_PLANE_CODES is 120, so each plane code fits u32"
     )]
@@ -138,7 +138,7 @@ impl PlaneCodeMap {
 
     /// The distance `plane_code` for `dist` — identical to
     /// [`distance_to_plane_code`] for the same `xsize`.
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         reason = "CODE_TO_PLANE_CODES is 120 and every emitted distance is bounded \
                   by WINDOW_SIZE, so the miss-fallback cast is value-preserving"

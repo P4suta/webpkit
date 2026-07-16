@@ -109,10 +109,7 @@ pub enum HasFrames {}
 /// use webpkit::{AnimationEncoder, BlendMode, DisposalMode, Dimensions, FrameMeta, ImageRef, PixelLayout};
 /// let canvas = Dimensions::new(2, 2).unwrap();
 /// let rgba = [10u8, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255];
-/// let meta = FrameMeta {
-///     x: 0, y: 0, dimensions: canvas, duration_ms: 100,
-///     blend: BlendMode::Blend, dispose: DisposalMode::Keep,
-/// };
+/// let meta = FrameMeta::new(0, 0, canvas, 100, BlendMode::Blend, DisposalMode::Keep);
 /// let bytes = AnimationEncoder::new(canvas)
 ///     .with_loop_count(0)
 ///     .add_frame(ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap(), meta)

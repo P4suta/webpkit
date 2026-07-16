@@ -3,7 +3,7 @@
 //! Fixed-point integer only. The 4×4 inverse DCT (`transform_one` and friends)
 //! serves reconstruction; the inverse Walsh–Hadamard transform is used while
 //! parsing a macroblock's second-order (Y2) DC block.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "VP8 transforms store results into i16 with the C int16_t wrapping \

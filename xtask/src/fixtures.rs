@@ -492,13 +492,15 @@ fn animation_frame(width: u32, height: u32, n: u32) -> Vec<u8> {
 /// the encoder-side external gate.
 fn build_webpkit_animation(width: u32, height: u32, frames: &[Vec<u8>]) -> Result<Vec<u8>> {
     let canvas = webpkit::lossless::Dimensions::new(width, height)?;
-    let make_meta = || webpkit::lossless::FrameMeta {
-        x: 0,
-        y: 0,
-        dimensions: canvas,
-        duration_ms: 100,
-        blend: webpkit::lossless::BlendMode::Blend,
-        dispose: webpkit::lossless::DisposalMode::Keep,
+    let make_meta = || {
+        webpkit::lossless::FrameMeta::new(
+            0,
+            0,
+            canvas,
+            100,
+            webpkit::lossless::BlendMode::Blend,
+            webpkit::lossless::DisposalMode::Keep,
+        )
     };
     let (first, rest) = frames
         .split_first()

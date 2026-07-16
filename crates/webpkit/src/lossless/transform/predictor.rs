@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(
+    #[expect(
         clippy::cast_sign_loss,
         reason = "test reproduces libwebp's raw i32->u32 !a>>24 bit trick to prove equivalence"
     )]

@@ -7,7 +7,7 @@
 //! ```text
 //! cargo run -p webpkit --example roundtrip
 //! ```
-#![allow(
+#![expect(
     clippy::print_stdout,
     reason = "a runnable example reports its round-trip results to stdout"
 )]

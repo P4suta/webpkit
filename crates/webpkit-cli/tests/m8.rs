@@ -3,7 +3,7 @@
 //!
 //! Fixtures are binary PPMs written on the fly (the `webp` tool reads netpbm with
 //! no `formats` feature), so nothing is committed and the tests run in any build.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

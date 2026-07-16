@@ -5,7 +5,7 @@
 //! chunk. [`wrap`] upgrades to the extended form (`VP8X` + `ICCP`/`EXIF`/`XMP `)
 //! when metadata must be carried — the exact inverse of
 //! [`super::reader::parse_container`].
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     reason = "callers validate dimensions <= MAX_DIMENSION and metadata blobs are \
               small, so every chunk/RIFF size stays far below u32::MAX"

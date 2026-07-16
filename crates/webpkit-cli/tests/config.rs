@@ -4,7 +4,7 @@
 //! tests check that each layer reaches the wire through the real binary — that a
 //! `WEBP_*` variable is read, that a `webp.toml` value is read *with its line*,
 //! and that the JSON is machine-parseable — which a unit test cannot see.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

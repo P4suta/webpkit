@@ -84,7 +84,7 @@ fn rgb_to_v(sr: i32, sg: i32, sb: i32) -> u8 {
 /// Convert an RGBA source (`rgba`, 4 bytes/pixel, row-major `width` × `height`,
 /// alpha ignored) into padded YUV 4:2:0 [`SourceYuv`] planes.
 #[must_use]
-#[allow(
+#[expect(
     clippy::many_single_char_names,
     reason = "r/g/b are the conventional color-channel names and x/y the pixel \
               coordinates; longer names would obscure the conversion"

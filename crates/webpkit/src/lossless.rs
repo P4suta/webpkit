@@ -239,7 +239,7 @@ pub fn decode_reader<R: std::io::Read>(reader: R) -> Result<Image> {
 ///
 /// This is infallible for a valid [`ImageRef`] today, but returns [`Result`] so
 /// future encoder options can report failures without a breaking change.
-#[allow(
+#[expect(
     clippy::unnecessary_wraps,
     reason = "the Result is a deliberate, stable part of the public API so future \
               encoder options can fail without a breaking signature change"

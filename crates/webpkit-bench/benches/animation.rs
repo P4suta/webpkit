@@ -47,14 +47,7 @@ fn total_pixels(edge: u32) -> u64 {
 
 /// A full-canvas frame meta: no offset, blend, keep.
 const fn full_frame_meta(canvas: Dimensions) -> FrameMeta {
-    FrameMeta {
-        x: 0,
-        y: 0,
-        dimensions: canvas,
-        duration_ms: 100,
-        blend: BlendMode::Blend,
-        dispose: DisposalMode::Keep,
-    }
+    FrameMeta::new(0, 0, canvas, 100, BlendMode::Blend, DisposalMode::Keep)
 }
 
 /// Render the `N` frame samples for one `(content, edge)`. Each frame owns its

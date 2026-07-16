@@ -19,13 +19,13 @@
 //! `plane[off - stride - 1]` and `plane[off - stride + 4 + x]`. The caller
 //! guarantees a top border row and left/right border columns, so these indices
 //! never underflow. Predictors *write* the predicted samples into the block.
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "reproduces the C uint8_t/int16_t wrapping and clip semantics of the \
               reference decoder; every AVG/DC value is provably in 0..=255 before the cast"
 )]
-#![allow(
+#![expect(
     clippy::many_single_char_names,
     reason = "A..L and X are the canonical RFC 6386 / libwebp neighbor-sample labels; \
               preserving them keeps this transcription auditable against dsp/dec.c"
@@ -564,7 +564,7 @@ pub(crate) fn predict_luma4(plane: &mut [u8], off: usize, stride: usize, mode: u
 
 #[cfg(test)]
 mod tests {
-    #![allow(
+    #![expect(
         clippy::needless_range_loop,
         clippy::doc_markdown,
         reason = "these KATs compare a predictor's output against an expected \

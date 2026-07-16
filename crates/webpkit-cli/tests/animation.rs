@@ -1,5 +1,5 @@
 //! Integration tests for animation decoding, driven by a committed fixture.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

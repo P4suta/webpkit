@@ -247,13 +247,15 @@ fn encode_gif_animation(bytes: &[u8], effort: Effort) -> Result<(Vec<u8>, u32, u
     let (width, height) = (first.image.width(), first.image.height());
     let canvas = Dimensions::new(width, height)?;
 
-    let meta_for = |frame: &format::image_input::AnimFrame| FrameMeta {
-        x: 0,
-        y: 0,
-        dimensions: canvas,
-        duration_ms: frame.duration_ms,
-        blend: BlendMode::Overwrite,
-        dispose: DisposalMode::Keep,
+    let meta_for = |frame: &format::image_input::AnimFrame| {
+        FrameMeta::new(
+            0,
+            0,
+            canvas,
+            frame.duration_ms,
+            BlendMode::Overwrite,
+            DisposalMode::Keep,
+        )
     };
 
     let first_ref = ImageRef::new(canvas, PixelLayout::Rgba8, first.image.as_bytes())?;

@@ -3,7 +3,7 @@
 //!
 //! Fixtures are encoded on the fly with the `image` crate (a dev-dependency), so
 //! no binary blobs are committed; the CLI decodes them with the same crate.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

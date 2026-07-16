@@ -11,7 +11,7 @@
 //!
 //! The same shape as the repo's other committed-artifact gates (`corpus/*.json`,
 //! the conformance ledgers): generate, compare, tell the author how to re-bless.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

@@ -4,7 +4,7 @@
 //! Fixtures are binary PPMs written on the fly, so nothing is committed. Crop and
 //! the size search run in any build; resize needs the default `formats` feature
 //! (the `image` crate's resampler), like the rest of the format tests.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

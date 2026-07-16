@@ -134,7 +134,7 @@ const fn needs_filter(p1: i32, p0: i32, q0: i32, q1: i32, t: i32) -> bool {
 }
 
 /// `NeedsFilter2_C`: the normal-filter activation test (outer `t` + interior `it`).
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "the eight straddling samples are loaded once by the caller and \
               passed through as locals; taking a slice would reintroduce the \
@@ -366,7 +366,7 @@ pub(crate) fn filter_mb_simple(
 /// top macroblock edges when `do_top_edge`, then interior horizontal edges.
 /// Macroblock edges pass `thresh = f_limit + 4`; interior edges pass `thresh =
 /// f_limit`; both pass `ithresh = f_ilevel` and `hev_thresh`.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "mirrors the reference VP8 DoFilter interface: three planes with \
               independent offsets/strides plus the two edge flags and the \
@@ -416,7 +416,7 @@ pub(crate) fn filter_mb_normal(
 }
 
 #[cfg(test)]
-#[allow(
+#[expect(
     clippy::match_same_arms,
     reason = "the fixture builders match each plane row/col explicitly to document the \
               filter's row layout; collapsing equal-valued rows would obscure that"

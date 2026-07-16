@@ -1,9 +1,12 @@
 # cargo-mutants configuration (https://mutants.rs/).
 #
-# Scope: `just mutants` / the CI `--in-diff` gate pass `-p webpkit`, so only the
-# product crate is mutated (its `lossless` / `lossy` codec zones and the core
-# shell); the tooling / test-harness crates (xtask, *-fuzz, *-proptest,
-# *-conformance, bench, cli, samples, alloc-count) are never targeted.
+# Scope: the CI `--in-diff` gate passes `-p webpkit -p webpkit-cli`, so both
+# published crates are mutated — the library (its `lossless` / `lossy` codec zones
+# and the core shell) and the CLI. The tooling / test-harness crates (xtask,
+# *-fuzz, *-proptest, *-conformance, bench, samples, alloc-count) are never
+# targeted. The `exclude_re` anchors below are all in the `webpkit` library; the
+# CLI carries no equivalents yet (its `--in-diff` mutants are expected to be caught
+# by the integration tests, not excluded).
 
 # Match the project's test runner so mutation runs reuse the same test set.
 test_tool = "nextest"

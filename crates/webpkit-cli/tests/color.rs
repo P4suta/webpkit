@@ -5,7 +5,7 @@
 //! a unit test cannot see. `assert_cmd` spawns over pipes, so stderr is never a
 //! terminal here — which makes "plain by default" the case under test and every
 //! assertion deterministic.
-#![allow(
+#![expect(
     clippy::expect_used,
     reason = "integration-test helpers live outside #[test] fns; failures are bugs"
 )]

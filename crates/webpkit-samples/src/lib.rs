@@ -17,7 +17,7 @@
     reason = "the corpus must be bit-deterministic across platforms; floating-point \
               rounding is not portable. Every renderer is integer-only."
 )]
-#![allow(
+#![expect(
     clippy::cast_possible_truncation,
     reason = "every narrowing `as` cast here targets one 8-bit RGBA lane or a bounded \
               index: values are masked to 8 bits or divided into `0..=255` before the \

@@ -198,7 +198,7 @@ fn committed_anim_ledger_is_up_to_date() {
 /// replays are produced through the exact same encode/decode reference path the
 /// differential oracle validates.
 #[cfg(feature = "oracle")]
-#[allow(
+#[expect(
     clippy::unwrap_used,
     clippy::panic,
     clippy::cast_possible_truncation,
