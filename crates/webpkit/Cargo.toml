@@ -61,6 +61,7 @@ rayon = { version = "1", optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+webpkit-archtest = { path = "../webpkit-archtest" }
 webpkit-lossy-proptest = { path = "../webpkit-lossy-proptest" }
 # The shared synthetic corpus, for the in-process comparison report against the
 # libwebp C reference (`examples/vs_libwebp.rs`, `oracle` feature).

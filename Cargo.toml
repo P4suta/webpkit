@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/webpkit",
     "crates/webpkit-alloc-count",
+    "crates/webpkit-archtest",
     "crates/webpkit-bench",
     "crates/webpkit-cli",
     "crates/webpkit-conformance",

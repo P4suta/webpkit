@@ -1371,12 +1371,17 @@ dependencies = [
  "libwebp-sys",
  "proptest",
  "rayon",
+ "webpkit-archtest",
  "webpkit-lossy-proptest",
  "webpkit-samples",
 ]
 
 [[package]]
 name = "webpkit-alloc-count"
+version = "0.1.0"
+
+[[package]]
+name = "webpkit-archtest"
 version = "0.1.0"
 
 [[package]]
@@ -1406,6 +1411,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "webpkit",
+ "webpkit-archtest",
 ]
 
 [[package]]

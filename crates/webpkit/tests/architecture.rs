@@ -14,10 +14,11 @@
 //! 2. **Intra-codec layering.** Inside `lossless/` and `lossy/`, every
 //!    `crate::<zone>::<module>` edge must point at an equal-or-lower layer.
 //!
-//! Like the per-crate gates it replaces, this is a source-scanning heuristic:
-//! each line is truncated at its first `//` (dropping comments and doc links), and
-//! only lowercase module heads that name a registered module count as edges. It
-//! catches accidental upward/cross dependencies, not every conceivable obfuscation.
+//! The scanning itself lives in `webpkit-archtest`, shared with the CLI's gate and
+//! tested there: both gates once carried their own copy, and the copies drifted
+//! until this one — the more load-bearing — could not see a violation written the
+//! way rustfmt writes it. It stays a heuristic: comments and doc links never count,
+//! and it catches the accident rather than every conceivable obfuscation.
 
 #![allow(
     clippy::unwrap_used,
@@ -27,7 +28,9 @@
 )]
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use webpkit_archtest::{all_src, module_edges, names_module};
 
 /// `lossless/` internal layers. Lower layers must not depend on higher ones.
 ///
@@ -92,32 +95,6 @@ enum Zone {
     Facade,
 }
 
-fn src_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
-/// Recursively collect every `.rs` file under `dir`.
-fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            collect_rs(&path, out)?;
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
-    Ok(())
-}
-
-/// Drop each line's first `//`-comment so intra-doc links / comments don't count
-/// as dependency edges.
-fn strip_comments(src: &str) -> String {
-    src.lines()
-        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Classify a `src`-relative file into its zone and, for a codec module, the
 /// top-level module name within that zone (`None` for a zone/crate root).
 fn classify(rel: &Path) -> (Zone, Option<String>) {
@@ -137,49 +114,29 @@ fn classify(rel: &Path) -> (Zone, Option<String>) {
     }
 }
 
-/// Every registered-module head in `crate::<prefix>::<ident>` references.
+/// Every registered-module head in this zone that `code` depends on.
 fn zone_edges(code: &str, prefix: &str, layers: &[(&str, u8)]) -> BTreeSet<String> {
-    let needle = format!("crate::{prefix}::");
-    let mut refs = BTreeSet::new();
-    let mut rest = code;
-    while let Some(pos) = rest.find(&needle) {
-        rest = &rest[pos + needle.len()..];
-        let ident: String = rest
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
-        if layers.iter().any(|(m, _)| *m == ident) {
-            refs.insert(ident);
-        }
-    }
-    refs
+    module_edges(code, "crate", prefix, &|ident| {
+        layers.iter().any(|(m, _)| *m == ident)
+    })
+    .into_iter()
+    .collect()
 }
 
 fn layer_of(layers: &[(&str, u8)], module: &str) -> Option<u8> {
     layers.iter().find(|(m, _)| *m == module).map(|(_, l)| *l)
 }
 
-fn all_src() -> Vec<(PathBuf, String)> {
-    let mut files = Vec::new();
-    collect_rs(&src_dir(), &mut files).expect("read src/");
-    files
-        .into_iter()
-        .map(|p| {
-            let rel = p.strip_prefix(src_dir()).unwrap().to_path_buf();
-            let code = strip_comments(&std::fs::read_to_string(&p).expect("read file"));
-            (rel, code)
-        })
-        .collect()
-}
-
 /// Rule 1: no zone depends on a zone it must not see.
 #[test]
 fn zones_stay_isolated() {
     let mut violations = Vec::new();
-    for (rel, code) in all_src() {
+    for (rel, code) in all_src(env!("CARGO_MANIFEST_DIR")) {
         let (zone, _) = classify(&rel);
-        let refs_lossless = code.contains("crate::lossless");
-        let refs_lossy = code.contains("crate::lossy");
+        // `names_module`, not `contains`: a grouped `use crate::{lossless::decode}`
+        // is the form rustfmt writes and a substring scan never sees it.
+        let refs_lossless = names_module(&code, "crate", "lossless");
+        let refs_lossy = names_module(&code, "crate", "lossy");
         match zone {
             // The shell is the shared base: it must name neither codec.
             Zone::Shell if refs_lossless || refs_lossy => {
@@ -203,7 +160,7 @@ fn zones_stay_isolated() {
 /// Rule 2: intra-codec `crate::<zone>::<module>` edges point equal-or-lower.
 fn assert_intra_layering(zone: Zone, prefix: &str, layers: &[(&str, u8)]) {
     let mut violations = Vec::new();
-    for (rel, code) in all_src() {
+    for (rel, code) in all_src(env!("CARGO_MANIFEST_DIR")) {
         let (file_zone, module) = classify(&rel);
         if file_zone != zone {
             continue;
@@ -243,7 +200,7 @@ fn lossy_layers_point_downward() {
 /// silently rot when a new module is added.
 fn assert_all_registered(zone: Zone, prefix: &str, layers: &[(&str, u8)]) {
     let mut unregistered = BTreeSet::new();
-    for (rel, _) in all_src() {
+    for (rel, _) in all_src(env!("CARGO_MANIFEST_DIR")) {
         let (file_zone, module) = classify(&rel);
         if file_zone != zone {
             continue;

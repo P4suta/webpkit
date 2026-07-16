@@ -12,9 +12,10 @@
 //!    layer, and every module must be registered in the table so the layering
 //!    cannot silently rot as modules are added.
 //!
-//! Like the sibling gate in `webpkit`, this is a source-scanning heuristic: each
-//! line is truncated at its first `//`, so comments and intra-doc links do not
-//! count as edges. It catches the accident, not every conceivable obfuscation.
+//! The scanning lives in `webpkit-archtest`, shared with `webpkit`'s gate and
+//! tested there — one home, so a fix cannot land on one gate and miss the other.
+//! It stays a heuristic: comments and doc links never count, and it catches the
+//! accident rather than every conceivable obfuscation.
 
 #![allow(
     clippy::unwrap_used,
@@ -24,7 +25,9 @@
 )]
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use webpkit_archtest::{all_src, names_module, slashed, use_paths};
 
 /// Module layers. An edge may point at its own layer or lower, never higher.
 ///
@@ -74,73 +77,6 @@ const FACADE_GAPS: &[(&str, &str)] = &[
     ("inspect.rs", "container"),
 ];
 
-/// Split `body` on commas that are not inside a nested `{...}`.
-fn split_top_level(body: &str) -> Vec<&str> {
-    let (mut parts, mut depth, mut start) = (Vec::new(), 0_i32, 0);
-    for (index, ch) in body.char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => depth -= 1,
-            ',' if depth == 0 => {
-                parts.push(&body[start..index]);
-                start = index + 1;
-            },
-            _ => {},
-        }
-    }
-    parts.push(&body[start..]);
-    parts.into_iter().filter(|p| !p.is_empty()).collect()
-}
-
-/// Expand one `use` tree body into full paths under `prefix`.
-fn expand_tree(prefix: &str, body: &str, out: &mut Vec<String>) {
-    for item in split_top_level(body) {
-        match (item.find('{'), item.rfind('}')) {
-            (Some(open), Some(close)) if open < close => {
-                let head = format!("{prefix}{}", &item[..open]);
-                expand_tree(&head, &item[open + 1..close], out);
-            },
-            _ => out.push(format!("{prefix}{item}")),
-        }
-    }
-}
-
-/// Every path a file imports from `webpkit`, with nested `use` trees flattened:
-/// `use webpkit::{Image, container::reader::chunks};` yields `Image` and
-/// `container::reader::chunks`.
-///
-/// Flattening is the whole point. The flat spelling `use webpkit::lossless::Image;`
-/// is a substring match, but rustfmt writes the grouped form — so a check that only
-/// sees the flat one passes exactly the code it exists to catch. Matching the
-/// grouped form by substring instead over-fires: `container::anim::` would count as
-/// `webpkit::anim::`, which is a different module. Only real paths answer both.
-fn webpkit_use_paths(code: &str) -> Vec<String> {
-    let dense: String = code.chars().filter(|c| !c.is_whitespace()).collect();
-    let mut paths = Vec::new();
-    let mut rest = dense.as_str();
-    while let Some(start) = rest.find("usewebpkit::") {
-        rest = &rest[start + "usewebpkit::".len()..];
-        let end = rest.find(';').unwrap_or(rest.len());
-        let tree = &rest[..end];
-        match (tree.find('{'), tree.rfind('}')) {
-            (Some(open), Some(close)) if open < close => {
-                expand_tree(&tree[..open], &tree[open + 1..close], &mut paths);
-            },
-            _ => paths.push(tree.to_owned()),
-        }
-        rest = &rest[end..];
-    }
-    paths
-}
-
-/// Whether `code` reaches into `webpkit::<hidden>`, by import or by inline path.
-fn names_hidden_module(code: &str, hidden: &str) -> bool {
-    code.contains(&format!("webpkit::{hidden}::"))
-        || webpkit_use_paths(code)
-            .iter()
-            .any(|path| path.split("::").next() == Some(hidden))
-}
-
 /// Modules permitted to touch the filesystem and the standard streams.
 ///
 /// `io` owns the image bytes, which is what lets errors carry a real path and a
@@ -165,32 +101,6 @@ const IO_CALLS: &[&str] = &[
     "eprintln!",
 ];
 
-fn src_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
-/// Recursively collect every `.rs` file under `dir`.
-fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            collect_rs(&path, out)?;
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
-    Ok(())
-}
-
-/// Drop each line's first `//`-comment so intra-doc links and comments don't count
-/// as dependency edges.
-fn strip_comments(src: &str) -> String {
-    src.lines()
-        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// The top-level module a `src`-relative file belongs to. `None` for the crate
 /// root and the binary shims, which are composition points and may name anything.
 fn module_of(rel: &Path) -> Option<String> {
@@ -214,6 +124,14 @@ fn layer_of(module: &str) -> Option<u8> {
 /// Every registered-module head in `crate::<ident>` references.
 fn crate_edges(code: &str) -> BTreeSet<String> {
     let mut refs = BTreeSet::new();
+    for path in use_paths(code, "crate") {
+        if let Some(head) = path.split("::").next()
+            && layer_of(head).is_some()
+        {
+            refs.insert(head.to_owned());
+        }
+    }
+    // Inline `crate::io::Sink::from_arg(..)`, which no `use` records.
     let mut rest = code;
     while let Some(pos) = rest.find("crate::") {
         rest = &rest[pos + "crate::".len()..];
@@ -228,87 +146,15 @@ fn crate_edges(code: &str) -> BTreeSet<String> {
     refs
 }
 
-fn all_src() -> Vec<(PathBuf, String)> {
-    let mut files = Vec::new();
-    collect_rs(&src_dir(), &mut files).expect("read src/");
-    files
-        .into_iter()
-        .map(|p| {
-            let rel = p.strip_prefix(src_dir()).unwrap().to_path_buf();
-            let code = strip_comments(&std::fs::read_to_string(&p).expect("read file"));
-            (rel, code)
-        })
-        .collect()
-}
-
-/// The scanner has been wrong in both directions — it missed a grouped `use`, then
-/// over-fired on `container::anim` as if it were `webpkit::anim`. A gate that can
-/// be wrong quietly is worse than none, so its own logic is tested.
-#[cfg(test)]
-mod scanner {
-    use super::names_hidden_module;
-
-    #[test]
-    fn a_flat_import_is_caught() {
-        assert!(names_hidden_module(
-            "use webpkit::lossless::Image;",
-            "lossless"
-        ));
-    }
-
-    #[test]
-    fn a_grouped_import_is_caught() {
-        let code = "use webpkit::{\n    Metadata,\n    lossless::Effort,\n};";
-        assert!(names_hidden_module(code, "lossless"));
-    }
-
-    #[test]
-    fn a_deeply_nested_import_is_caught() {
-        let code = "use webpkit::{container::{reader::{chunks, locate_image}}};";
-        assert!(names_hidden_module(code, "container"));
-    }
-
-    #[test]
-    fn an_inline_path_is_caught() {
-        assert!(names_hidden_module(
-            "let x = webpkit::stream::DecodeOptions::new();",
-            "stream"
-        ));
-    }
-
-    #[test]
-    fn the_facade_is_not_a_violation() {
-        let code = "use webpkit::{Codec, DecodeOptions, Image, ImageInfo, Metadata};";
-        for hidden in ["image", "error", "stream", "effort", "anim"] {
-            assert!(!names_hidden_module(code, hidden), "{hidden}");
-        }
-    }
-
-    /// `container::anim` is not `webpkit::anim`: a nested segment must not be read
-    /// as a top-level one. This is the false positive that shipped for a minute.
-    #[test]
-    fn a_nested_segment_is_not_a_top_level_module() {
-        let code = "use webpkit::{container::{anim::ANMF_HEADER_LEN, reader::chunks}};";
-        assert!(names_hidden_module(code, "container"));
-        assert!(!names_hidden_module(code, "anim"));
-    }
-
-    /// `webpkit::Error` is the facade type; `webpkit::error` is the hidden module.
-    #[test]
-    fn a_type_is_not_its_module() {
-        assert!(!names_hidden_module("webpkit::Error::Truncated", "error"));
-    }
-}
-
 /// Rule 1: name codec types through the facade, not through `webpkit`'s hidden
 /// modules.
 #[test]
 fn codec_types_come_from_the_facade() {
     let mut violations = Vec::new();
-    for (rel, code) in all_src() {
-        let file = rel.to_string_lossy().replace('\\', "/");
+    for (rel, code) in all_src(env!("CARGO_MANIFEST_DIR")) {
+        let file = slashed(&rel);
         for hidden in HIDDEN_MODULES {
-            if !names_hidden_module(&code, hidden) {
+            if !names_module(&code, "webpkit", hidden) {
                 continue;
             }
             let allowed = FACADE_GAPS
@@ -335,7 +181,7 @@ fn codec_types_come_from_the_facade() {
 #[test]
 fn cli_layers_point_downward() {
     let mut violations = Vec::new();
-    for (rel, code) in all_src() {
+    for (rel, code) in all_src(env!("CARGO_MANIFEST_DIR")) {
         // `lib.rs` and the bin shims are composition roots.
         let Some(module) = module_of(&rel) else {
             continue;
@@ -361,7 +207,7 @@ fn cli_layers_point_downward() {
 #[test]
 fn every_module_is_registered() {
     let mut unregistered = BTreeSet::new();
-    for (rel, _) in all_src() {
+    for (rel, _) in all_src(env!("CARGO_MANIFEST_DIR")) {
         if let Some(module) = module_of(&rel)
             && layer_of(&module).is_none()
         {
@@ -382,7 +228,7 @@ fn every_module_is_registered() {
 #[test]
 fn io_stays_in_its_module() {
     let mut violations = Vec::new();
-    for (rel, code) in all_src() {
+    for (rel, code) in all_src(env!("CARGO_MANIFEST_DIR")) {
         let Some(module) = module_of(&rel) else {
             continue;
         };
@@ -393,7 +239,7 @@ fn io_stays_in_its_module() {
             if code.contains(call) {
                 violations.push(format!(
                     "{} calls `{call}` — route it through `crate::io`",
-                    rel.to_string_lossy().replace('\\', "/")
+                    slashed(&rel)
                 ));
             }
         }
