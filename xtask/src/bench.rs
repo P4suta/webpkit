@@ -155,7 +155,7 @@ pub(crate) fn bench_real(real: &Path, max_edge: u32, iters: u32, limit: usize) -
     }
 
     println!();
-    println!("webpkit-lossless encode/decode throughput on real images (printed only, NOT gated):");
+    println!("webpkit encode/decode throughput on real images (printed only, NOT gated):");
     match (max_edge > 0).then_some(max_edge) {
         Some(width) => println!("  input width capped to {width}px by cwebp (aspect preserved)"),
         None => println!("  native resolution (no resize)"),

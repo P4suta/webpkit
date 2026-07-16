@@ -1,8 +1,8 @@
-//! Conformance test entry point.
+//! Harness smoke tests.
 //!
-//! When fixtures are present under `fixtures/`, this walks each case, runs it
-//! through `webpkit-lossless`, and compares against the committed golden. Without
-//! them it exercises the harness types and confirms `webpkit-lossless` links.
+//! The fixture walk lives in `decode.rs`, `encode.rs`, `metadata.rs` and
+//! `ledger.rs` — this file only checks that the harness types serialize and that
+//! `webpkit` links. (It once claimed to be the fixture entry point; it never was.)
 
 use webpkit_lossless_conformance::{CaseResult, Level, results_to_json};
 
@@ -15,11 +15,14 @@ fn results_serialize_to_json() {
         passed: true,
     }];
     let json = results_to_json(&results).expect("serialize results");
-    assert!(json.contains("smoke"));
-    assert!(json.contains("must"));
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+    let first = &parsed[0];
+    assert_eq!(first["case"], "smoke");
+    assert_eq!(first["level"], "must");
+    assert_eq!(first["passed"], true);
 }
 
 #[test]
-fn webpkit_lossless_links_and_reports_a_version() {
+fn webpkit_links_and_reports_a_version() {
     assert!(!webpkit::lossless::version().is_empty());
 }

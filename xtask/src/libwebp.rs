@@ -60,7 +60,7 @@ pub(crate) fn check_version(bin: &str, tool: &str, env: &str) -> Result<()> {
     let version = first.split_whitespace().next_back().unwrap_or(first);
     if version != REQUIRED_LIBWEBP {
         bail!(
-            "{tool} reports version `{version}`, but webpkit::lossless fixtures require libwebp \
+            "{tool} reports version `{version}`, but webpkit fixtures require libwebp \
              {REQUIRED_LIBWEBP}. Use the mise-pinned toolchain, e.g. \
              'mise exec -- cargo xtask gen-fixtures', or point {env} at a \
              {REQUIRED_LIBWEBP} binary."

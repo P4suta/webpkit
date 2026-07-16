@@ -14,7 +14,7 @@ publish = false
 # `libwebp-sys`) so the `#[ignore]`d generators in `tests/ledger.rs` can encode
 # synthetic RGBA through the libwebp ADVANCED encoder and read back its RGBA
 # golden. Never part of a normal build or the default CI gate, which link no
-# reference library and only replay the committed fixtures through `webp::decode`.
+# reference library and only replay the committed fixtures through `webpkit::decode`.
 oracle = ["dep:libwebp-sys"]
 
 [dependencies]

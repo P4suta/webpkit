@@ -315,7 +315,7 @@ jobs:
       - name: line coverage floor
         run: >
           cargo llvm-cov nextest --workspace --locked
-          --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-lossless-fuzz|webpkit-cli|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
+          --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-samples|webpkit-lossless-fuzz|webpkit-cli|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
           --fail-under-lines 90
 
   # Mutation-test only the lines this PR changes: inject bugs into the changed

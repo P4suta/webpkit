@@ -53,9 +53,13 @@ fn metadata_fixtures_extract_exactly() {
         checked += 1;
     }
 
-    // Tolerate the fixture being absent (e.g. before `gen-fixtures` has run with
-    // webpmux); the generation-time gate is the fail-closed external check.
-    if checked == 0 {
-        eprintln!("note: no VP8X metadata fixtures present; run `cargo xtask gen-fixtures`");
-    }
+    // The committed corpus ships VP8X metadata cases, so zero checked means the
+    // participation filter stopped matching — a silent skip of the whole VP8X
+    // metadata parser, not an empty directory. Every sibling conformance test
+    // asserts this; this one only warned, so it could pass while testing nothing.
+    assert!(
+        checked > 0,
+        "no VP8X metadata fixture participated; the corpus is expected to ship them \
+         (run `cargo xtask gen-fixtures` if the fixtures are genuinely absent)"
+    );
 }

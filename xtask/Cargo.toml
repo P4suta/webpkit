@@ -21,7 +21,7 @@ path = "src/main.rs"
 work-count = ["webpkit/work-count"]
 # Forward the encoder's parallel `Method::Best` evaluator so `bench-real` can time
 # the serial-vs-rayon delta the CLI binaries ship with. Output is byte-identical
-# either way (proven by `cargo test -p webpkit-lossless --features rayon`); this
+# either way (proven by `cargo test -p webpkit --features rayon`); this
 # only affects wall-clock, never the gated size/work ledgers.
 rayon = ["webpkit/rayon"]
 

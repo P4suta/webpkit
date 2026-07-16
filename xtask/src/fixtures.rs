@@ -247,7 +247,7 @@ fn adler32(data: &[u8]) -> u32 {
 
 /// Strip a PAM header, returning everything after the `ENDHDR\n` marker.
 ///
-/// Mirrors the logic in `crates/webpkit-lossless/tests/golden_local.rs`.
+/// Mirrors the logic in `crates/webpkit/tests/golden_local.rs`.
 fn strip_pam_header(pam: &[u8]) -> Result<Vec<u8>> {
     let marker = b"ENDHDR\n";
     let end = pam

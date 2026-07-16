@@ -140,6 +140,9 @@ drift-gate:
     cargo test -p webpkit-lossless-conformance -p webpkit-lossy-conformance -p webpkit-conformance --test ledger
 
 # Regenerate every committed conformance ledger from the current fixtures.
+# Ledger writing is tool-free (it recomputes from committed fixtures), so no
+# `--features oracle` here — the alpha/anim generators used to be oracle-gated and
+# this recipe silently regenerated 2 of 4, reporting success while touching neither.
 gen-ledgers:
     cargo test -p webpkit-lossless-conformance -p webpkit-lossy-conformance -p webpkit-conformance --test ledger -- --ignored
 
