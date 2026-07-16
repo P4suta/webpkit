@@ -1,8 +1,11 @@
-//! Corpus-replay regression for the VP8 (lossy) decode + streaming targets.
+//! Corpus-replay regression for the VP8 (lossy) fuzz targets.
 //!
-//! Feeds every committed seed through the same decode entry points the libFuzzer
-//! targets call, on **stable** under a normal `cargo test` (overflow-checks on).
-//! See `crates/webpkit-fuzz/tests/replay_seeds.rs` for the rationale.
+//! Feeds every committed seed through the targets themselves — the functions in
+//! this crate's lib that `fuzz_targets/*.rs` wrap — on **stable** under a normal
+//! `cargo test`, with overflow-checks on. While the libFuzzer job is disabled this
+//! is the only continuous coverage these invariants get, so it calls the target
+//! rather than re-typing it: `encode`'s hand-written mirror ran `decode`, so the
+//! encoder invariant never ran at all.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
@@ -31,34 +34,37 @@ fn replay(target: &str, body: impl Fn(&[u8])) -> std::io::Result<()> {
 }
 
 #[test]
-fn lossy_decode_never_panics_on_any_seed() -> std::io::Result<()> {
-    // Mirrors fuzz_targets/decode.rs: the VP8 key-frame decoder must never panic on
-    // hostile input. The encode corpus is also decode-safe to replay as a smoke.
+fn decode_survives_every_seed() -> std::io::Result<()> {
+    // Both corpora are decode-safe to replay; the encode seeds are a smoke here.
     for target in ["decode", "encode"] {
-        replay(target, |data| {
-            let _ = webpkit::lossy::decode(data);
-        })?;
+        replay(target, webpkit_lossy_fuzz::decode)?;
     }
     Ok(())
 }
 
+/// The encoder invariant itself — encode, decode our own output, compare
+/// dimensions — not merely "decoding the seeds does not panic".
 #[test]
-fn lossy_stream_never_panics_on_any_seed() -> std::io::Result<()> {
-    // Mirrors fuzz_targets/stream.rs: push each seed in data-derived chunk sizes so
-    // many suspend/resume boundaries are crossed; no split may panic, and draining
-    // rows / finishing must stay sound.
-    replay("stream", |data| {
-        let mut dec = webpkit::lossy::IncrementalDecoder::new();
-        let mut off = 0;
-        while off < data.len() {
-            let step = 1 + (data[off] as usize & 0x0f);
-            let end = (off + step).min(data.len());
-            if dec.push(&data[off..end]).is_err() {
-                break;
-            }
-            let _ = dec.drain_rows();
-            off = end;
-        }
-        let _ = dec.into_image();
-    })
+fn encode_survives_every_seed() -> std::io::Result<()> {
+    replay("encode", webpkit_lossy_fuzz::encode)
+}
+
+#[test]
+fn stream_survives_every_seed() -> std::io::Result<()> {
+    replay("stream", webpkit_lossy_fuzz::stream)
+}
+
+/// At least one seed must actually reach the encode assertions, so
+/// `encode_survives_every_seed` cannot pass by asserting nothing.
+#[test]
+fn encode_seeds_are_not_vacuous() -> std::io::Result<()> {
+    let reached = seeds("encode")?
+        .iter()
+        .filter(|(_, data)| webpkit_lossy_fuzz::encode_reached(data))
+        .count();
+    assert!(
+        reached > 0,
+        "no encode seed reaches the encode/decode invariant"
+    );
+    Ok(())
 }

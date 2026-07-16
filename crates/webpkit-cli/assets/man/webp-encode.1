@@ -1,0 +1,122 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-encode 1  "encode " 
+.SH NAME
+encode \- Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
+.SH SYNOPSIS
+\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-crop\fR] [\fB\-\-resize\fR] [\fB\-\-target\-size\fR] [\fB\-\-min\-psnr\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
+.SH DESCRIPTION
+Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
+Output `.webp` file; `\-` writes stdout
+.TP
+\fB\-\-input\-format\fR \fI<INPUT_FORMAT>\fR
+Input format; defaults to the extension, else the magic bytes, else raw
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+png: PNG (any color type; normalized to RGBA8)
+.IP \(bu 2
+ppm: Netpbm binary PPM (`P6`, RGB)
+.IP \(bu 2
+pam: Netpbm binary PAM (`P7`, RGBA)
+.IP \(bu 2
+jpeg: JPEG (decoded to RGBA8; needs the `formats` feature)
+.IP \(bu 2
+gif: GIF (first frame as a still; whole\-file animation is a separate path)
+.IP \(bu 2
+tiff: TIFF (decoded to RGBA8; needs the `formats` feature)
+.IP \(bu 2
+bmp: BMP (decoded to RGBA8; needs the `formats` feature)
+.IP \(bu 2
+raw: Raw row\-major pixels; requires `\-\-width`/`\-\-height`/`\-\-layout`
+.RE
+.TP
+\fB\-\-width\fR \fI<WIDTH>\fR
+Raw\-input width in pixels (required for raw input)
+.TP
+\fB\-\-height\fR \fI<HEIGHT>\fR
+Raw\-input height in pixels (required for raw input)
+.TP
+\fB\-\-layout\fR \fI<LAYOUT>\fR [default: rgba8]
+Byte order for raw input only
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+rgba8: `R, G, B, A`
+.IP \(bu 2
+argb8: `A, R, G, B`
+.IP \(bu 2
+bgra8: `B, G, R, A`
+.RE
+.TP
+\fB\-m\fR, \fB\-\-method\fR \fI<METHOD>\fR
+Encoder effort [default: balanced, or from env/config]
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+fast: Fastest: literal + subtract\-green only
+.IP \(bu 2
+balanced: Balanced (the default): LZ77 + color cache
+.IP \(bu 2
+best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
+.RE
+.TP
+\fB\-\-lossless\fR
+Force lossless (VP8L). The default is source\-derived: JPEG → lossy, else lossless
+.TP
+\fB\-\-lossy\fR
+Encode lossily (VP8) instead of losslessly (VP8L)
+.TP
+\fB\-q\fR, \fB\-\-quality\fR \fI<QUALITY>\fR
+Lossy quality 0\-100 (higher = larger, closer to source); selects \-\-lossy
+.TP
+\fB\-\-crop\fR \fI<X,Y,W,H>\fR
+Crop before encoding: `x,y,width,height` in pixels (applied before \-\-resize)
+.TP
+\fB\-\-resize\fR \fI<WxH>\fR
+Resize before encoding: `WxH` (use 0 on one axis to keep aspect)
+.TP
+\fB\-\-target\-size\fR \fI<SIZE>\fR
+Target output size, e.g. `200k` or `2M`, found by searching lossy quality.
+
+Lossy only: it bisects quality until the encoded file fits. With `\-v`, the search is printed. Cannot combine with `\-\-lossless`.
+.TP
+\fB\-\-min\-psnr\fR \fI<DB>\fR
+Target reconstruction PSNR floor in dB (lossy only; pairs with \-\-target\-size)
+.TP
+\fB\-\-metadata\fR \fI<METADATA>\fR
+Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+all: Keep ICC, Exif, and XMP
+.IP \(bu 2
+none: Strip everything (a bare `VP8L` output)
+.IP \(bu 2
+icc: Keep the ICC color profile
+.IP \(bu 2
+exif: Keep Exif
+.IP \(bu 2
+xmp: Keep XMP
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIINPUT\fR] [default: \-]
+Input image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw); `\-` (default) reads stdin

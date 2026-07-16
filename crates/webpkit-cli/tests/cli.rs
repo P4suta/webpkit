@@ -235,3 +235,66 @@ fn misused_arguments_exit_2() {
     // Missing required -o.
     webp().args(["encode", "-"]).assert().code(2);
 }
+
+#[test]
+fn explain_prints_the_limit_meaning() {
+    webp()
+        .args(["explain", "7"])
+        .assert()
+        .success()
+        .stdout(contains("limit"))
+        .stdout(contains("memory"));
+}
+
+#[test]
+fn explain_accepts_a_short_name() {
+    webp()
+        .args(["explain", "read"])
+        .assert()
+        .success()
+        .stdout(contains("could not be read"));
+}
+
+#[test]
+fn explain_rejects_an_unknown_code_with_exit_2() {
+    webp().args(["explain", "42"]).assert().code(2);
+}
+
+/// The OS message survives to the user instead of an `ErrorKind` summary: a
+/// missing file reads as "no such file", not "entity not found".
+#[test]
+fn a_read_error_carries_the_os_message() {
+    webp()
+        .args(["info", "definitely-not-here.webp"])
+        .assert()
+        .code(3)
+        .stderr(contains("cannot read `definitely-not-here.webp`"));
+}
+
+/// `--dry-run` reports the plan and writes nothing — and exits 0, so it composes
+/// in a script that then decides whether to run for real.
+#[test]
+fn dry_run_writes_nothing_and_reports_the_plan() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let input = dir.path().join("in.ppm");
+    let mut bytes = b"P6\n4 4\n255\n".to_vec();
+    bytes.extend(std::iter::repeat_n(0x40u8, 4 * 4 * 3));
+    std::fs::write(&input, &bytes).expect("write input");
+    let output = dir.path().join("out.webp");
+
+    Command::cargo_bin("webp")
+        .expect("binary")
+        .arg("encode")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("dry run:"));
+
+    assert!(
+        !output.exists(),
+        "--dry-run created the output file it promised not to write"
+    );
+}

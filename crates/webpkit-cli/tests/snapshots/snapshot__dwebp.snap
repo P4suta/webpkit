@@ -1,16 +1,18 @@
 ---
 source: crates/webpkit-cli/tests/snapshot.rs
-expression: "help(\"dwebp\", \"-h\")"
+expression: "dump(\"dwebp\", \"-h\")"
 ---
-dwebp (webpkit) — decode WebP VP8L (lossless) to PNG/PPM/PAM
+$ dwebp -h
+dwebp (webpkit) — decode WebP (lossless, lossy, or animated) to PNG/PPM/PAM
 
 Usage: dwebp [options] <input.webp> -o <output>
 
 Options:
-  -o <file>   output file (`-` for stdout)
-  -png        PNG output (default)
-  -ppm / -pam netpbm output
-  -flip       flip vertically
-  -alpha      output the alpha plane as grayscale
-  -quiet / -v quieter / more verbose
-  -version    print version
+  -o <file>      output file (`-` for stdout)
+  -png           PNG output (default)
+  -ppm / -pam    netpbm output
+  -flip          flip vertically
+  -alpha         output the alpha plane as grayscale
+  -quiet / -v    quieter / more verbose
+  -color <when>  auto (default), always, or never
+  -version       print version

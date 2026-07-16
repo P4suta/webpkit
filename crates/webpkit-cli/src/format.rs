@@ -1,33 +1,46 @@
-//! Image-file encodings the CLI reads and writes: PNG, netpbm (PPM/PAM), raw.
+//! Image-file encodings the CLI reads and writes: PNG, netpbm (PPM/PAM), raw,
+//! and — behind the `formats` feature — JPEG/GIF/TIFF/BMP via the `image` crate.
 //!
 //! The codec itself only speaks raw RGBA/ARGB/BGRA, so this layer is what makes
-//! the tools accept `.png` inputs and emit `.png` outputs.
+//! the tools accept `.png` inputs and emit `.png` outputs. PNG keeps its own
+//! decoder for metadata fidelity the `image` crate cannot give; the four extra
+//! input formats route through `image_input`.
 
-pub mod png;
-pub mod ppm;
-pub mod raw;
+#[cfg(feature = "formats")]
+pub(crate) mod image_input;
+pub(crate) mod png;
+pub(crate) mod ppm;
+pub(crate) mod raw;
 
 use clap::ValueEnum;
-use webpkit::lossless::{Image, Metadata, PixelLayout};
+use webpkit::{Dimensions, Image, Metadata, PixelLayout};
 
 use crate::{error::CliError, format::raw::RawParams};
 
 /// An image encoding the CLI can read as encoder input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum InputFormat {
+pub(crate) enum InputFormat {
     /// PNG (any color type; normalized to RGBA8).
     Png,
     /// Netpbm binary PPM (`P6`, RGB).
     Ppm,
     /// Netpbm binary PAM (`P7`, RGBA).
     Pam,
+    /// JPEG (decoded to RGBA8; needs the `formats` feature).
+    Jpeg,
+    /// GIF (first frame as a still; whole-file animation is a separate path).
+    Gif,
+    /// TIFF (decoded to RGBA8; needs the `formats` feature).
+    Tiff,
+    /// BMP (decoded to RGBA8; needs the `formats` feature).
+    Bmp,
     /// Raw row-major pixels; requires `--width`/`--height`/`--layout`.
     Raw,
 }
 
 /// An image encoding the CLI can write as decoder output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum OutputFormat {
+pub(crate) enum OutputFormat {
     /// PNG, RGBA8.
     Png,
     /// Netpbm binary PPM (`P6`, RGB; alpha dropped).
@@ -42,7 +55,7 @@ impl InputFormat {
     /// Resolve the input format: an explicit choice wins, else the file
     /// extension, else the leading magic bytes, else [`InputFormat::Raw`].
     #[must_use]
-    pub fn resolve(explicit: Option<Self>, extension: Option<&str>, bytes: &[u8]) -> Self {
+    pub(crate) fn resolve(explicit: Option<Self>, extension: Option<&str>, bytes: &[u8]) -> Self {
         explicit
             .or_else(|| extension.and_then(Self::from_extension))
             .or_else(|| Self::sniff(bytes))
@@ -54,9 +67,21 @@ impl InputFormat {
             "png" => Some(Self::Png),
             "ppm" => Some(Self::Ppm),
             "pam" => Some(Self::Pam),
+            "jpg" | "jpeg" => Some(Self::Jpeg),
+            "gif" => Some(Self::Gif),
+            "tif" | "tiff" => Some(Self::Tiff),
+            "bmp" => Some(Self::Bmp),
             "raw" | "rgba" | "argb" | "bgra" => Some(Self::Raw),
             _ => None,
         }
+    }
+
+    /// Whether these bytes are a GIF, by magic (`GIF87a`/`GIF89a`). The GIF sniff
+    /// stands alone because the `webp` tool routes a GIF to the animation encoder,
+    /// not the still path — direction is decided before a format is even resolved.
+    #[must_use]
+    pub(crate) fn is_gif(bytes: &[u8]) -> bool {
+        bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")
     }
 
     fn sniff(bytes: &[u8]) -> Option<Self> {
@@ -66,6 +91,14 @@ impl InputFormat {
             Some(Self::Ppm)
         } else if bytes.starts_with(b"P7") {
             Some(Self::Pam)
+        } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+            Some(Self::Jpeg)
+        } else if Self::is_gif(bytes) {
+            Some(Self::Gif)
+        } else if bytes.starts_with(b"II*\x00") || bytes.starts_with(b"MM\x00*") {
+            Some(Self::Tiff)
+        } else if bytes.starts_with(b"BM") {
+            Some(Self::Bmp)
         } else {
             None
         }
@@ -76,7 +109,7 @@ impl OutputFormat {
     /// Resolve the output format: an explicit choice wins, else the `-o`
     /// extension, else [`OutputFormat::Png`] (the dwebp default).
     #[must_use]
-    pub fn resolve(explicit: Option<Self>, extension: Option<&str>) -> Self {
+    pub(crate) fn resolve(explicit: Option<Self>, extension: Option<&str>) -> Self {
         explicit
             .or_else(|| extension.and_then(Self::from_extension))
             .unwrap_or(Self::Png)
@@ -93,6 +126,53 @@ impl OutputFormat {
     }
 }
 
+/// The image's dimensions read from its header alone, without decoding pixels —
+/// so a preprocessing pipeline can refuse an out-of-bounds crop from a few bytes.
+///
+/// `None` when the format carries no cheap header dimensions here (netpbm, raw) or
+/// the header is unreadable; the caller then falls back to validating against the
+/// fully decoded image, which is never skipped.
+#[must_use]
+pub(crate) fn dimensions_of(bytes: &[u8], format: InputFormat) -> Option<Dimensions> {
+    let (width, height) = match format {
+        InputFormat::Png => png_dimensions(bytes)?,
+        InputFormat::Jpeg | InputFormat::Gif | InputFormat::Tiff | InputFormat::Bmp => {
+            image_dimensions(bytes)?
+        },
+        InputFormat::Ppm | InputFormat::Pam | InputFormat::Raw => return None,
+    };
+    Dimensions::new(width, height).ok()
+}
+
+/// Width and height from a PNG `IHDR` (bytes 16..24, big-endian), or `None` if the
+/// signature or length is wrong.
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 24 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return None;
+    }
+    let read =
+        |at: usize| u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
+    Some((read(16), read(20)))
+}
+
+/// Width and height from a JPEG/GIF/TIFF/BMP header via the `image` crate's
+/// header reader (no full decode).
+#[cfg(feature = "formats")]
+fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+}
+
+/// Without the `formats` feature the four `image`-crate formats cannot be probed,
+/// so header projection falls back to the full-decode validation.
+#[cfg(not(feature = "formats"))]
+const fn image_dimensions(_bytes: &[u8]) -> Option<(u32, u32)> {
+    None
+}
+
 /// Decode `bytes` in the given `format` into an [`Image`].
 ///
 /// `raw` supplies the dimensions/layout required by [`InputFormat::Raw`].
@@ -101,7 +181,7 @@ impl OutputFormat {
 ///
 /// [`CliError::Format`] if a PNG/netpbm stream is malformed, or
 /// [`CliError::RawConfig`] if raw parameters are missing or inconsistent.
-pub fn read_image(
+pub(crate) fn read_image(
     bytes: &[u8],
     format: InputFormat,
     raw: Option<RawParams>,
@@ -109,6 +189,9 @@ pub fn read_image(
     match format {
         InputFormat::Png => png::read(bytes),
         InputFormat::Ppm | InputFormat::Pam => ppm::read(bytes),
+        InputFormat::Jpeg | InputFormat::Gif | InputFormat::Tiff | InputFormat::Bmp => {
+            read_via_image(bytes, format)
+        },
         InputFormat::Raw => {
             let params = raw.ok_or_else(|| {
                 CliError::RawConfig(
@@ -121,6 +204,22 @@ pub fn read_image(
     }
 }
 
+/// Decode a JPEG/GIF/TIFF/BMP still via the `image` crate. A GIF yields its first
+/// frame here; the animation path (`webp` → animated WebP) is separate.
+#[cfg(feature = "formats")]
+fn read_via_image(bytes: &[u8], format: InputFormat) -> Result<Image, CliError> {
+    image_input::read_still(bytes, format)
+}
+
+/// Without the `formats` feature the four `image`-crate formats are recognized but
+/// not decodable, so the error names the missing capability rather than misparsing.
+#[cfg(not(feature = "formats"))]
+fn read_via_image(_bytes: &[u8], format: InputFormat) -> Result<Image, CliError> {
+    Err(CliError::Format(format!(
+        "{format:?} input needs the `formats` feature, which this build was compiled without"
+    )))
+}
+
 /// Encode an [`Image`] into the given output `format`, returning file bytes.
 ///
 /// `metadata` is embedded only by formats that support it (PNG); netpbm and raw
@@ -129,7 +228,7 @@ pub fn read_image(
 /// # Errors
 ///
 /// [`CliError::Format`] if PNG encoding fails.
-pub fn write_image(
+pub(crate) fn write_image(
     image: &Image,
     format: OutputFormat,
     metadata: &Metadata,
@@ -144,7 +243,7 @@ pub fn write_image(
 
 /// Return an image's pixels as RGBA8, reordering from its stored layout.
 #[must_use]
-pub fn to_rgba8(image: &Image) -> Vec<u8> {
+pub(crate) fn to_rgba8(image: &Image) -> Vec<u8> {
     let src = image.as_bytes();
     match image.layout() {
         PixelLayout::Rgba8 => src.to_vec(),

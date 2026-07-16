@@ -1,20 +1,708 @@
 ---
 source: crates/webpkit-cli/tests/snapshot.rs
-expression: "help(\"webp\", \"--help\")"
+expression: "dump(\"webp\", \"--help\")"
 ---
+$ webp --help
 Command-line tools for the webpkit WebP codec: libwebp-style cwebp (lossy by default, -lossless for VP8L) / dwebp and the webp brand tool.
 
-Usage: webp [OPTIONS] <COMMAND>
+Usage: webp [OPTIONS] [INPUTS]...
+       webp <COMMAND>
 
 Commands:
-  decode   Decode a WebP VP8L file to PNG (default), PPM/PAM, or raw pixels
-  encode   Encode a PNG/PPM/PAM/raw image into a WebP file (lossless, or --lossy)
-  convert  Batch-convert many images (or directories) to WebP, in parallel
-  info     Print a summary of a WebP file (size, alpha, metadata, animation)
-  help     Print this message or the help of the given subcommand(s)
+  decode       Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
+  encode       Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
+  convert      Batch-convert many images (or directories) to WebP, in parallel
+  info         Print a summary of a WebP file (size, alpha, metadata, animation)
+  diff         Compare two images: report PSNR and the largest per-channel difference
+  doctor       Diagnose the environment: PATH drop-in shadows, config, terminal, threads
+  config       Show resolved settings and where each came from (args, env, file, default)
+  explain      Explain an exit code: what a failing run's status number means
+  completions  Print a shell completion script
+  man          Print a man page in roff, for `man -l -` or a package's man directory
+  help         Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [INPUTS]...
+          Images or directories. A WebP is decoded to PNG; anything else is encoded
 
 Options:
-  -v, --verbose...  Print per-stage detail on stderr
-  -q, --quiet       Suppress all non-error output
-  -h, --help        Print help
-  -V, --version     Print version
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -o, --output <OUTPUT>
+          Output file, or a directory for many inputs; default: beside each input
+
+  -q, --quality <QUALITY>
+          Lossy quality 0-100 (higher = larger, closer to source); selects lossy
+
+      --lossless
+          Force lossless (VP8L) encoding
+
+      --lossy
+          Force lossy (VP8) encoding
+
+  -m, --method <METHOD>
+          Encoder effort [default: balanced, or from env/config]
+
+          Possible values:
+          - fast:     Fastest: literal + subtract-green only
+          - balanced: Balanced (the default): LZ77 + color cache
+          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+
+      --metadata <METADATA>
+          Metadata to embed: all,none,icc,exif,xmp (default: all)
+
+          Possible values:
+          - all:  Keep ICC, Exif, and XMP
+          - none: Strip everything (a bare `VP8L` output)
+          - icc:  Keep the ICC color profile
+          - exif: Keep Exif
+          - xmp:  Keep XMP
+
+      --crop <X,Y,W,H>
+          Crop before encoding: `x,y,width,height` in pixels (applied before --resize)
+
+      --resize <WxH>
+          Resize before encoding: `WxH` (use 0 on one axis to keep aspect)
+
+  -r, --recursive
+          Recurse into subdirectories
+
+      --force
+          Overwrite an existing derived output
+
+      --no-clobber
+          Skip an existing derived output instead of failing (still exits 0)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+$ webp decode --help
+Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
+
+Usage: webp decode [OPTIONS] --output <OUTPUT> [INPUT]
+
+Arguments:
+  [INPUT]
+          Input `.webp` file; `-` (the default) reads stdin
+          
+          [default: -]
+
+Options:
+  -o, --output <OUTPUT>
+          Output path; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --format <FORMAT>
+          Output format; defaults to the `-o` extension, else PNG
+
+          Possible values:
+          - png: PNG, RGBA8
+          - ppm: Netpbm binary PPM (`P6`, RGB; alpha dropped)
+          - pam: Netpbm binary PAM (`P7`, RGBA)
+          - raw: Raw row-major pixels in the requested `--layout`
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --layout <LAYOUT>
+          Byte order for raw output only
+
+          Possible values:
+          - rgba8: `R, G, B, A`
+          - argb8: `A, R, G, B`
+          - bgra8: `B, G, R, A`
+          
+          [default: rgba8]
+
+      --frames <FRAMES>
+          For animations: which frames to emit
+
+          Possible values:
+          - first: Only the first composited frame (the default)
+          - all:   Every composited frame, numbered `<stem>-000.<ext>`, ...
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+      --frame <FRAME>
+          For animations: emit only this 0-based frame
+
+      --metadata <METADATA>
+          Metadata to carry into the output: all,none,icc,exif,xmp (default: all)
+
+          Possible values:
+          - all:  Keep ICC, Exif, and XMP
+          - none: Strip everything (a bare `VP8L` output)
+          - icc:  Keep the ICC color profile
+          - exif: Keep Exif
+          - xmp:  Keep XMP
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp encode --help
+Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
+
+Usage: webp encode [OPTIONS] --output <OUTPUT> [INPUT]
+
+Arguments:
+  [INPUT]
+          Input image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw); `-` (default) reads stdin
+          
+          [default: -]
+
+Options:
+  -o, --output <OUTPUT>
+          Output `.webp` file; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --input-format <INPUT_FORMAT>
+          Input format; defaults to the extension, else the magic bytes, else raw
+
+          Possible values:
+          - png:  PNG (any color type; normalized to RGBA8)
+          - ppm:  Netpbm binary PPM (`P6`, RGB)
+          - pam:  Netpbm binary PAM (`P7`, RGBA)
+          - jpeg: JPEG (decoded to RGBA8; needs the `formats` feature)
+          - gif:  GIF (first frame as a still; whole-file animation is a separate path)
+          - tiff: TIFF (decoded to RGBA8; needs the `formats` feature)
+          - bmp:  BMP (decoded to RGBA8; needs the `formats` feature)
+          - raw:  Raw row-major pixels; requires `--width`/`--height`/`--layout`
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --width <WIDTH>
+          Raw-input width in pixels (required for raw input)
+
+      --height <HEIGHT>
+          Raw-input height in pixels (required for raw input)
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+      --layout <LAYOUT>
+          Byte order for raw input only
+
+          Possible values:
+          - rgba8: `R, G, B, A`
+          - argb8: `A, R, G, B`
+          - bgra8: `B, G, R, A`
+          
+          [default: rgba8]
+
+  -m, --method <METHOD>
+          Encoder effort [default: balanced, or from env/config]
+
+          Possible values:
+          - fast:     Fastest: literal + subtract-green only
+          - balanced: Balanced (the default): LZ77 + color cache
+          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+
+      --lossless
+          Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless
+
+      --lossy
+          Encode lossily (VP8) instead of losslessly (VP8L)
+
+  -q, --quality <QUALITY>
+          Lossy quality 0-100 (higher = larger, closer to source); selects --lossy
+
+      --crop <X,Y,W,H>
+          Crop before encoding: `x,y,width,height` in pixels (applied before --resize)
+
+      --resize <WxH>
+          Resize before encoding: `WxH` (use 0 on one axis to keep aspect)
+
+      --target-size <SIZE>
+          Target output size, e.g. `200k` or `2M`, found by searching lossy quality.
+          
+          Lossy only: it bisects quality until the encoded file fits. With `-v`, the search is printed. Cannot combine with `--lossless`.
+
+      --min-psnr <DB>
+          Target reconstruction PSNR floor in dB (lossy only; pairs with --target-size)
+
+      --metadata <METADATA>
+          Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)
+
+          Possible values:
+          - all:  Keep ICC, Exif, and XMP
+          - none: Strip everything (a bare `VP8L` output)
+          - icc:  Keep the ICC color profile
+          - exif: Keep Exif
+          - xmp:  Keep XMP
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp convert --help
+Batch-convert many images (or directories) to WebP, in parallel
+
+Usage: webp convert [OPTIONS] <INPUTS>...
+
+Arguments:
+  <INPUTS>...
+          Input images and/or directories (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM)
+
+Options:
+  -o, --output <OUTPUT>
+          Output directory (created outputs are `<stem>.webp`); default: beside input
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+  -m, --method <METHOD>
+          Encoder effort (ignored with --optimize) [default: balanced, or from env/config]
+
+          Possible values:
+          - fast:     Fastest: literal + subtract-green only
+          - balanced: Balanced (the default): LZ77 + color cache
+          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --lossless
+          Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless
+
+      --lossy
+          Encode lossily (VP8) instead of losslessly (VP8L)
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -q, --quality <QUALITY>
+          Lossy quality 0-100 (higher = larger, closer to source); selects --lossy
+
+      --optimize
+          Try every lossless effort level and keep the smallest output
+
+  -r, --recursive
+          Recurse into subdirectories
+
+      --metadata <METADATA>
+          Metadata to embed: all,none,icc,exif,xmp (default: all)
+
+          Possible values:
+          - all:  Keep ICC, Exif, and XMP
+          - none: Strip everything (a bare `VP8L` output)
+          - icc:  Keep the ICC color profile
+          - exif: Keep Exif
+          - xmp:  Keep XMP
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp info --help
+Print a summary of a WebP file (size, alpha, metadata, animation)
+
+Usage: webp info [OPTIONS] [INPUT]
+
+Arguments:
+  [INPUT]
+          Input `.webp` file; `-` (the default) reads stdin
+          
+          [default: -]
+
+Options:
+      --json
+          Print the report as JSON instead of text.
+          
+          One object, with a `schema` field to pin. Nothing is decoded either way, so this is cheap on any size of file.
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp diff --help
+Compare two images: report PSNR and the largest per-channel difference.
+
+Both inputs are decoded to RGBA (a WebP, or any readable image), so a source and its WebP, or two WebP files, can be compared. With `--min-psnr`, exit 1 when the PSNR is below the threshold — the grep/diff convention, for CI gates.
+
+Usage: webp diff [OPTIONS] <A> <B>
+
+Arguments:
+  <A>
+          The first image (a WebP, or any readable format)
+
+  <B>
+          The second image, compared against the first (same dimensions required)
+
+Options:
+      --min-psnr <DB>
+          Fail (exit 1) if the RGB PSNR is below this many decibels
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --json
+          Print the comparison as JSON instead of text
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp doctor --help
+Diagnose the environment: PATH drop-in shadows, config, terminal, threads.
+
+Exits 0 even with warnings; 1 only on a real error (an invalid config file).
+
+Usage: webp doctor [OPTIONS]
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp config --help
+Show resolved settings and where each came from (args, env, file, default).
+
+Settings resolve highest-priority-first: command-line arguments, then `WEBP_*` environment variables, then a `webp.toml` (found by walking up from the working directory, then in your user config directory), then the built-in defaults. Each value is printed with its origin.
+
+Usage: webp config [OPTIONS] [COMMAND]
+
+Commands:
+  get   Print a single setting's resolved value, with nothing else
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --json
+          Print the resolved settings as JSON (stable key order)
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --template
+          Print a commented `webp.toml` template to stdout
+
+      --quality <0-100>
+          Override: lossy quality 0-100
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+      --effort <EFFORT>
+          Override: encoder effort
+
+          Possible values:
+          - fast:     Fastest: literal + subtract-green only
+          - balanced: Balanced (the default): LZ77 + color cache
+          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+
+      --codec <CODEC>
+          Override: lossless or lossy
+
+          Possible values:
+          - lossless: Lossless (VP8L)
+          - lossy:    Lossy (VP8)
+
+      --metadata <METADATA>
+          Override: metadata to carry (all,none,icc,exif,xmp)
+
+          Possible values:
+          - all:  Keep ICC, Exif, and XMP
+          - none: Strip everything (a bare `VP8L` output)
+          - icc:  Keep the ICC color profile
+          - exif: Keep Exif
+          - xmp:  Keep XMP
+
+      --threads <THREADS>
+          Override: worker threads (0 = one per core)
+
+      --max-pixels <N|none>
+          Override: decode pixel cap (N, 300M, 2G, or none)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp config get --help
+Print a single setting's resolved value, with nothing else
+
+Usage: webp config get [OPTIONS] <KEY>
+
+Arguments:
+  <KEY>
+          The setting to print, e.g. `quality`
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp explain --help
+Explain an exit code: what a failing run's status number means
+
+Usage: webp explain [OPTIONS] <CODE>
+
+Arguments:
+  <CODE>
+          An exit code (`0`..`9`) or its short name (`usage`, `limit`, ...)
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp completions --help
+Print a shell completion script.
+
+The script is generated from the same command tree that parses your arguments, so it cannot describe a flag that does not exist.
+
+Load it for the current shell, or install it where your shell looks:
+
+bash:        eval "$(webp completions bash)" zsh:         webp completions zsh > ~/.zfunc/_webp fish:        webp completions fish > ~/.config/fish/completions/webp.fish powershell:  webp completions powershell | Out-String | Invoke-Expression
+
+Usage: webp completions [OPTIONS] <SHELL>
+
+Arguments:
+  <SHELL>
+          The shell to generate for
+          
+          [possible values: bash, elvish, fish, powershell, zsh]
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp man --help
+Print a man page in roff, for `man -l -` or a package's man directory
+
+Usage: webp man [OPTIONS] [COMMAND]
+
+Arguments:
+  [COMMAND]
+          Document this subcommand instead of the tool itself
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')

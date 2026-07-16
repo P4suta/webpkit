@@ -194,7 +194,7 @@ fn committed_anim_ledger_is_up_to_date() {
 /// The FFI helpers (`libwebp_encode_lossy_rgba`, `libwebp_decode_rgba`,
 /// `synth_rgba` for the still path; `libwebp_encode_anim_lossy`, the `AnimDecoder`
 /// guard, `libwebp_anim_composite`, and `anim_frame` for the animated path) are
-/// copied verbatim from `crates/webp/tests/oracle.rs`, so the fixtures this crate
+/// copied verbatim from `crates/webpkit/tests/oracle.rs`, so the fixtures this crate
 /// replays are produced through the exact same encode/decode reference path the
 /// differential oracle validates.
 #[cfg(feature = "oracle")]
@@ -386,19 +386,6 @@ mod generate {
                 }
             }
         }
-    }
-
-    /// Regenerate the committed ledger from the current fixtures (tool-free decode,
-    /// but kept behind `oracle` so it is run in the same generation pass as
-    /// [`gen_fixtures`]). Run explicitly after `gen_fixtures`:
-    /// `cargo test -p webpkit-conformance --features oracle -- --ignored gen_ledger`.
-    #[test]
-    #[ignore = "regenerates the committed ledger; run explicitly"]
-    fn gen_ledger() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let results = compute_results(&root.join("fixtures/alpha")).expect("recompute ledger");
-        let json = results_to_json(&results).expect("serialize ledger");
-        std::fs::write(root.join("conformance-results-alpha.json"), json).expect("write ledger");
     }
 
     // -----------------------------------------------------------------------
@@ -634,11 +621,31 @@ mod generate {
             }
         }
     }
+}
 
-    /// Regenerate the committed animated ledger from the current fixtures (tool-free
-    /// decode, but kept behind `oracle` so it is run in the same generation pass as
-    /// [`gen_anim_fixtures`]). Run explicitly after `gen_anim_fixtures`:
-    /// `cargo test -p webpkit-conformance --features oracle -- --ignored gen_anim_ledger`.
+/// Ledger (re)generation, tool-free so `just gen-ledgers` regenerates every
+/// committed ledger — not only the two that need no `oracle` build to *read*.
+///
+/// These were previously inside the `oracle`-gated `generate` module, "run in the
+/// same pass as the fixtures". But `just gen-ledgers` builds without `oracle`, so
+/// the tests did not exist in that build, `cargo test -- --ignored` matched zero,
+/// and the recipe reported success while touching neither ledger. Ledger writing
+/// only recomputes from committed fixtures; it needs no reference library.
+#[cfg(test)]
+mod regen {
+    use std::path::Path;
+
+    use super::{anim_results_to_json, compute_anim_results, compute_results, results_to_json};
+
+    #[test]
+    #[ignore = "regenerates the committed alpha ledger; run explicitly"]
+    fn gen_ledger() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let results = compute_results(&root.join("fixtures/alpha")).expect("recompute ledger");
+        let json = results_to_json(&results).expect("serialize ledger");
+        std::fs::write(root.join("conformance-results-alpha.json"), json).expect("write ledger");
+    }
+
     #[test]
     #[ignore = "regenerates the committed animated ledger; run explicitly"]
     fn gen_anim_ledger() {

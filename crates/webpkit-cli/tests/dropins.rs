@@ -31,6 +31,10 @@ fn cwebp_and_dwebp_report_versions() {
         .success();
 }
 
+fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
 #[test]
 fn cwebp_rejects_a_lossy_only_flag() {
     let out = run(
@@ -43,12 +47,82 @@ fn cwebp_rejects_a_lossy_only_flag() {
         Some(2),
         "lossy knob must be a usage error"
     );
+    // Its own help, not the flat one-liner every rejected flag used to share.
+    let err = stderr(&out);
+    assert!(
+        err.contains("-lossless"),
+        "should point at -lossless: {err:?}"
+    );
+    assert!(
+        err.contains("q 90"),
+        "should offer a lossy quality: {err:?}"
+    );
+    assert!(err.contains("cause:"), "should carry a cause: {err:?}");
+}
+
+/// The distinctive win: a caret drawn under the offending token, at its real
+/// column in the reconstructed command line.
+#[test]
+fn cwebp_points_a_caret_at_the_rejected_flag() {
+    // `-sns` is an internal tuning knob that stays rejected (unlike `-crop`, now live).
+    let out = run("cwebp", &["-sns", "50", "-o", "-"], vec![]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+
+    // Find the echoed command line and the caret line beneath it, and check the
+    // carets sit *exactly* under `-sns`. A substring assertion would tolerate a
+    // caret shifted one column right (the actual column becomes a substring of a
+    // wider run of spaces), so this compares real offsets.
+    let lines: Vec<&str> = err.lines().collect();
+    let command = lines
+        .iter()
+        .position(|l| l.contains("cwebp -sns 50 -o -"))
+        .expect("the command line is echoed");
+    let caret_line = lines.get(command + 1).expect("a caret line follows");
+
+    let flag_col = lines[command].find("-sns").expect("`-sns` is in the echo");
+    let caret_col = caret_line.find('^').expect("a caret is drawn");
+    assert_eq!(caret_col, flag_col, "the caret must start under `-sns`");
+    assert_eq!(
+        caret_line.trim(),
+        "^^^^",
+        "exactly four carets, one per character of `-sns`: {caret_line:?}"
+    );
+}
+
+#[test]
+fn cwebp_suggests_a_flag_for_a_typo() {
+    let out = run("cwebp", &["-lossles", "-", "-o", "-"], vec![0; 16]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(err.contains("unknown option `-lossles`"), "{err:?}");
+    assert!(
+        err.contains("similar option") && err.contains("-lossless"),
+        "should suggest -lossless: {err:?}"
+    );
 }
 
 #[test]
 fn dwebp_rejects_yuv_output() {
     let out = run("dwebp", &["-yuv", "-", "-o", "-"], vec![0; 16]);
     assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(
+        err.contains("-png"),
+        "should point at -png/-ppm/-pam: {err:?}"
+    );
+    assert!(err.contains('^'), "should draw a caret: {err:?}");
+}
+
+#[test]
+fn dwebp_suggests_a_flag_for_a_typo() {
+    let out = run("dwebp", &["-flp", "-", "-o", "-"], vec![0; 16]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(
+        err.contains("similar option") && err.contains("-flip"),
+        "should suggest -flip: {err:?}"
+    );
 }
 
 #[test]

@@ -10,7 +10,7 @@
 //! `IncrementalDecoder`) live in the codec crates; only the vocabulary is shared.
 
 use crate::container::anim::FrameMeta;
-use crate::error::Result;
+use crate::error::{Codec, Result};
 use crate::image::{Dimensions, PixelLayout};
 use crate::prelude::*;
 
@@ -176,12 +176,21 @@ pub struct ImageInfo {
     /// Whether the file is an animation (use `decode_frames` for the frames; a
     /// one-shot `decode` returns the first composited frame).
     pub is_animated: bool,
+    /// Which codec coded the image, when the header says.
+    ///
+    /// `None` for an animation: its frames each carry their own image chunk and
+    /// nothing requires them to agree, so the container header cannot answer for
+    /// the file as a whole. Walk the frames if you need per-frame codecs.
+    pub codec: Option<Codec>,
 }
 
 impl ImageInfo {
     /// Assemble an [`ImageInfo`] header summary. The sole constructor (the struct
     /// is `#[non_exhaustive]`), so the codec crates that peek a header build one
     /// here rather than with a struct literal.
+    ///
+    /// [`codec`](Self::codec) starts `None`; add it with [`with_codec`](Self::with_codec)
+    /// where the header says.
     #[must_use]
     pub const fn new(
         dimensions: Dimensions,
@@ -194,7 +203,15 @@ impl ImageInfo {
             has_alpha,
             has_metadata,
             is_animated,
+            codec: None,
         }
+    }
+
+    /// Record which codec coded the image.
+    #[must_use]
+    pub const fn with_codec(mut self, codec: Codec) -> Self {
+        self.codec = Some(codec);
+        self
     }
 }
 

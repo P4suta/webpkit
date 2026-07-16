@@ -1,0 +1,27 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-diff 1  "diff " 
+.SH NAME
+diff \- Compare two images: report PSNR and the largest per\-channel difference
+.SH SYNOPSIS
+\fBdiff\fR [\fB\-\-min\-psnr\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIA\fR> <\fIB\fR> 
+.SH DESCRIPTION
+Compare two images: report PSNR and the largest per\-channel difference.
+.PP
+Both inputs are decoded to RGBA (a WebP, or any readable image), so a source and its WebP, or two WebP files, can be compared. With `\-\-min\-psnr`, exit 1 when the PSNR is below the threshold — the grep/diff convention, for CI gates.
+.SH OPTIONS
+.TP
+\fB\-\-min\-psnr\fR \fI<DB>\fR
+Fail (exit 1) if the RGB PSNR is below this many decibels
+.TP
+\fB\-\-json\fR
+Print the comparison as JSON instead of text
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIA\fR>
+The first image (a WebP, or any readable format)
+.TP
+<\fIB\fR>
+The second image, compared against the first (same dimensions required)

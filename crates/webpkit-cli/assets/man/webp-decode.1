@@ -1,0 +1,86 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-decode 1  "decode " 
+.SH NAME
+decode \- Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
+.SH SYNOPSIS
+\fBdecode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-format\fR] [\fB\-\-layout\fR] [\fB\-\-frames\fR] [\fB\-\-frame\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
+.SH DESCRIPTION
+Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
+Output path; `\-` writes stdout
+.TP
+\fB\-\-format\fR \fI<FORMAT>\fR
+Output format; defaults to the `\-o` extension, else PNG
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+png: PNG, RGBA8
+.IP \(bu 2
+ppm: Netpbm binary PPM (`P6`, RGB; alpha dropped)
+.IP \(bu 2
+pam: Netpbm binary PAM (`P7`, RGBA)
+.IP \(bu 2
+raw: Raw row\-major pixels in the requested `\-\-layout`
+.RE
+.TP
+\fB\-\-layout\fR \fI<LAYOUT>\fR [default: rgba8]
+Byte order for raw output only
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+rgba8: `R, G, B, A`
+.IP \(bu 2
+argb8: `A, R, G, B`
+.IP \(bu 2
+bgra8: `B, G, R, A`
+.RE
+.TP
+\fB\-\-frames\fR \fI<FRAMES>\fR
+For animations: which frames to emit
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+first: Only the first composited frame (the default)
+.IP \(bu 2
+all: Every composited frame, numbered `<stem>\-000.<ext>`, ...
+.RE
+.TP
+\fB\-\-frame\fR \fI<FRAME>\fR
+For animations: emit only this 0\-based frame
+.TP
+\fB\-\-metadata\fR \fI<METADATA>\fR
+Metadata to carry into the output: all,none,icc,exif,xmp (default: all)
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+all: Keep ICC, Exif, and XMP
+.IP \(bu 2
+none: Strip everything (a bare `VP8L` output)
+.IP \(bu 2
+icc: Keep the ICC color profile
+.IP \(bu 2
+exif: Keep Exif
+.IP \(bu 2
+xmp: Keep XMP
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIINPUT\fR] [default: \-]
+Input `.webp` file; `\-` (the default) reads stdin

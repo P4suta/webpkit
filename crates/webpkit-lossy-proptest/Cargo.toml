@@ -6,12 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Shared proptest strategies for testing the webpkit-lossy WebP VP8 (lossy) decoder."
+description = "Shared proptest strategies for testing the webpkit-lossy WebP VP8 (lossy) codec."
 publish = false
 
 [dependencies]
 proptest = { workspace = true }
-webpkit = { path = "../webpkit" }
 
 [lints]
 workspace = true

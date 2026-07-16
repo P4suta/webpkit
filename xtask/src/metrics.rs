@@ -704,7 +704,7 @@ fn explain_lossy_metrics(committed: &LossyMetricsLedger, fresh: &LossyMetricsLed
 
 /// Peak signal-to-noise ratio (dB) over the RGB channels of two RGBA buffers.
 ///
-/// Byte-for-byte the formula in `crates/webpkit-lossy/tests/encode.rs`: the codec
+/// Byte-for-byte the formula in `crates/webpkit/tests/encode_lossy.rs`: the codec
 /// crate forbids floating point (bit-determinism), but xtask is a CLI boundary,
 /// not the codec, so the `f64` PSNR math is allowed here (as in that test crate).
 /// `99.0` denotes an identical pair (the squared-error sum is integer-valued).

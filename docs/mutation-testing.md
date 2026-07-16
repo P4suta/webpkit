@@ -55,7 +55,8 @@ Triage a surviving mutant one of two ways:
 <!-- Updated after each full sweep. -->
 
 Full-sweep status of the product crate's three zones (`cargo mutants` at
-`PROPTEST_CASES=16`, the version pinned in `mise.toml`). The per-zone counts
+proptest's default case count — the sweep authors the exclude ledger, so it must
+not run weaker than the PR gate and `just mutants` that read it). The per-zone counts
 below are from the pre-consolidation sweep of the former `webpkit-core` /
 `webpkit-lossless` / `webpkit-lossy` crates; the merge into `webpkit` moved the
 code without changing it, and the consolidated re-sweep (`mutants-full.yml`,

@@ -287,7 +287,8 @@ impl IncrementalDecoder {
                             st.info.has_alpha,
                             st.info.has_metadata,
                             false,
-                        );
+                        )
+                        .with_codec(Codec::Lossy);
                         st.info = info;
                         return Ok(Progress::HeaderReady(info));
                     }
@@ -513,12 +514,9 @@ fn peek_vp8_info(
                 codec: Codec::Lossy,
             }
         })?;
-    Ok(Some(ImageInfo::new(
-        dimensions,
-        vp8x_alpha,
-        has_metadata,
-        false,
-    )))
+    Ok(Some(
+        ImageInfo::new(dimensions, vp8x_alpha, has_metadata, false).with_codec(Codec::Lossy),
+    ))
 }
 
 #[cfg(test)]

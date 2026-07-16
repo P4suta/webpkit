@@ -140,6 +140,9 @@ drift-gate:
     cargo test -p webpkit-lossless-conformance -p webpkit-lossy-conformance -p webpkit-conformance --test ledger
 
 # Regenerate every committed conformance ledger from the current fixtures.
+# Ledger writing is tool-free (it recomputes from committed fixtures), so no
+# `--features oracle` here — the alpha/anim generators used to be oracle-gated and
+# this recipe silently regenerated 2 of 4, reporting success while touching neither.
 gen-ledgers:
     cargo test -p webpkit-lossless-conformance -p webpkit-lossy-conformance -p webpkit-conformance --test ledger -- --ignored
 
@@ -155,21 +158,21 @@ corpus-bless:
 # Built --release: the encode-heavy Best search is ~13x faster than debug
 # (~42s vs ~570s), keeping the run inside its ~120s budget. Encoded sizes are
 # deterministic and profile-independent, so the release gate matches any run.
-# Pinned to the MSRV (`+1.96`) toolchain to match CI AND because the ledger's
-# peak-memory fields are toolchain-sensitive — the gate is 1.96-pinned so the
-# committed peak-memory numbers are reproducible on this exact compiler.
+# Pinned to `+1.96` to match CI because the ledger's peak-memory fields are
+# toolchain-sensitive, so the committed numbers only reproduce on this exact
+# compiler. This pin is unrelated to the MSRV ({{msrv}}) — do not sync them.
 # (The `cargo xtask` alias can't select --release, so invoke cargo directly.)
 metrics:
     cargo +1.96 run --release --quiet -p xtask -- metrics
 
 # (Re)author the compression-metrics ledger after an intended size change.
-# 1.96-pinned to match the `metrics` gate (peak-memory reproducibility).
+# `+1.96` to match the `metrics` gate (peak-memory reproducibility, not the MSRV).
 metrics-bless:
     cargo +1.96 run --release --quiet -p xtask -- metrics --bless
 
 # Measure the LOSSY encoder over the sample matrix and gate corpus/metrics-lossy.json
 # (size / ratio / reconstruction sse / peak memory, per method x quality). Same
-# --release + MSRV `+1.96` pin as `metrics` (its peak-memory fields are
+# --release + `+1.96` pin as `metrics` (its peak-memory fields are
 # toolchain-sensitive); the quality field is integer sse, so the ledger stays
 # byte-golden. Best is capped to edge<=256 for runtime.
 metrics-lossy:
@@ -191,6 +194,26 @@ work:
 # byte-invariance separately with `just metrics` + `just corpus-sweep`).
 work-bless:
     cargo run --release --quiet --features work-count -p xtask -- work --bless
+
+# (Re)generate the shell completions and man pages committed under
+# crates/webpkit-cli/assets/. They ship in the published tarball so packagers get
+# them without a build step, and `webpkit-cli`'s `ledger` test byte-compares them
+# against the binary — so run this after any change to the `webp` flag surface.
+gen-assets:
+    @bash -c 'set -e; \
+        out=crates/webpkit-cli/assets; \
+        run() { cargo run --quiet -p webpkit-cli --bin webp -- "$@"; }; \
+        mkdir -p "$out/completions" "$out/man"; \
+        for sh in bash zsh fish powershell elvish; do \
+            echo "  completions/webp.$sh"; \
+            run completions "$sh" > "$out/completions/webp.$sh"; \
+        done; \
+        echo "  man/webp.1"; \
+        run man > "$out/man/webp.1"; \
+        for c in encode decode convert info diff doctor config explain completions man; do \
+            echo "  man/webp-$c.1"; \
+            run man "$c" > "$out/man/webp-$c.1"; \
+        done'
 
 # Criterion benchmarks.
 bench:

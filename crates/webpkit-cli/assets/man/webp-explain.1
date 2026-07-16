@@ -1,0 +1,16 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-explain 1  "explain " 
+.SH NAME
+explain \- Explain an exit code: what a failing run\*(Aqs status number means
+.SH SYNOPSIS
+\fBexplain\fR [\fB\-h\fR|\fB\-\-help\fR] <\fICODE\fR> 
+.SH DESCRIPTION
+Explain an exit code: what a failing run\*(Aqs status number means
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fICODE\fR>
+An exit code (`0`..`9`) or its short name (`usage`, `limit`, ...)

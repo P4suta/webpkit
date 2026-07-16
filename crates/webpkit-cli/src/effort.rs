@@ -11,7 +11,7 @@ use webpkit::Effort;
 
 /// Resolve the lossless effort flags to an [`Effort`] (Balanced when none given).
 #[must_use]
-pub fn resolve(method: Option<i64>, level: Option<i64>, quality: Option<f64>) -> Effort {
+pub(crate) fn resolve(method: Option<i64>, level: Option<i64>, quality: Option<f64>) -> Effort {
     match (method, level, quality) {
         (Some(m), _, _) => from_m(m),
         (_, Some(z), _) => from_z(z),
@@ -23,7 +23,7 @@ pub fn resolve(method: Option<i64>, level: Option<i64>, quality: Option<f64>) ->
 /// Resolve the lossy effort [`Effort`] from `-m` alone (Balanced by default),
 /// using the same three-tier `-m` buckets as the lossless path.
 #[must_use]
-pub const fn lossy_method(method: Option<i64>) -> Effort {
+pub(crate) const fn lossy_method(method: Option<i64>) -> Effort {
     match method {
         Some(m) if m <= 2 => Effort::Fast,
         Some(m) if m <= 5 => Effort::Balanced,
@@ -38,7 +38,7 @@ pub const fn lossy_method(method: Option<i64>) -> Effort {
 /// found by scanning `0..=100` rather than casting the float, which keeps the
 /// conversion free of a lossy `f64 as u8` cast.
 #[must_use]
-pub fn lossy_quality(quality: f64) -> u8 {
+pub(crate) fn lossy_quality(quality: f64) -> u8 {
     let target = quality.clamp(0.0, 100.0).round();
     (0..=100u8).find(|&n| f64::from(n) >= target).unwrap_or(100)
 }

@@ -56,7 +56,7 @@ static GLOBAL: webpkit_alloc_count::Counting = webpkit_alloc_count::Counting::ne
 #[derive(Debug, Parser)]
 #[command(
     name = "xtask",
-    about = "webpkit::lossless build automation",
+    about = "webpkit build automation",
     disable_help_subcommand = true
 )]
 struct Cli {

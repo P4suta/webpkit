@@ -1,9 +1,10 @@
 //! Shared `proptest` strategies for exercising the `webpkit-lossy` WebP VP8 (lossy)
 //! decoder.
 //!
-//! `webpkit-lossy` is decode-only — there is no encoder — so, unlike its lossless
-//! sibling's strategies, these generate decoder *inputs* rather than encoder
-//! round-trip fixtures. Two shapes cover the load-bearing properties:
+//! These strategies generate decoder *inputs* — the lossy codec has an encoder
+//! (`webpkit::lossy::encode_vp8`), but these properties feed the decode and
+//! differential paths, not an encode round-trip. Two shapes cover the
+//! load-bearing properties:
 //!
 //! * [`arbitrary_bytes`] — hostile buffers for the "decode never panics"
 //!   property (the decoder must return an error, never panic, on any input).

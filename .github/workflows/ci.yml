@@ -315,7 +315,7 @@ jobs:
       - name: line coverage floor
         run: >
           cargo llvm-cov nextest --workspace --locked
-          --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-lossless-fuzz|webpkit-cli|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
+          --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-samples|webpkit-lossless-fuzz|webpkit-cli|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
           --fail-under-lines 90
 
   # Mutation-test only the lines this PR changes: inject bugs into the changed
@@ -326,7 +326,13 @@ jobs:
     name: mutants (PR --in-diff)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Sized for an incremental PR. A large diff mutates many lines, and each mutant
+    # reruns the whole `-p webpkit` suite (~6 min with `--features image` + Best
+    # paths), so the wall time is mutants x suite / `--jobs`. `--jobs 4` saturates
+    # the runner's 4 vCPUs. The headroom absorbs an exceptionally large change: the
+    # one-time CLI-overhaul diff mutates ~45 lines and finishes in ~59 min, so the
+    # ceiling is set well above that to leave margin for runner variance.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -340,7 +346,8 @@ jobs:
           git diff "origin/${{ github.base_ref }}...HEAD" > mutants-diff.patch
           cargo mutants --in-diff mutants-diff.patch \
             -p webpkit \
-            --test-tool nextest
+            --test-tool nextest \
+            --jobs 4
 
   oracle:
     name: oracle (libwebp differential)
@@ -409,12 +416,15 @@ jobs:
     # still runnable on demand via the Actions "Run workflow" button.
     #
     # NOTE: continuous regression coverage does NOT depend on this job. Every
-    # committed seed is replayed through the exact same decode entry points on
-    # *stable* by `tests/replay_seeds.rs` in each fuzz crate (run by the `build +
-    # test` nextest job, with overflow-checks on). Integer overflow is
-    # input-determined, not optimization-determined, so a wrap a release build could
-    # hit is reachable — and trapped — there too. This libFuzzer job adds *new* input
-    # discovery on top; the replay net guards against regressions meanwhile.
+    # committed seed is replayed through the fuzz targets *themselves* on *stable*
+    # by `tests/replay_seeds.rs` in each fuzz crate (run by the `build + test`
+    # nextest job, with overflow-checks on). The targets' bodies are library
+    # functions the replay calls directly — not a hand-written imitation — so the
+    # round-trip and encode invariants run here too, not only decode, and cannot
+    # drift from what the fuzzer runs. Integer overflow is input-determined, not
+    # optimization-determined, so a wrap a release build could hit is reachable —
+    # and trapped — there too. This libFuzzer job adds *new* input discovery on top;
+    # the replay net guards against regressions meanwhile.
     #
     # Upstream tracker: https://github.com/rust-fuzz/cargo-fuzz/issues
     # RE-ENABLE when fixed: bump the cargo-fuzz install below (and NIGHTLY_TOOLCHAIN

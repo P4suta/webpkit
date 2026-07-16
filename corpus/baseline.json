@@ -264,39 +264,6 @@
       "reencode_len": 514,
       "reencode_hash": 6866298632559052505,
       "self_roundtrip": true
-    },
-    {
-      "id": "fuzz/roundtrip/cross_color_corr",
-      "decoded_ok": true,
-      "width": 64,
-      "height": 64,
-      "decoded_hash": 11662461452830468389,
-      "reencode_ok": true,
-      "reencode_len": 9338,
-      "reencode_hash": 10516214697961279562,
-      "self_roundtrip": true
-    },
-    {
-      "id": "fuzz/roundtrip/palette_16color",
-      "decoded_ok": true,
-      "width": 32,
-      "height": 32,
-      "decoded_hash": 5715514711036246821,
-      "reencode_ok": true,
-      "reencode_len": 126,
-      "reencode_hash": 15298173619032547524,
-      "self_roundtrip": true
-    },
-    {
-      "id": "fuzz/roundtrip/single_pixel_1x1",
-      "decoded_ok": true,
-      "width": 1,
-      "height": 1,
-      "decoded_hash": 15243141012813426364,
-      "reencode_ok": true,
-      "reencode_len": 32,
-      "reencode_hash": 15427635048552479274,
-      "self_roundtrip": true
     }
   ]
 }

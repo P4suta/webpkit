@@ -1,14 +1,14 @@
 //! Command-line argument vocabulary shared by the binaries.
 
-pub mod brand;
-pub mod cwebp;
-pub mod dwebp;
+pub(crate) mod brand;
+pub(crate) mod cwebp;
+pub(crate) mod dwebp;
 
 use clap::ValueEnum;
 
-/// Pixel byte order, mirroring [`webpkit::lossless::PixelLayout`].
+/// Pixel byte order, mirroring [`webpkit::PixelLayout`].
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub enum Layout {
+pub(crate) enum Layout {
     /// `R, G, B, A`.
     #[default]
     Rgba8,
@@ -18,7 +18,7 @@ pub enum Layout {
     Bgra8,
 }
 
-impl From<Layout> for webpkit::lossless::PixelLayout {
+impl From<Layout> for webpkit::PixelLayout {
     fn from(layout: Layout) -> Self {
         match layout {
             Layout::Rgba8 => Self::Rgba8,
@@ -28,9 +28,9 @@ impl From<Layout> for webpkit::lossless::PixelLayout {
     }
 }
 
-/// Encoder effort, mirroring [`webpkit::lossless::Effort`].
+/// Encoder effort, mirroring [`webpkit::Effort`].
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub enum Method {
+pub(crate) enum Method {
     /// Fastest: literal + subtract-green only.
     Fast,
     /// Balanced (the default): LZ77 + color cache.
@@ -40,11 +40,8 @@ pub enum Method {
     Best,
 }
 
-// The lossless and lossy encoders now share one `Effort` dial (re-exported from
-// `webpkit` as `webpkit::Effort` / `webpkit::lossless::Effort`), so a single
-// conversion covers both `--lossless` and `--lossy` requests. Adding a preset to
-// `Effort` requires a matching variant here and an update to
-// `tests::EXPECTED_PRESETS` below (it guards against drift).
+// Both codecs share one `Effort` dial, so this single conversion covers
+// `--lossless` and `--lossy` alike.
 impl From<Method> for webpkit::Effort {
     fn from(method: Method) -> Self {
         match method {
@@ -55,26 +52,28 @@ impl From<Method> for webpkit::Effort {
     }
 }
 
+// `Effort` is a closed set, so this exhaustive match is the drift gate: a preset
+// added to `webpkit` fails to compile here until `Method` mirrors it.
+impl From<webpkit::Effort> for Method {
+    fn from(effort: webpkit::Effort) -> Self {
+        match effort {
+            webpkit::Effort::Fast => Self::Fast,
+            webpkit::Effort::Balanced => Self::Balanced,
+            webpkit::Effort::Best => Self::Best,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::ValueEnum;
-    use webpkit::lossless::Effort as LosslessMethod;
+    use webpkit::Effort as LosslessMethod;
 
     use super::Method;
 
-    /// The lossless presets the CLI mirrors. `webpkit::lossless::Effort` is
-    /// `#[non_exhaustive]`, so its variants cannot be enumerated from here — this
-    /// explicit list is the synchronization anchor. A new lossless preset must be
-    /// added both as a [`Method`] variant and to this array.
-    const EXPECTED_PRESETS: &[LosslessMethod] = &[
-        LosslessMethod::Fast,
-        LosslessMethod::Balanced,
-        LosslessMethod::Best,
-    ];
-
-    /// Every `cli::Method` maps onto a distinct lossless preset, and together they
-    /// cover exactly the expected set — so a preset added to only one side (or a
-    /// collapsed mapping) trips this test.
+    /// Every [`Method`] maps to a distinct preset and survives the round trip, so
+    /// a collapsed or transposed mapping trips this test. Coverage of *new*
+    /// presets is a compile error at `From<Effort> for Method`, not a case here.
     #[test]
     fn cli_method_mirrors_every_lossless_preset() {
         let mapped: Vec<LosslessMethod> = Method::value_variants()
@@ -82,13 +81,17 @@ mod tests {
             .map(|&m| LosslessMethod::from(m))
             .collect();
 
-        for preset in EXPECTED_PRESETS {
+        for &effort in &mapped {
             assert_eq!(
-                mapped.iter().filter(|&m| m == preset).count(),
+                mapped.iter().filter(|&&m| m == effort).count(),
                 1,
-                "preset {preset:?} must be covered by exactly one cli::Method",
+                "preset {effort:?} must be covered by exactly one cli::Method",
+            );
+            assert_eq!(
+                LosslessMethod::from(Method::from(effort)),
+                effort,
+                "{effort:?} must survive Effort -> Method -> Effort",
             );
         }
-        assert_eq!(mapped.len(), EXPECTED_PRESETS.len());
     }
 }

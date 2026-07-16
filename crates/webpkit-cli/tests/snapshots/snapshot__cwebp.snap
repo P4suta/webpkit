@@ -1,7 +1,8 @@
 ---
 source: crates/webpkit-cli/tests/snapshot.rs
-expression: "help(\"cwebp\", \"-h\")"
+expression: "dump(\"cwebp\", \"-h\")"
 ---
+$ cwebp -h
 cwebp (webpkit) — encode PNG/PPM/PAM to WebP (lossy by default)
 
 Usage: cwebp [options] <input> -o <output.webp>
@@ -13,5 +14,10 @@ Options:
   -lossless        encode losslessly (VP8L) instead of lossy (VP8)
   -z <int>         lossless level 0-9 (implies -lossless)
   -metadata <list> all,none,icc,exif,xmp (default: all)
+  -crop x y w h    crop before encoding (dimensions match libwebp; pixels differ)
+  -resize w h      resize before encoding (0 on one axis keeps aspect)
+  -size <int>      target output size in bytes (searches lossy quality)
+  -psnr <float>    target reconstruction PSNR floor in dB (lossy)
   -quiet / -v      quieter / more verbose
+  -color <when>    auto (default), always, or never
   -version         print version

@@ -44,25 +44,36 @@ jobs:
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest
-      # In regenerate mode, sweep with an empty `exclude_re` (same runner/timeout
-      # knobs as `.cargo/mutants.toml`) so every survivor is reported.
-      - name: select sweep config
-        id: cfg
+      # In regenerate mode, empty `exclude_re` in the committed config rather than
+      # writing a fresh one. Every other knob then survives by construction. The
+      # hand-written copy this replaces re-typed four knobs and dropped a fifth,
+      # `--features image` — and regenerate is the mode whose survivors become the
+      # ledger, so every `src/interop.rs` mutant would have been swept without the
+      # feature that compiles its tests, surfaced as a spurious survivor, and been
+      # excluded as "equivalent" forever. The one comment explaining why that flag
+      # exists lives in `.cargo/mutants.toml`, the file this did not read.
+      - name: empty the exclude ledger (regenerate mode only)
+        if: ${{ inputs.empty_excludes }}
         run: |
-          if [ "${{ inputs.empty_excludes }}" = "true" ]; then
-            printf 'test_tool = "nextest"\nadditional_cargo_args = ["--locked"]\ntimeout_multiplier = 5.0\nminimum_test_timeout = 120.0\nexclude_re = []\n' > /tmp/sweep.toml
-            echo "flag=--config /tmp/sweep.toml" >> "$GITHUB_OUTPUT"
-          else
-            echo "flag=" >> "$GITHUB_OUTPUT"
-          fi
+          python3 - <<'PY'
+          import pathlib, re
+          p = pathlib.Path(".cargo/mutants.toml")
+          s = p.read_text(encoding="utf8")
+          s, n = re.subn(r"(?ms)^exclude_re = \[.*?^\]", "exclude_re = []", s)
+          assert n == 1, f"expected one exclude_re array, found {n}"
+          p.write_text(s, encoding="utf8")
+          PY
       # `--shard k/8` deterministically partitions the mutant list; each runner
       # tests only its slice. In confirm mode a shard fails if any mutant in its
       # slice survives and is not covered by `.cargo/mutants.toml`'s `exclude_re`.
-      # PROPTEST_CASES matches the documented baseline (fast, deterministic).
+      #
+      # No PROPTEST_CASES override: this sweep authors the exclude ledger, so it
+      # must not be weaker than the gate that reads it. It ran 16 cases while the
+      # PR gate and `just mutants` ran proptest's default, so a mutant only
+      # proptest kills could survive here, be excluded as "equivalent", and then
+      # never be caught anywhere.
       - name: mutation sweep (this shard)
-        env:
-          PROPTEST_CASES: "16"
-        run: cargo mutants --shard ${{ matrix.shard }}/8 -p webpkit --test-tool nextest ${{ steps.cfg.outputs.flag }}
+        run: cargo mutants --shard ${{ matrix.shard }}/8 -p webpkit --test-tool nextest
       # Preserve each shard's outcome lists (missed/caught/...) so the exclude
       # ledger can be regenerated from the aggregated `missed.txt` after a big move.
       - name: upload shard outcomes

@@ -570,7 +570,8 @@ fn classify(buf: &[u8]) -> Result<Decision> {
             FourCc::VP8L | FourCc::ANIM | FourCc::ANMF => return Ok(Decision::Lossless),
             FourCc::VP8 => {
                 if let Some(info) = vp8x_info {
-                    return Ok(Decision::Deferred(info)); // extended lossy (has VP8X)
+                    // Extended lossy (has VP8X); the chunk we just reached says VP8.
+                    return Ok(Decision::Deferred(info.with_codec(Codec::Lossy)));
                 }
                 // Bare VP8: row-stream only if it spans the whole declared RIFF
                 // body (`chunk.next` is the padded end), so no trailing
@@ -596,7 +597,9 @@ fn bare_deferred(vp8_payload: Option<&[u8]>) -> Decision {
     vp8_payload
         .and_then(|p| crate::lossy::peek_dimensions(p).ok())
         .map_or(Decision::NeedMore, |dimensions| {
-            Decision::Deferred(ImageInfo::new(dimensions, false, false, false))
+            Decision::Deferred(
+                ImageInfo::new(dimensions, false, false, false).with_codec(Codec::Lossy),
+            )
         })
 }
 
@@ -675,6 +678,154 @@ pub fn is_animated(input: &[u8]) -> Result<bool> {
     crate::container::reader::is_animated(input)
 }
 
+/// Read a WebP's header — dimensions, alpha, metadata, animation — without
+/// decoding a single pixel.
+///
+/// Answers the "what is this file" question that [`decode`] answers expensively:
+/// the cost is a chunk walk and one bitstream header, so it is the same on a
+/// 40-byte image and a 40-megapixel one, and it succeeds even when the pixel data
+/// is truncated or corrupt.
+///
+/// This is the one-shot counterpart to [`Progress::HeaderReady`]. The incremental
+/// decoder reports a header only as a side effect of streaming — a file small
+/// enough to decode within one `push` never emits the event at all — so it cannot
+/// be used as a probe.
+///
+/// # Examples
+///
+/// ```
+/// // Busy pixels, so the encoded body is comfortably longer than its header.
+/// let rgba: Vec<u8> = (0..64u32 * 64 * 4).map(|i| (i * 7 % 251) as u8).collect();
+/// let webp = webpkit::encode_lossless_rgba(64, 64, &rgba)?;
+///
+/// let info = webpkit::probe(&webp)?;
+/// assert_eq!((info.dimensions.width(), info.dimensions.height()), (64, 64));
+/// assert!(!info.is_animated);
+///
+/// // The header survives what the pixels do not.
+/// let truncated = &webp[..webp.len() / 2];
+/// assert!(webpkit::decode(truncated).is_err());
+/// assert_eq!(webpkit::probe(truncated)?.dimensions, info.dimensions);
+/// # Ok::<(), webpkit::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// [`Error::NotWebp`] if the container magic is wrong, [`Error::Truncated`] if the
+/// header is not fully present, [`Error::MissingImage`] if no image chunk is
+/// found, or the codec's error for a malformed bitstream header.
+#[cfg(feature = "alloc")]
+pub fn probe(input: &[u8]) -> Result<ImageInfo> {
+    if input.len() < 12 {
+        return Err(Error::Truncated);
+    }
+    if input[0..4] != FourCc::RIFF.0 || input[8..12] != FourCc::WEBP.0 {
+        return Err(Error::NotWebp);
+    }
+
+    // The walk mirrors `read_container`, which is what `decode` uses: the first
+    // image chunk wins, and the sidecars are collected wherever they sit. Anything
+    // narrower would let `probe` and `decode` disagree about one file — an `ALPH`
+    // needs no `VP8X` to announce it, and it may follow the image chunk.
+    let mut image: Option<ImageInfo> = None;
+    let mut sidecar_alpha = false;
+    let mut sidecar_metadata = false;
+
+    for chunk in scan_chunks(input) {
+        match chunk.id {
+            FourCc::VP8X => {
+                let data = input
+                    .get(chunk.payload_start..chunk.payload_start + VP8X_PAYLOAD_LEN)
+                    .ok_or(Error::Truncated)?;
+                let info = Vp8xInfo::parse(data)?;
+                // An animation is fully described by its VP8X: probe returns here,
+                // before any per-frame chunk, so its alpha/metadata must come from
+                // the flags. Its frames each carry their own codec, so the file has
+                // none. A still VP8X only wraps flags the image chunk and sidecars
+                // below state authoritatively, so it is not kept.
+                if info.flags.is_animated() {
+                    return Ok(ImageInfo::new(
+                        info.canvas,
+                        info.flags.has_alpha(),
+                        vp8x_has_metadata(info),
+                        true,
+                    ));
+                }
+            },
+            FourCc::VP8L if image.is_none() => {
+                image = crate::lossless::decoder::peek_vp8l_info(
+                    input.get(chunk.payload_start..),
+                    false,
+                    false,
+                )?;
+            },
+            FourCc::VP8 if image.is_none() => {
+                let payload = input.get(chunk.payload_start..).ok_or(Error::Truncated)?;
+                let dimensions = crate::lossy::peek_dimensions(payload)?;
+                image =
+                    Some(ImageInfo::new(dimensions, false, false, false).with_codec(Codec::Lossy));
+            },
+            FourCc::ALPH => sidecar_alpha = true,
+            FourCc::ICCP | FourCc::EXIF | FourCc::XMP => sidecar_metadata = true,
+            // Animation chunks with no preceding animated VP8X are malformed; a
+            // well-formed animation returns above.
+            FourCc::ANIM | FourCc::ANMF => return Err(Error::InvalidContainer),
+            _ => {},
+        }
+    }
+
+    let mut info = image.ok_or(Error::MissingImage)?;
+    // A still's alpha and metadata are exactly what `decode` finds: the VP8L
+    // header's alpha bit (peeked above) or a lossy sibling `ALPH`, and the
+    // metadata sidecar chunks. `decode` reads chunk presence, not the VP8X flags,
+    // so `probe` does too — otherwise a VP8X that advertises a chunk it does not
+    // carry would make the two disagree.
+    info.has_alpha |= sidecar_alpha;
+    info.has_metadata |= sidecar_metadata;
+    Ok(info)
+}
+
+/// Whether a `VP8X` header advertises any metadata chunk.
+#[cfg(feature = "alloc")]
+const fn vp8x_has_metadata(info: Vp8xInfo) -> bool {
+    info.flags.has_icc() || info.flags.has_exif() || info.flags.has_xmp()
+}
+
+/// Read an animation's canvas, loop count, frame count and total duration —
+/// without decoding a single frame.
+///
+/// The animation counterpart to [`probe`]. Every fact lives in the `VP8X`,
+/// `ANIM` and `ANMF` headers, so the cost is a chunk walk however many frames
+/// there are, and a file whose frame data is damaged still answers.
+///
+/// libwebp's `WebPAnimInfo` is the same idea; [`decode_frames`] is what to use
+/// when you actually want the pixels.
+///
+/// ```
+/// # fn main() -> Result<(), webpkit::Error> {
+/// # let bytes = std::fs::read(concat!(
+/// #     env!("CARGO_MANIFEST_DIR"),
+/// #     "/../webpkit-lossless-conformance/fixtures/decode/animation_frames/input.webp",
+/// # )).unwrap();
+/// let anim = webpkit::probe_animation(&bytes)?;
+/// println!("{} frames, {} ms", anim.frame_count, anim.total_duration_ms);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+///
+/// [`Error::UnsupportedFeature`] if the file is not an animation,
+/// [`Error::NotWebp`]/[`Error::Truncated`] for a non-WebP or short input, or
+/// [`Error::InvalidContainer`] for a malformed `ANIM`.
+#[cfg(feature = "alloc")]
+pub fn probe_animation(input: &[u8]) -> Result<AnimInfo> {
+    // Lifted so a canvas too large to composite can still be described; nothing
+    // here allocates per pixel.
+    let options = DecodeOptions::new().unbounded();
+    Ok(decode_frames_with(input, &options)?.anim_info())
+}
+
 /// The crate version, as reported by Cargo.
 #[must_use]
 pub const fn version() -> &'static str {
@@ -684,13 +835,422 @@ pub const fn version() -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::container::fourcc::FourCc;
+    use crate::container::vp8x::{Vp8xFlags, Vp8xInfo};
     use crate::container::writer::{push_chunk, riff_envelope};
 
     use super::{
-        BlendMode, DecodeOptions, Dimensions, DisposalMode, Effort, Encoder, Error, FrameMeta,
-        Image, ImageRef, IncrementalDecoder, Metadata, MetadataPolicy, PixelLayout, Progress,
-        decode, decode_with,
+        BlendMode, Codec, DecodeOptions, Dimensions, DisposalMode, Effort, Encoder, Error,
+        FrameMeta, Image, ImageRef, IncrementalDecoder, Metadata, MetadataPolicy, PixelLayout,
+        Progress, decode, decode_with, probe, probe_animation,
     };
+
+    /// A 32x32 image of busy pixels, encoded with `make`.
+    ///
+    /// Deliberately not a flat fill: a flat 64x64 encodes to 28 bytes, so half of
+    /// it is header and a truncation test on it would be measuring the header
+    /// rather than the body. Busy pixels give a body worth truncating.
+    fn sample(make: fn(ImageRef<'_>) -> Vec<u8>) -> Vec<u8> {
+        let rgba: Vec<u8> = (0..dims().width() * dims().height() * 4)
+            .map(|i| (i * 7 % 251) as u8)
+            .collect();
+        make(ImageRef::new(dims(), PixelLayout::Rgba8, &rgba).unwrap())
+    }
+
+    /// The sample's dimensions, named once so every probe assertion agrees.
+    fn dims() -> Dimensions {
+        Dimensions::new(32, 32).unwrap()
+    }
+
+    fn lossless_bytes() -> Vec<u8> {
+        sample(|img| Encoder::lossless().encode_ref(img).unwrap())
+    }
+
+    fn lossy_bytes() -> Vec<u8> {
+        sample(|img| Encoder::lossy().quality(80).encode_ref(img).unwrap())
+    }
+
+    #[test]
+    fn probe_reads_a_still_header_for_either_codec() {
+        for bytes in [lossless_bytes(), lossy_bytes()] {
+            let info = probe(&bytes).unwrap();
+            assert_eq!(info.dimensions, dims());
+            assert!(!info.is_animated);
+            assert!(!info.has_metadata);
+        }
+    }
+
+    /// The whole point of a probe: the header is readable when the pixels are not.
+    /// `decode` must fail on the same bytes, or this test measures nothing.
+    #[test]
+    fn probe_reads_a_header_whose_pixel_data_is_truncated() {
+        for full in [lossless_bytes(), lossy_bytes()] {
+            // Half the body, so the cut is unambiguously in the pixels.
+            let cut = &full[..full.len() / 2];
+            assert!(decode(cut).is_err(), "the truncation must break decoding");
+            let info = probe(cut).expect("probe survives a truncated body");
+            assert_eq!(info.dimensions, dims());
+        }
+    }
+
+    #[test]
+    fn probe_reports_which_codec_coded_a_still() {
+        assert_eq!(
+            probe(&lossless_bytes()).unwrap().codec,
+            Some(Codec::Lossless)
+        );
+        assert_eq!(probe(&lossy_bytes()).unwrap().codec, Some(Codec::Lossy));
+    }
+
+    /// An animation's frames each carry their own image chunk and need not agree,
+    /// so the container header cannot answer for the file. `None` says that; it
+    /// does not mean "unknown codec".
+    #[test]
+    fn probe_leaves_an_animations_codec_unanswered() {
+        let canvas = Dimensions::new(16, 8).unwrap();
+        let rgba = vec![0x40u8; 16 * 8 * 4];
+        let frame = ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap();
+        let bytes = crate::AnimationEncoder::new(canvas)
+            .add_frame(
+                frame,
+                FrameMeta {
+                    x: 0,
+                    y: 0,
+                    dimensions: canvas,
+                    duration_ms: 100,
+                    blend: BlendMode::Blend,
+                    dispose: DisposalMode::Keep,
+                },
+            )
+            .unwrap()
+            .finish();
+        assert_eq!(probe(&bytes).unwrap().codec, None);
+    }
+
+    /// One file, two ways of asking: a probe and a stream must not disagree about
+    /// what coded it. Nothing else keeps these two paths in step.
+    #[test]
+    fn probe_and_streaming_agree_on_the_codec() {
+        for bytes in [lossless_bytes(), lossy_bytes()] {
+            let expected = probe(&bytes).unwrap().codec;
+            assert!(expected.is_some(), "a still always has a codec");
+
+            let mut decoder = IncrementalDecoder::new();
+            let mut streamed = None;
+            for slice in bytes.chunks(16) {
+                if let Progress::HeaderReady(info) = decoder.push(slice).unwrap() {
+                    streamed = Some(info.codec);
+                    break;
+                }
+            }
+            assert_eq!(
+                streamed,
+                Some(expected),
+                "HeaderReady must report the codec probe reports"
+            );
+        }
+    }
+
+    /// A bare `VP8 ` + `ALPH` with no `VP8X`: alpha announced by a chunk that no
+    /// header flag mentions, which is the shape
+    /// `composites_a_raw_alpha_chunk_onto_a_lossy_image` pins for `decode`.
+    fn lossy_with_bare_alpha() -> Vec<u8> {
+        let vp8_key_frame = [0x10u8, 0x00, 0x00, 0x9d, 0x01, 0x2a, 16, 0, 16, 0];
+        let mut alph = vec![0x00u8];
+        alph.resize(1 + 16 * 16, 0x80);
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::VP8, &vp8_key_frame);
+        push_chunk(&mut body, FourCc::ALPH, &alph);
+        riff_envelope(&body)
+    }
+
+    /// Metadata written *after* the image chunk, so a walk that stops at the image
+    /// never sees it.
+    fn lossless_with_trailing_metadata() -> Vec<u8> {
+        let rgba = vec![0x11u8; 4 * 4 * 4];
+        let dims = Dimensions::new(4, 4).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        Encoder::lossless()
+            .metadata(Metadata {
+                exif: Some(vec![9, 9, 9, 9]),
+                ..Metadata::none()
+            })
+            .encode_ref(img)
+            .unwrap()
+    }
+
+    /// The invariant, not an example of it: two ways of asking one file must not
+    /// disagree. `probe` is a promise about what `decode` will produce, so every
+    /// field they share is checked over every container shape the crate builds —
+    /// simple, extended, sidecar-alpha-without-a-flag, trailing metadata.
+    ///
+    /// This exists because `probe` shipped believing a `VP8X` flag was "the only
+    /// place to look" for alpha. That is true of the streaming classifier it was
+    /// copied from, which has not buffered the trailing chunks yet. It is false of
+    /// a probe, which is handed the whole file.
+    #[test]
+    fn probe_never_contradicts_decode() {
+        let cases: [(&str, Vec<u8>); 4] = [
+            ("lossless", lossless_bytes()),
+            ("lossy", lossy_bytes()),
+            ("lossy + bare ALPH", lossy_with_bare_alpha()),
+            (
+                "lossless + trailing metadata",
+                lossless_with_trailing_metadata(),
+            ),
+        ];
+        for (name, bytes) in cases {
+            let probed = probe(&bytes).unwrap_or_else(|e| panic!("{name}: probe: {e:?}"));
+            let decoded = decode(&bytes).unwrap_or_else(|e| panic!("{name}: decode: {e:?}"));
+            assert_eq!(
+                probed.dimensions,
+                decoded.dimensions(),
+                "{name}: dimensions"
+            );
+            assert_eq!(probed.has_alpha, decoded.has_alpha(), "{name}: has_alpha");
+            assert_eq!(
+                probed.has_metadata,
+                !decoded.metadata().is_empty(),
+                "{name}: has_metadata"
+            );
+        }
+    }
+
+    /// The honest boundary: a probe needs the header. Cutting into it must fail
+    /// rather than invent dimensions.
+    #[test]
+    fn probe_fails_when_the_truncation_reaches_the_header() {
+        assert!(probe(&lossless_bytes()[..14]).is_err());
+    }
+
+    #[test]
+    fn probe_reports_metadata_from_the_vp8x_header() {
+        let rgba = vec![0x20u8; 4 * 3 * 4];
+        let dims = Dimensions::new(4, 3).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        let bytes = Encoder::lossless()
+            .metadata(Metadata {
+                icc_profile: Some(vec![1, 2, 3]),
+                ..Metadata::none()
+            })
+            .encode_ref(img)
+            .unwrap();
+        assert!(probe(&bytes).unwrap().has_metadata);
+    }
+
+    #[test]
+    fn probe_reads_an_animation_canvas_without_decoding_frames() {
+        let canvas = Dimensions::new(16, 8).unwrap();
+        let rgba = vec![0x40u8; 16 * 8 * 4];
+        let frame = ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap();
+        let bytes = crate::AnimationEncoder::new(canvas)
+            .add_frame(
+                frame,
+                FrameMeta {
+                    x: 0,
+                    y: 0,
+                    dimensions: canvas,
+                    duration_ms: 100,
+                    blend: BlendMode::Blend,
+                    dispose: DisposalMode::Keep,
+                },
+            )
+            .unwrap()
+            .finish();
+        let info = probe(&bytes).unwrap();
+        assert!(info.is_animated);
+        assert_eq!(info.dimensions, canvas);
+    }
+
+    /// A frame meta with `duration_ms`, everything else fixed to the canvas.
+    fn frame_meta(canvas: Dimensions, duration_ms: u32) -> FrameMeta {
+        FrameMeta {
+            x: 0,
+            y: 0,
+            dimensions: canvas,
+            duration_ms,
+            blend: BlendMode::Blend,
+            dispose: DisposalMode::Keep,
+        }
+    }
+
+    /// `probe_animation` reports the exact frame count and the sum of the frame
+    /// durations, read from the `ANMF` headers — no decode. Distinct durations so
+    /// the total is not reproducible by dropping or multiplying frames: 3 frames of
+    /// 100/150/200 ms are 3 and 450, not 1, not 100·150·200.
+    #[test]
+    fn probe_animation_counts_frames_and_sums_durations() {
+        let canvas = Dimensions::new(8, 6).unwrap();
+        let rgba = vec![0x30u8; 8 * 6 * 4];
+        let frame = || ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap();
+        let bytes = crate::AnimationEncoder::new(canvas)
+            .add_frame(frame(), frame_meta(canvas, 100))
+            .unwrap()
+            .add_frame(frame(), frame_meta(canvas, 150))
+            .unwrap()
+            .add_frame(frame(), frame_meta(canvas, 200))
+            .unwrap()
+            .finish();
+        let info = probe_animation(&bytes).unwrap();
+        assert_eq!(info.frame_count, 3);
+        assert_eq!(info.total_duration_ms, 450);
+    }
+
+    /// Metadata announced only by a sidecar chunk, with no `VP8X` at all: `probe`
+    /// must report it, matching `decode`, which reads the chunk. Pins the
+    /// `ICCP|EXIF|XMP` collection arm and the `has_metadata` fold.
+    #[test]
+    fn probe_reads_metadata_from_a_sidecar_without_a_vp8x() {
+        // A bare `VP8L` still (no `VP8X`), then a trailing `EXIF` chunk.
+        let mut body = lossless_bytes()[12..].to_vec();
+        push_chunk(&mut body, FourCc::EXIF, b"MM\x00*exif");
+        let bytes = riff_envelope(&body);
+        assert!(probe(&bytes).unwrap().has_metadata, "sidecar EXIF, no VP8X");
+        assert!(
+            !decode(&bytes).unwrap().metadata().is_empty(),
+            "decode reads the same chunk"
+        );
+    }
+
+    /// An animation's alpha and metadata come from its `VP8X` flags, since `probe`
+    /// returns at the animated header before any per-frame chunk. Pins
+    /// `vp8x_has_metadata` per flag — a single flag must still report metadata,
+    /// which `&&` between the three would deny.
+    #[test]
+    fn probe_reads_animation_metadata_from_vp8x_flags() {
+        let canvas = Dimensions::new(16, 16).unwrap();
+        let animated_vp8x = |meta: &Metadata| {
+            let flags = Vp8xFlags::for_output(meta, false).with_animation();
+            let mut body = Vec::new();
+            push_chunk(&mut body, FourCc::VP8X, &Vp8xInfo::build(flags, canvas));
+            riff_envelope(&body)
+        };
+        // Each metadata kind alone must report metadata: `&&` between the three
+        // flags would deny a single one.
+        let cases = [
+            Metadata {
+                icc_profile: Some(vec![1]),
+                ..Metadata::none()
+            },
+            Metadata {
+                exif: Some(vec![1]),
+                ..Metadata::none()
+            },
+            Metadata {
+                xmp: Some(vec![1]),
+                ..Metadata::none()
+            },
+        ];
+        for meta in &cases {
+            let info = probe(&animated_vp8x(meta)).unwrap();
+            assert!(info.is_animated && info.has_metadata, "{meta:?}");
+        }
+        // No metadata flag: an animation reports none — the other side of the OR.
+        let info = probe(&animated_vp8x(&Metadata::none())).unwrap();
+        assert!(info.is_animated && !info.has_metadata);
+    }
+
+    /// `ANIM`/`ANMF` chunks with no preceding animated `VP8X` are malformed and
+    /// rejected, not read as a still.
+    #[test]
+    fn probe_rejects_animation_chunks_without_an_animated_vp8x() {
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::ANMF, b"not a real frame");
+        assert!(matches!(
+            probe(&riff_envelope(&body)),
+            Err(Error::InvalidContainer)
+        ));
+    }
+
+    /// The first image chunk wins: a second one is ignored, so `probe` reports the
+    /// first's dimensions. Pins the `image.is_none()` guards.
+    #[test]
+    fn probe_reports_the_first_image_chunk_when_two_are_present() {
+        let first = lossless_bytes(); // 32x32
+        let second = {
+            let rgba = vec![0x11u8; 4 * 4 * 4];
+            let dims = Dimensions::new(4, 4).unwrap();
+            let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+            Encoder::lossless().encode_ref(img).unwrap()
+        };
+        let mut body = first[12..].to_vec();
+        body.extend_from_slice(&second[12..]);
+        let info = probe(&riff_envelope(&body)).unwrap();
+        assert_eq!(
+            info.dimensions,
+            dims(),
+            "the first (32x32) chunk, not the 4x4"
+        );
+    }
+
+    /// The same first-image-wins guard on the lossy `VP8 ` arm: two `VP8 ` chunks
+    /// of different sizes, and `probe` must report the first's dimensions. The
+    /// `VP8L`-only case above never exercises the `VP8 ` arm, so its `image.is_none()`
+    /// guard needs its own two-chunk fixture.
+    #[test]
+    fn probe_reports_the_first_lossy_image_chunk_when_two_are_present() {
+        let first = lossy_bytes(); // 32x32
+        let second = {
+            let rgba = vec![0x11u8; 16 * 16 * 4];
+            let d = Dimensions::new(16, 16).unwrap();
+            let img = ImageRef::new(d, PixelLayout::Rgba8, &rgba).unwrap();
+            Encoder::lossy().quality(80).encode_ref(img).unwrap()
+        };
+        let mut body = first[12..].to_vec();
+        body.extend_from_slice(&second[12..]);
+        let info = probe(&riff_envelope(&body)).unwrap();
+        assert_eq!(
+            info.dimensions,
+            dims(),
+            "the first (32x32) VP8, not the 16x16"
+        );
+        assert_eq!(info.codec, Some(Codec::Lossy));
+    }
+
+    #[test]
+    fn probe_rejects_what_is_not_a_webp() {
+        assert!(matches!(
+            probe(b"not a webp file here"),
+            Err(Error::NotWebp)
+        ));
+        assert!(matches!(probe(b"tiny"), Err(Error::Truncated)));
+    }
+
+    /// The length guard is `< 12`, and 12 is the smallest input that carries the
+    /// full `RIFF....WEBP` magic. 11 bytes is too short to even check the magic
+    /// (`Truncated`); 12 bytes is long enough, so a wrong magic is `NotWebp`, not
+    /// `Truncated`. Pins the boundary so `<` cannot become `<=`.
+    #[test]
+    fn probe_length_guard_is_exactly_twelve() {
+        assert!(matches!(probe(&[0u8; 11]), Err(Error::Truncated)));
+        assert!(matches!(probe(&[0u8; 12]), Err(Error::NotWebp)));
+    }
+
+    /// The magic check rejects when *either* `RIFF` or `WEBP` is wrong (`||`). A
+    /// file with a correct `RIFF` but a wrong `WEBP` fourcc must still be `NotWebp`;
+    /// with `&&` it would slip past the guard. The mirror case (wrong `RIFF`,
+    /// right `WEBP`) covers the other operand.
+    #[test]
+    fn probe_rejects_a_half_correct_magic() {
+        let mut riff_only = *b"RIFF\0\0\0\0XXXX";
+        assert_eq!(&riff_only[0..4], b"RIFF");
+        assert_ne!(&riff_only[8..12], b"WEBP");
+        assert!(matches!(probe(&riff_only), Err(Error::NotWebp)));
+
+        // The other operand: right WEBP, wrong RIFF.
+        riff_only[0..4].copy_from_slice(b"XXXX");
+        riff_only[8..12].copy_from_slice(b"WEBP");
+        assert!(matches!(probe(&riff_only), Err(Error::NotWebp)));
+    }
+
+    #[test]
+    fn probe_rejects_a_container_with_no_image_chunk() {
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::EXIF, b"just metadata");
+        assert!(matches!(
+            probe(&riff_envelope(&body)),
+            Err(Error::MissingImage)
+        ));
+    }
 
     #[test]
     fn round_trips_a_lossless_image_through_the_umbrella() {

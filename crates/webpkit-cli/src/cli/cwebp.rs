@@ -10,23 +10,72 @@
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
 use crate::{
-    codec::{self, EncodeMode},
+    codec::EncodeMode,
+    diag::{self, ArgvSpan, Diagnostic},
     effort,
     error::CliError,
     format::{self, InputFormat},
     io::{Sink, Source},
     metadata::{MetadataField, Selection},
+    preprocess::{Crop, Pipeline, Resize},
     report::Reporter,
+    strategy::{Strategy, Target},
+    term,
 };
+
+/// Every flag `cwebp` recognizes, accepted or rejected — the search space for a
+/// did-you-mean suggestion, so a typo of a *rejected* flag still points home.
+const KNOWN_FLAGS: &[&str] = &[
+    "-o",
+    "-q",
+    "-m",
+    "-z",
+    "-lossless",
+    "-metadata",
+    "-quiet",
+    "-v",
+    "-color",
+    "-short",
+    "-progress",
+    "-exact",
+    "-noalpha",
+    "-low_memory",
+    "-noasm",
+    "-mt",
+    "-alpha_q",
+    "-alpha_method",
+    "-alpha_filter",
+    "-blend_alpha",
+    "-version",
+    "-near_lossless",
+    "-size",
+    "-psnr",
+    "-pass",
+    "-sns",
+    "-f",
+    "-sharpness",
+    "-segments",
+    "-partition_limit",
+    "-jpeg_like",
+    "-sharp_yuv",
+    "-hint",
+    "-af",
+    "-pre",
+    "-map",
+    "-crop",
+    "-resize",
+    "-preset",
+];
 
 /// Parse `cwebp`-style arguments, encode, and return a process exit code.
 #[must_use]
-pub fn main() -> ExitCode {
+pub(crate) fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    term::install(term::prescan(&args));
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            crate::report::error(&err);
+            crate::report::error(&err.to_diagnostic());
             err.exit_code()
         },
     }
@@ -43,6 +92,14 @@ struct Config {
     /// Lossless (`VP8L`) output; set by `-lossless` or `-z`. Default is lossy.
     lossless: bool,
     metadata: Vec<MetadataField>,
+    /// `-crop x y w h` pixel preprocessing (applied before `-resize`).
+    crop: Option<Crop>,
+    /// `-resize w h` pixel preprocessing (a `0` axis keeps aspect).
+    resize: Option<Resize>,
+    /// `-size N`: target output bytes, searched over lossy quality.
+    target_size: Option<u64>,
+    /// `-psnr N`: target reconstruction PSNR floor in dB.
+    target_psnr: Option<f64>,
     verbose: u8,
     quiet: bool,
 }
@@ -82,19 +139,41 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
     let sink = Sink::from_arg(&output);
     let bytes = source.read()?;
     let format = InputFormat::resolve(None, source.extension().as_deref(), &bytes);
-    reject_lossy_source(&bytes, format, &source.label())?;
+    reject_raw_source(format, &source.label())?;
+    // Re-encoding an already-lossy JPEG as lossy WebP compounds loss; unlike
+    // libwebp's cwebp (which rejects nothing), point at the exact-preserving path.
+    if format == InputFormat::Jpeg && matches!(mode, EncodeMode::Lossy { .. }) {
+        crate::report::warn(
+            "re-encoding a lossy JPEG as lossy WebP compounds loss; pass -lossless to keep it exact",
+        );
+    }
 
-    let image = format::read_image(&bytes, format, None)?;
+    // Crop-then-resize preprocessing. Project from the header first so an
+    // out-of-bounds crop fails before the image is even decoded.
+    let pipeline = Pipeline::new(config.crop, config.resize);
+    if !pipeline.is_empty()
+        && let Some(dims) = format::dimensions_of(&bytes, format)
+    {
+        pipeline.project(dims)?;
+    }
+    let image = pipeline.apply(format::read_image(&bytes, format, None)?)?;
     let metadata = Selection::from_fields(&config.metadata).apply(image.metadata());
-    let webp = codec::encode(&image, mode, metadata)?;
-    sink.write(&webp)?;
+
+    // A `-size`/`-psnr` target makes this a quality search; otherwise a single encode.
+    let target = Target::from_flags(config.target_size, config.target_psnr);
+    let strategy = Strategy::resolve(mode, false, false, target)?;
+    let encoded = strategy.run(&image, &metadata)?;
+    sink.write(&encoded.bytes)?;
+    if let Some(search) = encoded.search_line() {
+        reporter.detail(&format!("search: {search}"));
+    }
     reporter.status(&format!(
         "{} -> {} ({}x{}, {} bytes)",
         source.label(),
         sink.label(),
         image.width(),
         image.height(),
-        webp.len(),
+        encoded.bytes.len(),
     ));
     Ok(())
 }
@@ -110,6 +189,11 @@ enum Parsed {
 )]
 fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
     let mut config = Config::default();
+    // The command line as strings, for the caret a rejection or a typo draws.
+    let rendered: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     let mut index = 0;
     while index < args.len() {
         let token = args[index].to_string_lossy().into_owned();
@@ -137,6 +221,33 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                     .extend(parse_metadata(&value(args, &mut index, "-metadata")?)?);
             },
             "-quiet" => config.quiet = true,
+            // Pixel preprocessing, applied tool-side before the encoder — the same
+            // place libwebp's cwebp does it. `-crop x y w h`, `-resize w h`.
+            "-crop" => {
+                let x = value_u32(args, &mut index, "-crop")?;
+                let y = value_u32(args, &mut index, "-crop")?;
+                let width = value_u32(args, &mut index, "-crop")?;
+                let height = value_u32(args, &mut index, "-crop")?;
+                config.crop = Some(Crop {
+                    x,
+                    y,
+                    width,
+                    height,
+                });
+            },
+            "-resize" => {
+                let width = value_u32(args, &mut index, "-resize")?;
+                let height = value_u32(args, &mut index, "-resize")?;
+                config.resize = Some(Resize::new(width, height)?);
+            },
+            // Rate control by CLI-side search over quality (lossy only).
+            "-size" => config.target_size = Some(value_u64(args, &mut index, "-size")?),
+            "-psnr" => config.target_psnr = Some(parse_f64(&value(args, &mut index, "-psnr")?)?),
+            // Applied from a prescan in `main`, before parsing can fail; parsed again
+            // here to consume the value and to reject a bad one by name.
+            "-color" | "--color" => {
+                term::parse_choice(&value(args, &mut index, &token)?)?;
+            },
             "-v" => config.verbose = config.verbose.saturating_add(1),
             // Accepted for compatibility, but a no-op here. `-exact` preserves the
             // RGB of fully-transparent pixels — already this encoder's behavior, as
@@ -153,9 +264,15 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                     config.input = Some(PathBuf::from(&args[index]));
                 }
             },
-            other if is_rejected(other) => return Err(reject(other)),
+            other if is_rejected(other) => return Err(reject(&rendered, index, other)),
             other if other.starts_with('-') && other.len() > 1 => {
-                return Err(CliError::Usage(format!("unknown option `{other}`")));
+                return Err(CliError::Rejected(Box::new(diag::unknown_flag(
+                    "cwebp",
+                    &rendered,
+                    index,
+                    other,
+                    KNOWN_FLAGS,
+                ))));
             },
             _ => config.input = Some(PathBuf::from(&args[index])),
         }
@@ -164,15 +281,15 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
     Ok(Parsed::Run(Box::new(config)))
 }
 
-/// Rate-control and preprocessing knobs this encoder does not implement. They are
+/// Internal encoder-tuning knobs this encoder does not implement. They are
 /// rejected (rather than silently ignored) so a caller is never misled into
-/// thinking, e.g., a `-size` target or `-crop` took effect.
+/// thinking an internal tuning parameter took effect. `-crop`/`-resize`/`-size`/
+/// `-psnr` are **not** here — they are now live (preprocessing and a quality
+/// search) rather than internal tuning.
 fn is_rejected(flag: &str) -> bool {
     matches!(
         flag,
         "-near_lossless"
-            | "-size"
-            | "-psnr"
             | "-pass"
             | "-sns"
             | "-f"
@@ -185,29 +302,65 @@ fn is_rejected(flag: &str) -> bool {
             | "-af"
             | "-pre"
             | "-map"
-            | "-crop"
-            | "-resize"
             | "-preset"
     )
 }
 
-fn reject(flag: &str) -> CliError {
-    CliError::Usage(format!(
-        "`{flag}` is a rate-control or preprocessing option unsupported by this \
-         encoder"
-    ))
+/// The tailored cause and help for one rejected flag. Different knobs want
+/// different answers, so the reason is per-flag rather than one flat sentence.
+struct Rejection {
+    cause: &'static str,
+    help: &'static [&'static str],
 }
 
-/// Reject clearly-lossy source images with an actionable message.
-fn reject_lossy_source(bytes: &[u8], format: InputFormat, label: &str) -> Result<(), CliError> {
-    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        return Err(CliError::Format(format!(
-            "{label} is a JPEG (a lossy source); convert it to PNG first"
-        )));
+fn rejection_of(flag: &str) -> Rejection {
+    match flag {
+        "-near_lossless" => Rejection {
+            cause: "webpkit has no near-lossless mode. libwebp's cwebp accepts this flag; \
+                    this cwebp refuses it rather than handing you a file you did not ask for.",
+            help: &[
+                "near-lossless trades exactness for size. Pick the end you want:",
+                "  cwebp -lossless <in> -o <out.webp>    # exact, larger",
+                "  cwebp -q 90     <in> -o <out.webp>    # lossy, smaller",
+            ],
+        },
+        "-preset" => Rejection {
+            cause: "a preset bundles the internal tuning knobs below, none of which webpkit \
+                    exposes.",
+            help: &[
+                "choose effort and quality directly:",
+                "  cwebp -m <0-6> -q <0-100> <in> -o <out.webp>",
+            ],
+        },
+        _ => Rejection {
+            cause: "this is an internal encoder-tuning knob webpkit does not expose.",
+            help: &[
+                "the encoder is tuned through effort and quality only:",
+                "  cwebp -m <0-6> -q <0-100> <in> -o <out.webp>",
+            ],
+        },
     }
+}
+
+/// Build the rejection diagnostic for `flag` at `index`, with a caret and its own
+/// cause and help.
+fn reject(args: &[String], index: usize, flag: &str) -> CliError {
+    let rejection = rejection_of(flag);
+    let mut diag = Diagnostic::new(format!("`{flag}` is not supported by this encoder"))
+        .with_cause(rejection.cause)
+        .with_help(rejection.help.iter().copied())
+        .with_note("other libwebp rate-control and preprocessing flags are rejected the same way");
+    if let Some(span) = ArgvSpan::at_token("cwebp", args, index) {
+        diag = diag.with_span(span);
+    }
+    CliError::Rejected(Box::new(diag))
+}
+
+/// Reject raw pixel input, which `cwebp` has no way to give dimensions to.
+fn reject_raw_source(format: InputFormat, label: &str) -> Result<(), CliError> {
     if format == InputFormat::Raw {
         return Err(CliError::Format(format!(
-            "{label}: unsupported input; encode from PNG, PPM, or PAM"
+            "{label}: unsupported input; encode from PNG/JPEG/GIF/TIFF/BMP/PPM/PAM"
         )));
     }
     Ok(())
@@ -227,6 +380,23 @@ fn value_os(args: &[OsString], index: &mut usize, flag: &str) -> Result<OsString
 fn parse_i64(text: &str) -> Result<i64, CliError> {
     text.parse()
         .map_err(|_| CliError::Usage(format!("expected an integer, got `{text}`")))
+}
+
+/// The next argument parsed as a `u32` (a crop/resize coordinate).
+fn value_u32(args: &[OsString], index: &mut usize, flag: &str) -> Result<u32, CliError> {
+    let text = value(args, index, flag)?;
+    text.parse().map_err(|_| {
+        CliError::Usage(format!(
+            "`{flag}` expected a non-negative integer, got `{text}`"
+        ))
+    })
+}
+
+/// The next argument parsed as a `u64` (a byte target).
+fn value_u64(args: &[OsString], index: &mut usize, flag: &str) -> Result<u64, CliError> {
+    let text = value(args, index, flag)?;
+    text.parse()
+        .map_err(|_| CliError::Usage(format!("`{flag}` expected a byte count, got `{text}`")))
 }
 
 fn parse_f64(text: &str) -> Result<f64, CliError> {
@@ -249,12 +419,8 @@ fn parse_metadata(list: &str) -> Result<Vec<MetadataField>, CliError> {
         .collect()
 }
 
-#[allow(
-    clippy::print_stdout,
-    reason = "help/version print to stdout by CLI convention"
-)]
 fn print_help() {
-    println!(
+    crate::report::out(
         "cwebp (webpkit) — encode PNG/PPM/PAM to WebP (lossy by default)\n\n\
          Usage: cwebp [options] <input> -o <output.webp>\n\n\
          Options:\n\
@@ -264,15 +430,16 @@ fn print_help() {
          \x20 -lossless        encode losslessly (VP8L) instead of lossy (VP8)\n\
          \x20 -z <int>         lossless level 0-9 (implies -lossless)\n\
          \x20 -metadata <list> all,none,icc,exif,xmp (default: all)\n\
+         \x20 -crop x y w h    crop before encoding (dimensions match libwebp; pixels differ)\n\
+         \x20 -resize w h      resize before encoding (0 on one axis keeps aspect)\n\
+         \x20 -size <int>      target output size in bytes (searches lossy quality)\n\
+         \x20 -psnr <float>    target reconstruction PSNR floor in dB (lossy)\n\
          \x20 -quiet / -v      quieter / more verbose\n\
-         \x20 -version         print version\n"
+         \x20 -color <when>    auto (default), always, or never\n\
+         \x20 -version         print version\n",
     );
 }
 
-#[allow(
-    clippy::print_stdout,
-    reason = "help/version print to stdout by CLI convention"
-)]
 fn print_version() {
-    println!("cwebp (webpkit) {}", env!("CARGO_PKG_VERSION"));
+    crate::report::out(&format!("cwebp (webpkit) {}", env!("CARGO_PKG_VERSION")));
 }

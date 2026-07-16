@@ -12,6 +12,12 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+# The targets' bodies live here so `tests/replay_seeds.rs` can call the very code
+# the fuzzer runs, instead of a hand-written copy that drifts.
+[lib]
+name = "webpkit_lossy_fuzz"
+path = "src/lib.rs"
+
 [[bin]]
 name = "decode"
 path = "fuzz_targets/decode.rs"

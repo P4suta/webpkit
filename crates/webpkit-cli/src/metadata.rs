@@ -4,11 +4,11 @@
 //! it), so an unspecified `--metadata` means "keep everything the source has".
 
 use clap::ValueEnum;
-use webpkit::lossless::Metadata;
+use webpkit::Metadata;
 
 /// A single choice accepted by `--metadata` (comma-separated).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum MetadataField {
+pub(crate) enum MetadataField {
     /// Keep ICC, Exif, and XMP.
     All,
     /// Strip everything (a bare `VP8L` output).
@@ -23,19 +23,19 @@ pub enum MetadataField {
 
 /// Which metadata fields to keep, resolved from the `--metadata` flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Selection {
+pub(crate) struct Selection {
     /// Keep the ICC color profile.
-    pub icc: bool,
+    pub(crate) icc: bool,
     /// Keep Exif.
-    pub exif: bool,
+    pub(crate) exif: bool,
     /// Keep XMP.
-    pub xmp: bool,
+    pub(crate) xmp: bool,
 }
 
 impl Selection {
     /// Keep all metadata — the default when `--metadata` is unspecified.
     #[must_use]
-    pub const fn all() -> Self {
+    pub(crate) const fn all() -> Self {
         Self {
             icc: true,
             exif: true,
@@ -45,7 +45,7 @@ impl Selection {
 
     /// Keep nothing.
     #[must_use]
-    pub const fn none() -> Self {
+    pub(crate) const fn none() -> Self {
         Self {
             icc: false,
             exif: false,
@@ -58,7 +58,7 @@ impl Selection {
     /// An empty list keeps everything (the preserve-by-default policy). `None`
     /// clears the accumulator; later fields re-enable individual kinds.
     #[must_use]
-    pub fn from_fields(fields: &[MetadataField]) -> Self {
+    pub(crate) fn from_fields(fields: &[MetadataField]) -> Self {
         if fields.is_empty() {
             return Self::all();
         }
@@ -77,7 +77,7 @@ impl Selection {
 
     /// Project a source [`Metadata`] down to the selected fields.
     #[must_use]
-    pub fn apply(self, source: &Metadata) -> Metadata {
+    pub(crate) fn apply(self, source: &Metadata) -> Metadata {
         Metadata {
             icc_profile: self.icc.then(|| source.icc_profile.clone()).flatten(),
             exif: self.exif.then(|| source.exif.clone()).flatten(),
@@ -88,7 +88,7 @@ impl Selection {
 
 #[cfg(test)]
 mod tests {
-    use webpkit::lossless::Metadata;
+    use webpkit::Metadata;
 
     use super::{MetadataField, Selection};
 

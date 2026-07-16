@@ -1,0 +1,21 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-info 1  "info " 
+.SH NAME
+info \- Print a summary of a WebP file (size, alpha, metadata, animation)
+.SH SYNOPSIS
+\fBinfo\fR [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
+.SH DESCRIPTION
+Print a summary of a WebP file (size, alpha, metadata, animation)
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Print the report as JSON instead of text.
+
+One object, with a `schema` field to pin. Nothing is decoded either way, so this is cheap on any size of file.
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIINPUT\fR] [default: \-]
+Input `.webp` file; `\-` (the default) reads stdin

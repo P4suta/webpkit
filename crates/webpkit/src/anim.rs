@@ -30,8 +30,16 @@ use crate::stream::{DecodeOptions, FrameDecoder, FramePayload};
 
 pub use crate::container::anim::{BlendMode, DisposalMode, FrameMeta};
 
-/// Canvas-wide animation parameters, from the `VP8X` and `ANIM` chunks.
+/// Canvas-wide animation parameters, from the `VP8X`, `ANIM`, and `ANMF` headers.
+///
+/// Every field is readable without decoding a frame — `frame_count` and
+/// `total_duration_ms` included, since both live in the `ANMF` headers. See
+/// [`crate::probe_animation`].
+///
+/// `#[non_exhaustive]`: further header facts can be added without a breaking
+/// change (the fields stay `pub` to read).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub struct AnimInfo {
     /// The canvas size that every frame composites onto.
     pub canvas: Dimensions,
@@ -40,6 +48,10 @@ pub struct AnimInfo {
     pub background_rgba: [u8; 4],
     /// Loop count; `0` means loop forever.
     pub loop_count: u16,
+    /// How many `ANMF` frames the file carries.
+    pub frame_count: usize,
+    /// The sum of every frame's display duration.
+    pub total_duration_ms: u32,
 }
 
 /// A decoded animation frame: its metadata plus its own (frame-sized) pixels.
@@ -116,6 +128,30 @@ pub struct Frames<'a, D> {
     decoder: D,
 }
 
+/// Count the `ANMF` frames from `start` and sum their durations, reading only
+/// the frame headers.
+///
+/// Every fact here is in the headers, so counting must not cost a decode. The
+/// walk stops at the first unreadable chunk rather than failing: a truncated
+/// animation still has frames worth reporting, and the alternative is refusing
+/// to describe exactly the file whose damage prompted the question.
+fn count_frames(body: &[u8], start: usize) -> (usize, u32) {
+    let (mut offset, mut count, mut duration) = (start, 0_usize, 0_u32);
+    while offset < body.len() {
+        let Ok(Some((chunk, next))) = read_chunk_at(body, offset) else {
+            break;
+        };
+        if chunk.id == FourCc::ANMF {
+            count += 1;
+            if let Ok(header) = AnmfHeader::parse(chunk.data) {
+                duration = duration.saturating_add(header.duration_ms);
+            }
+        }
+        offset = next;
+    }
+    (count, duration)
+}
+
 impl<'a, D: FrameDecoder + Clone> Frames<'a, D> {
     /// Parse the animation header (`VP8X` canvas + `ANIM`) and position the
     /// cursor at the first `ANMF` frame.
@@ -161,6 +197,7 @@ impl<'a, D: FrameDecoder + Clone> Frames<'a, D> {
         let canvas = canvas.ok_or(Error::UnsupportedFeature)?;
         let anim = anim.ok_or(Error::InvalidContainer)?;
         let cursor = first_frame.ok_or(Error::MissingImage)?;
+        let body = &data[..body_end];
         // Reject a canvas that exceeds the pixel limit *before* the compositor
         // allocates it (the same guard the still paths apply to their dimensions).
         let canvas_pixels = canvas.pixel_count();
@@ -170,10 +207,13 @@ impl<'a, D: FrameDecoder + Clone> Frames<'a, D> {
                 limit,
             });
         }
+        let (frame_count, total_duration_ms) = count_frames(body, cursor);
         let anim = AnimInfo {
             canvas,
             background_rgba: PixelLayout::Rgba8.pack(anim.background),
             loop_count: anim.loop_count,
+            frame_count,
+            total_duration_ms,
         };
         Ok(Self {
             data,

@@ -35,10 +35,49 @@ path = "src/bin/dwebp.rs"
 name = "webp"
 path = "src/bin/webp.rs"
 
+[features]
+# `formats` adds JPEG/GIF/TIFF/BMP input via the `image` crate and turns on
+# webpkit's `image` feature for the `DynamicImage -> Image` conversion. On by
+# default (the `webp` tool is a product, and a product reads the formats people
+# have); `--no-default-features` falls back to the zero-image-dep PNG/PPM/PAM/raw core.
+default = ["formats"]
+formats = ["dep:image", "webpkit/image"]
+
 [dependencies]
+# Both arrive with clap already, so naming them directly costs no new crates.
+# `anstream` decides per-stream whether ANSI survives; `anstyle` is the vocabulary.
+anstream = { workspace = true }
+anstyle = { workspace = true }
 clap = { workspace = true }
+# Completions cost nothing new (clap + clap_lex only); man pages add `roff`.
+# Both generate from the same `clap::Command` the parser already builds, so the
+# help, the completions, and the man page cannot describe different flags.
+clap_complete = { workspace = true }
+clap_mangen = { workspace = true }
+# Ctrl-C cleanup: `panic = "abort"` and `process::exit` both skip `Drop`, so a
+# temp file's own cleanup does not run on a signal — the handler deletes in-flight
+# temps explicitly.
+ctrlc = { workspace = true }
+# Shells do not expand globs before launching a native binary, so `webp *.jpg`
+# reaches us as the literal `*.jpg` — silently a no-op on Windows without this. A
+# pattern is expanded only when it does not exist as a literal path, so a real
+# `[a].png` stays openable.
+glob = { workspace = true }
+# JPEG/GIF/TIFF/BMP decode, behind the default `formats` feature. Optional so a
+# `--no-default-features` build keeps the PNG/PPM/PAM/raw core with no image dep.
+image = { workspace = true, optional = true }
+# `info --json` is the machine-readable contract; serde_json's Map is BTreeMap-
+# backed unless `preserve_order` is on, so key order stays deterministic.
 png = { workspace = true }
 rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Atomic output: write a sibling temp file, then rename over the target, so a
+# failed or interrupted write never leaves a truncated `.webp` that looks valid.
+tempfile = { workspace = true }
+# `webp.toml` config layer: parse the file (line numbers for provenance come from
+# a source scan) with the same crate the rest of the workspace already uses.
+toml = { workspace = true }
 # The one WebP codec crate: its type-state `Encoder` routes to lossless (VP8L) or
 # lossy (VP8) so `cwebp`/`webp` can offer libwebp-style lossy-by-default output,
 # and it re-exports the `Image`/`Metadata`/`Effort` types the CLI names.
@@ -50,9 +89,12 @@ webpkit = { path = "../webpkit", version = "0.1.0", features = ["rayon"] }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+# Encode throwaway JPEG/GIF/TIFF/BMP fixtures for the input-format tests, so no
+# binary blobs are committed. The same crate the CLI decodes with.
+image = { workspace = true }
 insta = { workspace = true }
 predicates = { workspace = true }
-tempfile = { workspace = true }
+webpkit-archtest = { path = "../webpkit-archtest" }
 
 [lints]
 workspace = true
