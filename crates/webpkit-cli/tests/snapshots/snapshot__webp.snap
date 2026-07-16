@@ -13,6 +13,8 @@ Commands:
   encode       Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
   convert      Batch-convert many images (or directories) to WebP, in parallel
   info         Print a summary of a WebP file (size, alpha, metadata, animation)
+  diff         Compare two images: report PSNR and the largest per-channel difference
+  doctor       Diagnose the environment: PATH drop-in shadows, config, terminal, threads
   config       Show resolved settings and where each came from (args, env, file, default)
   explain      Explain an exit code: what a failing run's status number means
   completions  Print a shell completion script
@@ -38,6 +40,11 @@ Options:
           `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
           
           [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
   -o, --output <OUTPUT>
           Output file, or a directory for many inputs; default: beside each input
@@ -142,6 +149,11 @@ Options:
           - first: Only the first composited frame (the default)
           - all:   Every composited frame, numbered `<stem>-000.<ext>`, ...
 
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
       --frame <FRAME>
           For animations: emit only this 0-based frame
 
@@ -206,6 +218,11 @@ Options:
 
       --height <HEIGHT>
           Raw-input height in pixels (required for raw input)
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
       --layout <LAYOUT>
           Byte order for raw input only
@@ -293,6 +310,11 @@ Options:
       --lossy
           Encode lossily (VP8) instead of losslessly (VP8L)
 
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
   -q, --quality <QUALITY>
           Lossy quality 0-100 (higher = larger, closer to source); selects --lossy
 
@@ -346,6 +368,86 @@ Options:
           `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
           
           [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp diff --help
+Compare two images: report PSNR and the largest per-channel difference.
+
+Both inputs are decoded to RGBA (a WebP, or any readable image), so a source and its WebP, or two WebP files, can be compared. With `--min-psnr`, exit 1 when the PSNR is below the threshold — the grep/diff convention, for CI gates.
+
+Usage: webp diff [OPTIONS] <A> <B>
+
+Arguments:
+  <A>
+          The first image (a WebP, or any readable format)
+
+  <B>
+          The second image, compared against the first (same dimensions required)
+
+Options:
+      --min-psnr <DB>
+          Fail (exit 1) if the RGB PSNR is below this many decibels
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --json
+          Print the comparison as JSON instead of text
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp doctor --help
+Diagnose the environment: PATH drop-in shadows, config, terminal, threads.
+
+Exits 0 even with warnings; 1 only on a real error (an invalid config file).
+
+Usage: webp doctor [OPTIONS]
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+          
+          [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
   -h, --help
           Print help (see a summary with '-h')
@@ -455,7 +557,7 @@ Usage: webp explain [OPTIONS] <CODE>
 
 Arguments:
   <CODE>
-          An exit code (`0`, `2`..`9`) or its short name (`usage`, `limit`, ...)
+          An exit code (`0`..`9`) or its short name (`usage`, `limit`, ...)
 
 Options:
   -v, --verbose...
@@ -472,6 +574,11 @@ Options:
           `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
           
           [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
   -h, --help
           Print help (see a summary with '-h')
@@ -509,6 +616,11 @@ Options:
           
           [default: auto]
 
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -536,6 +648,11 @@ Options:
           `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
           
           [default: auto]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
 
   -h, --help
           Print help (see a summary with '-h')

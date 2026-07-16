@@ -6,7 +6,7 @@
 
 use std::{
     fs,
-    io::{self, Read, Write},
+    io::{self, IsTerminal as _, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -59,6 +59,55 @@ pub(crate) fn config_home() -> Option<PathBuf> {
     }
 }
 
+/// Whether standard output is a terminal.
+#[must_use]
+pub(crate) fn is_stdout_terminal() -> bool {
+    io::stdout().is_terminal()
+}
+
+/// Whether standard error is a terminal.
+#[must_use]
+pub(crate) fn is_stderr_terminal() -> bool {
+    io::stderr().is_terminal()
+}
+
+/// The canonical directory this executable lives in.
+///
+/// The reference point for `doctor`'s drop-in shadow check: a `cwebp` found on
+/// `PATH` is *this* toolkit's only when it sits in the same directory. `None` when
+/// the path cannot be determined, which just disables the check.
+#[must_use]
+pub(crate) fn current_exe_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    exe.parent().map(Path::to_path_buf)
+}
+
+/// The first executable named `name` on `PATH`, canonicalized.
+///
+/// Used by `doctor` to tell whether the `cwebp` / `dwebp` a user would actually
+/// run is this toolkit's or libwebp's (the two share those names). `None` when no
+/// such file is on `PATH`.
+#[must_use]
+pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .flat_map(|dir| exe_candidates(&dir, name))
+        .find(|candidate| candidate.is_file())
+        .and_then(|candidate| candidate.canonicalize().ok())
+}
+
+/// The filenames an executable `name` might have in `dir` on this platform.
+fn exe_candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        vec![dir.join(format!("{name}.exe")), dir.join(name)]
+    }
+    #[cfg(not(windows))]
+    {
+        vec![dir.join(name)]
+    }
+}
+
 /// Read a file to a string, or `None` if it is absent or unreadable.
 ///
 /// For optional inputs like `webp.toml`, where "not there" is the common case and
@@ -69,22 +118,67 @@ pub(crate) fn read_optional_text(path: &Path) -> Option<String> {
     fs::read_to_string(path).ok()
 }
 
-/// Expand `inputs` into a flat file list, descending into directories.
+/// Whether a path string carries a glob metacharacter (`*`, `?`, or `[`).
+fn looks_like_glob(text: &str) -> bool {
+    text.contains(['*', '?', '['])
+}
+
+/// Expand any glob patterns in `inputs`, leaving literal paths untouched.
 ///
-/// A path given explicitly is taken as-is; `keep` filters only the entries
-/// discovered by walking a directory, so naming a file directly always works
-/// whatever its extension. Subdirectories are visited only when `recursive`.
+/// A shell does not expand a glob before launching a native binary, so on Windows
+/// `webp *.jpg` arrives as the literal `*.jpg`. An input is expanded **only** when
+/// it does not already exist as a literal path: a real file named `[a].png` must
+/// stay openable, so an existing path is never treated as a pattern. A pattern
+/// that matches nothing is left as-is, so the usual "cannot read" error names it.
 ///
 /// # Errors
 ///
-/// [`CliError::ReadInput`] if a directory cannot be listed.
+/// [`CliError::Usage`] if a pattern is malformed, or [`CliError::ReadInput`] if a
+/// directory cannot be traversed while matching.
+pub(crate) fn expand_globs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, CliError> {
+    let mut out = Vec::new();
+    for input in inputs {
+        let text = input.to_string_lossy();
+        if exists(input) || !looks_like_glob(&text) {
+            out.push(input.clone());
+            continue;
+        }
+        let paths = glob::glob(&text)
+            .map_err(|err| CliError::Usage(format!("bad pattern `{text}`: {err}")))?;
+        let mut matched = false;
+        for entry in paths {
+            let path = entry.map_err(|err| {
+                CliError::read_input(err.path().display().to_string(), err.into_error())
+            })?;
+            matched = true;
+            out.push(path);
+        }
+        if !matched {
+            out.push(input.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// Expand `inputs` into a flat file list, descending into directories.
+///
+/// Glob patterns are expanded first (see [`expand_globs`]). A path given
+/// explicitly is taken as-is; `keep` filters only the entries discovered by
+/// walking a directory, so naming a file directly always works whatever its
+/// extension. Subdirectories are visited only when `recursive`.
+///
+/// # Errors
+///
+/// [`CliError::ReadInput`] if a directory cannot be listed, or [`CliError::Usage`]
+/// for a malformed glob pattern.
 pub(crate) fn collect_files(
     inputs: &[PathBuf],
     recursive: bool,
     keep: &dyn Fn(&Path) -> bool,
 ) -> Result<Vec<PathBuf>, CliError> {
+    let expanded = expand_globs(inputs)?;
     let mut files = Vec::new();
-    for input in inputs {
+    for input in &expanded {
         if input.is_dir() {
             walk(input, recursive, keep, &mut files)?;
         } else {
@@ -228,5 +322,54 @@ impl Sink {
                 fs::write(path, bytes).map_err(|err| CliError::write_output(self.label(), err))
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expand_globs, looks_like_glob};
+
+    #[test]
+    fn detects_glob_metacharacters() {
+        assert!(looks_like_glob("*.png"));
+        assert!(looks_like_glob("img?.jpg"));
+        assert!(looks_like_glob("[abc].png"));
+        assert!(!looks_like_glob("photo.png"));
+    }
+
+    #[test]
+    fn an_existing_literal_is_never_expanded() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        // A real file whose name contains glob metacharacters must stay openable:
+        // it exists, so it is passed through verbatim rather than matched.
+        let literal = dir.path().join("[a].png");
+        std::fs::write(&literal, b"x").expect("write literal");
+        let out = expand_globs(std::slice::from_ref(&literal)).expect("expand");
+        assert_eq!(out, vec![literal]);
+    }
+
+    #[test]
+    fn a_pattern_expands_to_its_matches() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("a.png"), b"x").expect("write a");
+        std::fs::write(dir.path().join("b.png"), b"x").expect("write b");
+        std::fs::write(dir.path().join("c.txt"), b"x").expect("write c");
+        let mut out = expand_globs(&[dir.path().join("*.png")]).expect("expand");
+        out.sort();
+        let names: Vec<String> = out
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(names, ["a.png", "b.png"]);
+    }
+
+    #[test]
+    fn a_pattern_with_no_matches_stays_literal() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        // No match: the literal is kept so the normal "cannot read" error names it,
+        // rather than the run silently converting nothing.
+        let pattern = dir.path().join("*.png");
+        let out = expand_globs(std::slice::from_ref(&pattern)).expect("expand");
+        assert_eq!(out, vec![pattern]);
     }
 }

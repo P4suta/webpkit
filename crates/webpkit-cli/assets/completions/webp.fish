@@ -1,6 +1,6 @@
 # Print an optspec for argparse to handle cmd's options that are independent of any subcommand.
 function __fish_webp_global_optspecs
-    string join \n v/verbose quiet color= o/output= q/quality= lossless lossy m/method= metadata= r/recursive force no-clobber h/help V/version
+    string join \n v/verbose quiet color= threads= o/output= q/quality= lossless lossy m/method= metadata= r/recursive force no-clobber h/help V/version
 end
 
 function __fish_webp_needs_command
@@ -27,6 +27,7 @@ end
 complete -c webp -n "__fish_webp_needs_command" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
+complete -c webp -n "__fish_webp_needs_command" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
 complete -c webp -n "__fish_webp_needs_command" -s o -l output -d 'Output file, or a directory for many inputs; default: beside each input' -r -F
 complete -c webp -n "__fish_webp_needs_command" -s q -l quality -d 'Lossy quality 0-100 (higher = larger, closer to source); selects lossy' -r
 complete -c webp -n "__fish_webp_needs_command" -s m -l method -d 'Encoder effort' -r -f -a "fast\t'Fastest: literal + subtract-green only'
@@ -50,6 +51,8 @@ complete -c webp -n "__fish_webp_needs_command" -a "decode" -d 'Decode a WebP fi
 complete -c webp -n "__fish_webp_needs_command" -a "encode" -d 'Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file'
 complete -c webp -n "__fish_webp_needs_command" -a "convert" -d 'Batch-convert many images (or directories) to WebP, in parallel'
 complete -c webp -n "__fish_webp_needs_command" -a "info" -d 'Print a summary of a WebP file (size, alpha, metadata, animation)'
+complete -c webp -n "__fish_webp_needs_command" -a "diff" -d 'Compare two images: report PSNR and the largest per-channel difference'
+complete -c webp -n "__fish_webp_needs_command" -a "doctor" -d 'Diagnose the environment: PATH drop-in shadows, config, terminal, threads'
 complete -c webp -n "__fish_webp_needs_command" -a "config" -d 'Show resolved settings and where each came from (args, env, file, default)'
 complete -c webp -n "__fish_webp_needs_command" -a "explain" -d 'Explain an exit code: what a failing run\'s status number means'
 complete -c webp -n "__fish_webp_needs_command" -a "completions" -d 'Print a shell completion script'
@@ -74,6 +77,7 @@ xmp\t'Keep XMP'"
 complete -c webp -n "__fish_webp_using_subcommand decode" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand decode" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
 complete -c webp -n "__fish_webp_using_subcommand decode" -s v -l verbose -d 'Print per-stage detail on stderr'
 complete -c webp -n "__fish_webp_using_subcommand decode" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand decode" -s h -l help -d 'Print help (see more with \'--help\')'
@@ -103,6 +107,7 @@ xmp\t'Keep XMP'"
 complete -c webp -n "__fish_webp_using_subcommand encode" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand encode" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
 complete -c webp -n "__fish_webp_using_subcommand encode" -l lossless -d 'Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless'
 complete -c webp -n "__fish_webp_using_subcommand encode" -l lossy -d 'Encode lossily (VP8) instead of losslessly (VP8L)'
 complete -c webp -n "__fish_webp_using_subcommand encode" -s v -l verbose -d 'Print per-stage detail on stderr'
@@ -121,6 +126,7 @@ xmp\t'Keep XMP'"
 complete -c webp -n "__fish_webp_using_subcommand convert" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand convert" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
 complete -c webp -n "__fish_webp_using_subcommand convert" -l lossless -d 'Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless'
 complete -c webp -n "__fish_webp_using_subcommand convert" -l lossy -d 'Encode lossily (VP8) instead of losslessly (VP8L)'
 complete -c webp -n "__fish_webp_using_subcommand convert" -l optimize -d 'Try every lossless effort level and keep the smallest output'
@@ -131,10 +137,27 @@ complete -c webp -n "__fish_webp_using_subcommand convert" -s h -l help -d 'Prin
 complete -c webp -n "__fish_webp_using_subcommand info" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand info" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
 complete -c webp -n "__fish_webp_using_subcommand info" -l json -d 'Print the report as JSON instead of text'
 complete -c webp -n "__fish_webp_using_subcommand info" -s v -l verbose -d 'Print per-stage detail on stderr'
 complete -c webp -n "__fish_webp_using_subcommand info" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand info" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c webp -n "__fish_webp_using_subcommand diff" -l min-psnr -d 'Fail (exit 1) if the RGB PSNR is below this many decibels' -r
+complete -c webp -n "__fish_webp_using_subcommand diff" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+always\t'Style even when the stream is redirected'
+never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand diff" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
+complete -c webp -n "__fish_webp_using_subcommand diff" -l json -d 'Print the comparison as JSON instead of text'
+complete -c webp -n "__fish_webp_using_subcommand diff" -s v -l verbose -d 'Print per-stage detail on stderr'
+complete -c webp -n "__fish_webp_using_subcommand diff" -l quiet -d 'Suppress all non-error output'
+complete -c webp -n "__fish_webp_using_subcommand diff" -s h -l help -d 'Print help (see more with \'--help\')'
+complete -c webp -n "__fish_webp_using_subcommand doctor" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+always\t'Style even when the stream is redirected'
+never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand doctor" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
+complete -c webp -n "__fish_webp_using_subcommand doctor" -s v -l verbose -d 'Print per-stage detail on stderr'
+complete -c webp -n "__fish_webp_using_subcommand doctor" -l quiet -d 'Suppress all non-error output'
+complete -c webp -n "__fish_webp_using_subcommand doctor" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -l quality -d 'Override: lossy quality 0-100' -r
 complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -l effort -d 'Override: encoder effort' -r -f -a "fast\t'Fastest: literal + subtract-green only'
 balanced\t'Balanced (the default): LZ77 + color cache'
@@ -169,28 +192,33 @@ complete -c webp -n "__fish_webp_using_subcommand config; and __fish_seen_subcom
 complete -c webp -n "__fish_webp_using_subcommand explain" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand explain" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
 complete -c webp -n "__fish_webp_using_subcommand explain" -s v -l verbose -d 'Print per-stage detail on stderr'
 complete -c webp -n "__fish_webp_using_subcommand explain" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand explain" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c webp -n "__fish_webp_using_subcommand completions" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand completions" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
 complete -c webp -n "__fish_webp_using_subcommand completions" -s v -l verbose -d 'Print per-stage detail on stderr'
 complete -c webp -n "__fish_webp_using_subcommand completions" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand completions" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c webp -n "__fish_webp_using_subcommand man" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
+complete -c webp -n "__fish_webp_using_subcommand man" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
 complete -c webp -n "__fish_webp_using_subcommand man" -s v -l verbose -d 'Print per-stage detail on stderr'
 complete -c webp -n "__fish_webp_using_subcommand man" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand man" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info config explain completions man help" -f -a "decode" -d 'Decode a WebP file to PNG (default), PPM/PAM, or raw pixels'
-complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info config explain completions man help" -f -a "encode" -d 'Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file'
-complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info config explain completions man help" -f -a "convert" -d 'Batch-convert many images (or directories) to WebP, in parallel'
-complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info config explain completions man help" -f -a "info" -d 'Print a summary of a WebP file (size, alpha, metadata, animation)'
-complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info config explain completions man help" -f -a "config" -d 'Show resolved settings and where each came from (args, env, file, default)'
-complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info config explain completions man help" -f -a "explain" -d 'Explain an exit code: what a failing run\'s status number means'
-complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info config explain completions man help" -f -a "completions" -d 'Print a shell completion script'
-complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info config explain completions man help" -f -a "man" -d 'Print a man page in roff, for `man -l -` or a package\'s man directory'
-complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info config explain completions man help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "decode" -d 'Decode a WebP file to PNG (default), PPM/PAM, or raw pixels'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "encode" -d 'Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "convert" -d 'Batch-convert many images (or directories) to WebP, in parallel'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "info" -d 'Print a summary of a WebP file (size, alpha, metadata, animation)'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "diff" -d 'Compare two images: report PSNR and the largest per-channel difference'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "doctor" -d 'Diagnose the environment: PATH drop-in shadows, config, terminal, threads'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "config" -d 'Show resolved settings and where each came from (args, env, file, default)'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "explain" -d 'Explain an exit code: what a failing run\'s status number means'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "completions" -d 'Print a shell completion script'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "man" -d 'Print a man page in roff, for `man -l -` or a package\'s man directory'
+complete -c webp -n "__fish_webp_using_subcommand help; and not __fish_seen_subcommand_from decode encode convert info diff doctor config explain completions man help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c webp -n "__fish_webp_using_subcommand help; and __fish_seen_subcommand_from config" -f -a "get" -d 'Print a single setting\'s resolved value, with nothing else'

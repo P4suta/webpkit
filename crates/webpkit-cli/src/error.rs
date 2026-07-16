@@ -134,13 +134,22 @@ fn codec_diagnostic(err: &CodecError) -> Diagnostic {
 
 /// The documented exit codes and what each means, printed by `webp explain`.
 ///
-/// Each row is `(code, short name, explanation)`. The set of non-zero codes here
-/// mirrors [`CliError::code`] exactly, pinned by [`tests::the_table_matches_the_codes`].
+/// Each row is `(code, short name, explanation)`. Every [`CliError::code`] value
+/// has a row here and vice versa, pinned by [`tests::the_table_matches_the_codes`];
+/// `0` (success) and `1` (predicate false, from `diff`/`doctor`) are outcomes no
+/// `CliError` produces, so the test accounts for them separately.
 pub(crate) const EXIT_CODES: &[(u8, &str, &str)] = &[
     (
         0,
         "success",
         "The operation completed and any output was written in full.",
+    ),
+    (
+        1,
+        "predicate",
+        "A check or comparison returned false: `diff --min-psnr` was not met, or \
+         `doctor` found an error. The run itself succeeded — this is the grep/diff \
+         convention, not a failure.",
     ),
     (
         2,
@@ -283,17 +292,20 @@ mod tests {
     fn the_table_matches_the_codes() {
         let documented: BTreeSet<u8> = EXIT_CODES.iter().map(|&(code, ..)| code).collect();
         let mut producible: BTreeSet<u8> = every_code().into_iter().collect();
-        producible.insert(0); // success is not a `CliError`, but is a documented code.
+        // Neither is a `CliError`: `0` is success, `1` is a false predicate returned
+        // by `diff --min-psnr` / `doctor` (the grep/diff convention).
+        producible.insert(0);
+        producible.insert(1);
         assert_eq!(
             producible, documented,
             "every producible exit code needs a row in EXIT_CODES, and vice versa"
         );
     }
 
-    /// Exactly the nine documented codes, so "9-entry table" cannot silently grow.
+    /// Exactly the ten documented codes, so the table cannot silently grow.
     #[test]
-    fn the_table_has_nine_entries() {
-        assert_eq!(EXIT_CODES.len(), 9);
+    fn the_table_has_ten_entries() {
+        assert_eq!(EXIT_CODES.len(), 10);
     }
 
     #[test]

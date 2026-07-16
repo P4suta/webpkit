@@ -1,0 +1,15 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-doctor 1  "doctor " 
+.SH NAME
+doctor \- Diagnose the environment: PATH drop\-in shadows, config, terminal, threads
+.SH SYNOPSIS
+\fBdoctor\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Diagnose the environment: PATH drop\-in shadows, config, terminal, threads.
+.PP
+Exits 0 even with warnings; 1 only on a real error (an invalid config file).
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)

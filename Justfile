@@ -210,7 +210,7 @@ gen-assets:
         done; \
         echo "  man/webp.1"; \
         run man > "$out/man/webp.1"; \
-        for c in encode decode convert info config explain completions man; do \
+        for c in encode decode convert info diff doctor config explain completions man; do \
             echo "  man/webp-$c.1"; \
             run man "$c" > "$out/man/webp-$c.1"; \
         done'

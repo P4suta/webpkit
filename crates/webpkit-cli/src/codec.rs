@@ -94,6 +94,46 @@ pub(crate) fn resolve_mode(
     Ok((mode, true))
 }
 
+/// Configure the process-wide rayon pool from a `--threads` count.
+///
+/// `0` (or an absent flag) leaves rayon's default of one worker per core. A
+/// positive count builds the single global pool that both the parallel bulk
+/// convert and the encoder's parallel `Effort::Best` search then draw from, so one
+/// flag bounds every layer of parallelism. Building the global pool can only fail
+/// if one already exists; this runs once at startup, so that case is ignored.
+pub(crate) fn configure_threads(threads: Option<u16>) {
+    if let Some(count) = threads.filter(|&n| n > 0) {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(usize::from(count))
+            .build_global();
+    }
+}
+
+/// Whether these bytes are a WebP file (`RIFF....WEBP`), by content not extension.
+#[must_use]
+pub(crate) fn is_webp(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP"
+}
+
+/// Decode a still WebP, or the first composited frame of an animation, to an
+/// [`Image`] in RGBA8.
+///
+/// # Errors
+///
+/// [`CliError::Codec`] if the bytes are not a decodable WebP, or
+/// [`CliError::Format`] if an animation carries no frames.
+pub(crate) fn decode_still_or_first_frame(bytes: &[u8]) -> Result<Image, CliError> {
+    if webpkit::is_animated(bytes)? {
+        let frames = webpkit::decode_frames(bytes)?;
+        let first = frames
+            .composited()
+            .next()
+            .ok_or_else(|| CliError::Format("animation has no frames".to_owned()))??;
+        return Ok(first.into_image());
+    }
+    decode(bytes, PixelLayout::Rgba8)
+}
+
 /// Decode any still WebP file — lossless (`VP8L`) or lossy (`VP8 `) — into an
 /// [`Image`] with the requested output `layout`, dispatching on the container.
 ///

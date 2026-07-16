@@ -1,5 +1,6 @@
 //! The `webp` brand tool: a bare direction-detected form plus `encode` /
-//! `decode` / `convert` / `info`, `config` / `explain`, and `completions` / `man`.
+//! `decode` / `convert` / `info` / `diff` / `doctor`, `config` / `explain`, and
+//! `completions` / `man`.
 //!
 //! Called bare, it sniffs each input and picks a direction (WebP → PNG, anything
 //! else → WebP) with an implicit, overwrite-guarded output name. It reads
@@ -78,6 +79,8 @@ const SUBCOMMANDS: &[&str] = &[
     "encode",
     "convert",
     "info",
+    "diff",
+    "doctor",
     "config",
     "explain",
     "completions",
@@ -87,9 +90,9 @@ const SUBCOMMANDS: &[&str] = &[
 
 /// Whether the first positional argument names a subcommand.
 ///
-/// Only global flags may precede a subcommand, and of those only `--color` takes a
-/// value, so the scan skips it. Anything else at the first positional (a file, a
-/// quality value) means the bare form.
+/// Only global flags may precede a subcommand, and of those `--color` and
+/// `--threads` take a value, so the scan skips their argument. Anything else at the
+/// first positional (a file, a quality value) means the bare form.
 fn first_positional_is_subcommand(argv: &[std::ffi::OsString]) -> bool {
     let mut i = 1;
     while let Some(arg) = argv.get(i) {
@@ -100,8 +103,10 @@ fn first_positional_is_subcommand(argv: &[std::ffi::OsString]) -> bool {
         if token == "-" || !token.starts_with('-') {
             return SUBCOMMANDS.contains(&token.as_ref());
         }
-        // `--color WHEN` consumes the next token; every other global flag does not.
-        i += usize::from(token == "--color") + 1;
+        // `--color WHEN` / `--threads N` consume the next token (unless given as
+        // `--flag=value`); every other global flag does not.
+        let takes_value = token == "--color" || token == "--threads";
+        i += usize::from(takes_value) + 1;
     }
     false
 }
@@ -174,6 +179,13 @@ struct GlobalArgs {
         hide_possible_values = true
     )]
     color: ColorChoice,
+    /// Worker threads for parallel work; 0 (the default) uses one per core.
+    ///
+    /// One global thread pool is built, which the encoder's parallel `best`
+    /// search draws from too — so this single number bounds every layer of
+    /// parallelism, batch conversion and per-image search alike.
+    #[arg(long, global = true, value_name = "N")]
+    threads: Option<u16>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -186,6 +198,16 @@ enum Command {
     Convert(ConvertArgs),
     /// Print a summary of a WebP file (size, alpha, metadata, animation).
     Info(InfoArgs),
+    /// Compare two images: report PSNR and the largest per-channel difference.
+    ///
+    /// Both inputs are decoded to RGBA (a WebP, or any readable image), so a source
+    /// and its WebP, or two WebP files, can be compared. With `--min-psnr`, exit 1 when
+    /// the PSNR is below the threshold — the grep/diff convention, for CI gates.
+    Diff(DiffArgs),
+    /// Diagnose the environment: PATH drop-in shadows, config, terminal, threads.
+    ///
+    /// Exits 0 even with warnings; 1 only on a real error (an invalid config file).
+    Doctor,
     /// Show resolved settings and where each came from (args, env, file, default).
     ///
     /// Settings resolve highest-priority-first: command-line arguments, then
@@ -272,7 +294,7 @@ struct ConfigGetArgs {
 /// Arguments for `webp explain`.
 #[derive(Debug, clap::Args)]
 struct ExplainArgs {
-    /// An exit code (`0`, `2`..`9`) or its short name (`usage`, `limit`, ...).
+    /// An exit code (`0`..`9`) or its short name (`usage`, `limit`, ...).
     #[arg(value_name = "CODE")]
     code: String,
 }
@@ -319,6 +341,21 @@ struct ConvertArgs {
     /// Metadata to embed: all,none,icc,exif,xmp (default: all).
     #[arg(long, value_enum, value_delimiter = ',')]
     metadata: Vec<MetadataField>,
+}
+
+/// Arguments for `webp diff`.
+#[derive(Debug, clap::Args)]
+struct DiffArgs {
+    /// The first image (a WebP, or any readable format).
+    a: PathBuf,
+    /// The second image, compared against the first (same dimensions required).
+    b: PathBuf,
+    /// Fail (exit 1) if the RGB PSNR is below this many decibels.
+    #[arg(long, value_name = "DB")]
+    min_psnr: Option<f64>,
+    /// Print the comparison as JSON instead of text.
+    #[arg(long)]
+    json: bool,
 }
 
 /// Arguments for `webp info`.
@@ -451,6 +488,7 @@ pub(crate) fn main() -> ExitCode {
             Err(err) => return parse_error(&err),
         };
         term::install(cli.global.color);
+        codec::configure_threads(cli.global.threads);
         let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
         finish(run(&cli.command, &reporter))
     } else {
@@ -459,19 +497,24 @@ pub(crate) fn main() -> ExitCode {
             Err(err) => return parse_error(&err),
         };
         term::install(cli.global.color);
+        codec::configure_threads(cli.global.threads);
         let reporter = Reporter::new(cli.global.verbose, cli.global.quiet);
         let result = match &cli.command {
             Some(command) => run(command, &reporter),
-            None => auto(&cli.auto, &reporter),
+            None => auto(&cli.auto, &reporter).map(|()| ExitCode::SUCCESS),
         };
         finish(result)
     }
 }
 
 /// Turn a command result into a process exit code, rendering any error.
-fn finish(result: Result<(), CliError>) -> ExitCode {
+///
+/// The `Ok` value is the exit code the command chose: `SUCCESS` for most, but
+/// `diff`/`doctor` return `1` when their predicate is false (the grep/diff
+/// convention) rather than raising an error.
+fn finish(result: Result<ExitCode, CliError>) -> ExitCode {
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(err) => {
             report::error(&err.to_diagnostic());
             err.exit_code()
@@ -499,20 +542,60 @@ fn parse_error(err: &clap::Error) -> ExitCode {
     ExitCode::from(u8::try_from(err.exit_code()).unwrap_or(2))
 }
 
-fn run(command: &Command, reporter: &Reporter) -> Result<(), CliError> {
+fn run(command: &Command, reporter: &Reporter) -> Result<ExitCode, CliError> {
+    let ok = ExitCode::SUCCESS;
     match command {
-        Command::Decode(args) => decode(args, reporter),
-        Command::Encode(args) => encode(args, reporter),
-        Command::Convert(args) => convert(args, reporter),
-        Command::Info(args) => info(args, reporter),
-        Command::Config(args) => config_cmd(args),
-        Command::Explain(args) => explain(&args.code),
+        Command::Decode(args) => decode(args, reporter).map(|()| ok),
+        Command::Encode(args) => encode(args, reporter).map(|()| ok),
+        Command::Convert(args) => convert(args, reporter).map(|()| ok),
+        Command::Info(args) => info(args, reporter).map(|()| ok),
+        Command::Diff(args) => diff_cmd(args, reporter),
+        Command::Doctor => Ok(crate::doctor::run()),
+        Command::Config(args) => config_cmd(args).map(|()| ok),
+        Command::Explain(args) => explain(&args.code).map(|()| ok),
         Command::Completions(args) => {
             completions(args);
-            Ok(())
+            Ok(ok)
         },
-        Command::Man(args) => man(args.command.as_deref()),
+        Command::Man(args) => man(args.command.as_deref()).map(|()| ok),
     }
+}
+
+/// Compare two images, print the result, and reflect `--min-psnr` in the exit code.
+///
+/// The report goes to stdout (like `info`); a failed `--min-psnr` predicate exits
+/// `1` with a note on stderr, leaving stdout's report intact.
+fn diff_cmd(args: &DiffArgs, reporter: &Reporter) -> Result<ExitCode, CliError> {
+    let comparison = crate::diff::compare(&args.a, &args.b)?;
+    if args.json {
+        let json = serde_json::to_string_pretty(&comparison)
+            .map_err(|err| CliError::Format(format!("serializing the comparison: {err}")))?;
+        report::out(&json);
+    } else {
+        for line in diff_lines(&comparison) {
+            report::out(&line);
+        }
+    }
+    if let Some(min) = args.min_psnr
+        && !comparison.meets(min)
+    {
+        reporter.status(&format!("PSNR is below the --min-psnr {min} dB threshold"));
+        return Ok(ExitCode::from(1));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The text report for `webp diff`: dimensions, PSNR, and the max channel delta.
+fn diff_lines(comparison: &crate::diff::Comparison) -> Vec<String> {
+    let psnr = comparison.psnr.map_or_else(
+        || "identical (no difference)".to_owned(),
+        |value| format!("{value:.2} dB"),
+    );
+    vec![
+        format!("Dimensions: {}x{}", comparison.width, comparison.height),
+        format!("PSNR:       {psnr}"),
+        format!("Max delta:  {} / 255", comparison.max_delta),
+    ]
 }
 
 /// Print a completion script for `shell`, generated from this tool's own
@@ -675,11 +758,6 @@ fn is_convertible(path: &Path) -> bool {
     io::extension_of(path).is_some_and(|ext| CONVERTIBLE_EXTENSIONS.contains(&ext.as_str()))
 }
 
-/// Whether these bytes are a WebP file (`RIFF....WEBP`), by content not extension.
-fn is_webp(bytes: &[u8]) -> bool {
-    bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP"
-}
-
 /// The bare, direction-detected form: `webp <inputs...>`.
 ///
 /// Each input is sniffed independently — a WebP is decoded to PNG, anything else
@@ -723,7 +801,7 @@ fn auto_one(
     reporter: &Reporter,
 ) -> Result<(), CliError> {
     let bytes = Source::File(input.to_path_buf()).read()?;
-    let ext = if is_webp(&bytes) {
+    let ext = if codec::is_webp(&bytes) {
         // Decode direction: honor an explicit output's extension, else PNG.
         explicit
             .and_then(io::extension_of)
@@ -747,7 +825,7 @@ fn auto_one(
         return Ok(());
     }
 
-    if is_webp(&bytes) {
+    if codec::is_webp(&bytes) {
         auto_decode(input, &bytes, &output, reporter)
     } else {
         auto_encode(input, &bytes, &output, args, reporter)
@@ -814,7 +892,7 @@ fn auto_decode(
     reporter: &Reporter,
 ) -> Result<(), CliError> {
     let format = OutputFormat::resolve(None, io::extension_of(output).as_deref());
-    let image = decode_still_or_first_frame(bytes)?;
+    let image = codec::decode_still_or_first_frame(bytes)?;
     let metadata = Selection::all().apply(image.metadata());
     let out = format::write_image(&image, format, &metadata)?;
     Sink::File(output.to_path_buf()).write(&out)?;
@@ -827,19 +905,6 @@ fn auto_decode(
         out.len(),
     ));
     Ok(())
-}
-
-/// Decode a still WebP, or the first composited frame of an animation.
-fn decode_still_or_first_frame(bytes: &[u8]) -> Result<webpkit::Image, CliError> {
-    if is_animated(bytes)? {
-        let frames = webpkit::decode_frames(bytes)?;
-        let first = frames
-            .composited()
-            .next()
-            .ok_or_else(|| CliError::Format("animation has no frames".to_owned()))??;
-        return Ok(first.into_image());
-    }
-    codec::decode(bytes, webpkit::PixelLayout::Rgba8)
 }
 
 fn decode(args: &DecodeArgs, reporter: &Reporter) -> Result<(), CliError> {

@@ -28,6 +28,8 @@ mod cli;
 mod codec;
 mod config;
 mod diag;
+mod diff;
+mod doctor;
 mod effort;
 mod error;
 mod format;
@@ -42,9 +44,10 @@ pub use personality::Personality;
 
 /// Run a personality against this process's arguments, returning its exit code.
 ///
-/// Exit codes are meaningful and stable: `0` success, `2` usage, `3` input I/O,
-/// `4` output I/O, `5` decode/bitstream, `6` unsupported feature, `7` limit
-/// exceeded, `8` invalid image, `9` input-format parse.
+/// Exit codes are meaningful and stable: `0` success, `1` predicate false
+/// (`diff`/`doctor`), `2` usage, `3` input I/O, `4` output I/O, `5`
+/// decode/bitstream, `6` unsupported feature, `7` limit exceeded, `8` invalid
+/// image, `9` input-format parse.
 #[must_use]
 pub fn run(personality: Personality) -> ExitCode {
     match personality {

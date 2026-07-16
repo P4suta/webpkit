@@ -58,6 +58,11 @@ clap_mangen = { workspace = true }
 # temp file's own cleanup does not run on a signal — the handler deletes in-flight
 # temps explicitly.
 ctrlc = { workspace = true }
+# Shells do not expand globs before launching a native binary, so `webp *.jpg`
+# reaches us as the literal `*.jpg` — silently a no-op on Windows without this. A
+# pattern is expanded only when it does not exist as a literal path, so a real
+# `[a].png` stays openable.
+glob = { workspace = true }
 # JPEG/GIF/TIFF/BMP decode, behind the default `formats` feature. Optional so a
 # `--no-default-features` build keeps the PNG/PPM/PAM/raw core with no image dep.
 image = { workspace = true, optional = true }

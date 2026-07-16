@@ -4,7 +4,7 @@
 .SH NAME
 webp \- Command\-line tools for the webpkit WebP codec: libwebp\-style cwebp (lossy by default, \-lossless for VP8L) / dwebp and the webp brand tool.
 .SH SYNOPSIS
-\fBwebp\fR [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-quiet\fR] [\fB\-\-color\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-metadata\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIINPUTS\fR] [\fIsubcommands\fR]
+\fBwebp\fR [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-quiet\fR] [\fB\-\-color\fR] [\fB\-\-threads\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-metadata\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIINPUTS\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 Command\-line tools for the webpkit WebP codec: libwebp\-style cwebp (lossy by default, \-lossless for VP8L) / dwebp and the webp brand tool.
 .SH OPTIONS
@@ -21,6 +21,11 @@ Long\-only: `\-q` is `\-\-quality`. A bare `webp \-q photo.png` therefore reads 
 auto, always, or never
 
 `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `\-\-color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+.TP
+\fB\-\-threads\fR \fI<N>\fR
+Worker threads for parallel work; 0 (the default) uses one per core.
+
+One global thread pool is built, which the encoder\*(Aqs parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per\-image search alike.
 .TP
 \fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
 Output file, or a directory for many inputs; default: beside each input
@@ -98,6 +103,12 @@ Batch\-convert many images (or directories) to WebP, in parallel
 .TP
 webp\-info(1)
 Print a summary of a WebP file (size, alpha, metadata, animation)
+.TP
+webp\-diff(1)
+Compare two images: report PSNR and the largest per\-channel difference
+.TP
+webp\-doctor(1)
+Diagnose the environment: PATH drop\-in shadows, config, terminal, threads
 .TP
 webp\-config(1)
 Show resolved settings and where each came from (args, env, file, default)

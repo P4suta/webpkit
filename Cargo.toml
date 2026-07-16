@@ -42,6 +42,7 @@ clap_complete = "4"                                                  # CLI-only:
 clap_mangen = "0.3"                                                  # CLI-only: man pages
 criterion = { version = "0.8", features = ["html_reports"] }
 ctrlc = "3"                                                          # CLI-only: delete in-flight temp files on Ctrl-C
+glob = "0.3"                                                         # CLI-only: expand `*.jpg` when the shell did not (Windows)
 # CLI-only: decode JPEG/GIF/TIFF/BMP input. NEVER the `webp` feature — that pulls a
 # competing WebP codec into our own WebP tool. `default-features = false` keeps it to
 # just these four format decoders.

@@ -28,6 +28,12 @@ _webp() {
             webp,decode)
                 cmd="webp__subcmd__decode"
                 ;;
+            webp,diff)
+                cmd="webp__subcmd__diff"
+                ;;
+            webp,doctor)
+                cmd="webp__subcmd__doctor"
+                ;;
             webp,encode)
                 cmd="webp__subcmd__encode"
                 ;;
@@ -67,6 +73,12 @@ _webp() {
             webp__subcmd__help,decode)
                 cmd="webp__subcmd__help__subcmd__decode"
                 ;;
+            webp__subcmd__help,diff)
+                cmd="webp__subcmd__help__subcmd__diff"
+                ;;
+            webp__subcmd__help,doctor)
+                cmd="webp__subcmd__help__subcmd__doctor"
+                ;;
             webp__subcmd__help,encode)
                 cmd="webp__subcmd__help__subcmd__encode"
                 ;;
@@ -92,7 +104,7 @@ _webp() {
 
     case "${cmd}" in
         webp)
-            opts="-v -o -q -m -r -h -V --verbose --quiet --color --output --quality --lossless --lossy --method --metadata --recursive --force --no-clobber --help --version decode encode convert info config explain completions man help"
+            opts="-v -o -q -m -r -h -V --verbose --quiet --color --threads --output --quality --lossless --lossy --method --metadata --recursive --force --no-clobber --help --version decode encode convert info diff doctor config explain completions man help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -100,6 +112,10 @@ _webp() {
             case "${prev}" in
                 --color)
                     COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --output)
@@ -138,7 +154,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__completions)
-            opts="-v -h --verbose --quiet --color --help bash elvish fish powershell zsh"
+            opts="-v -h --verbose --quiet --color --threads --help bash elvish fish powershell zsh"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -146,6 +162,10 @@ _webp() {
             case "${prev}" in
                 --color)
                     COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 *)
@@ -258,7 +278,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__convert)
-            opts="-o -m -q -r -v -h --output --method --lossless --lossy --quality --optimize --recursive --metadata --verbose --quiet --color --help"
+            opts="-o -m -q -r -v -h --output --method --lossless --lossy --quality --optimize --recursive --metadata --verbose --quiet --color --threads --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -296,6 +316,10 @@ _webp() {
                     COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
                     return 0
                     ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
@@ -304,7 +328,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__decode)
-            opts="-o -v -h --output --format --layout --frames --frame --metadata --verbose --quiet --color --help"
+            opts="-o -v -h --output --format --layout --frames --frame --metadata --verbose --quiet --color --threads --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -342,6 +366,58 @@ _webp() {
                     COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
                     return 0
                     ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__diff)
+            opts="-v -h --min-psnr --json --verbose --quiet --color --threads --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --min-psnr)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__doctor)
+            opts="-v -h --verbose --quiet --color --threads --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
@@ -350,7 +426,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__encode)
-            opts="-o -m -q -v -h --output --input-format --width --height --layout --method --lossless --lossy --quality --metadata --verbose --quiet --color --help"
+            opts="-o -m -q -v -h --output --input-format --width --height --layout --method --lossless --lossy --quality --metadata --verbose --quiet --color --threads --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -404,6 +480,10 @@ _webp() {
                     COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
                     return 0
                     ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;
@@ -412,7 +492,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__explain)
-            opts="-v -h --verbose --quiet --color --help"
+            opts="-v -h --verbose --quiet --color --threads --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -420,6 +500,10 @@ _webp() {
             case "${prev}" in
                 --color)
                     COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 *)
@@ -430,7 +514,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__help)
-            opts="decode encode convert info config explain completions man help"
+            opts="decode encode convert info diff doctor config explain completions man help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -500,6 +584,34 @@ _webp() {
             return 0
             ;;
         webp__subcmd__help__subcmd__decode)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__diff)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__doctor)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -584,7 +696,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__info)
-            opts="-v -h --json --verbose --quiet --color --help"
+            opts="-v -h --json --verbose --quiet --color --threads --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -592,6 +704,10 @@ _webp() {
             case "${prev}" in
                 --color)
                     COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 *)
@@ -602,7 +718,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__man)
-            opts="-v -h --verbose --quiet --color --help"
+            opts="-v -h --verbose --quiet --color --threads --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -610,6 +726,10 @@ _webp() {
             case "${prev}" in
                 --color)
                     COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 *)

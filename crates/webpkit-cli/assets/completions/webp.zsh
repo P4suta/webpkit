@@ -18,6 +18,7 @@ _webp() {
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
 '-o+[Output file, or a directory for many inputs; default\: beside each input]:OUTPUT:_files' \
 '--output=[Output file, or a directory for many inputs; default\: beside each input]:OUTPUT:_files' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects lossy]:QUALITY:_default' \
@@ -78,6 +79,7 @@ xmp\:"Keep XMP"))' \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
@@ -119,6 +121,7 @@ xmp\:"Keep XMP"))' \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
 '(--lossy)--lossless[Force lossless (VP8L). The default is source-derived\: JPEG → lossy, else lossless]' \
 '--lossy[Encode lossily (VP8) instead of losslessly (VP8L)]' \
 '*-v[Print per-stage detail on stderr]' \
@@ -149,6 +152,7 @@ xmp\:"Keep XMP"))' \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
 '(--lossy)--lossless[Force lossless (VP8L). The default is source-derived\: JPEG → lossy, else lossless]' \
 '--lossy[Encode lossily (VP8) instead of losslessly (VP8L)]' \
 '--optimize[Try every lossless effort level and keep the smallest output]' \
@@ -167,6 +171,7 @@ _arguments "${_arguments_options[@]}" : \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
 '--json[Print the report as JSON instead of text]' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
@@ -174,6 +179,36 @@ never\:"Never style"))' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 '::input -- Input `.webp` file; `-` (the default) reads stdin:_files' \
+&& ret=0
+;;
+(diff)
+_arguments "${_arguments_options[@]}" : \
+'--min-psnr=[Fail (exit 1) if the RGB PSNR is below this many decibels]:DB:_default' \
+'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'--json[Print the comparison as JSON instead of text]' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':a -- The first image (a WebP, or any readable format):_files' \
+':b -- The second image, compared against the first (same dimensions required):_files' \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (config)
@@ -257,12 +292,13 @@ _arguments "${_arguments_options[@]}" : \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
-':code -- An exit code (`0`, `2`..`9`) or its short name (`usage`, `limit`, ...):_default' \
+':code -- An exit code (`0`..`9`) or its short name (`usage`, `limit`, ...):_default' \
 && ret=0
 ;;
 (completions)
@@ -270,6 +306,7 @@ _arguments "${_arguments_options[@]}" : \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
@@ -283,6 +320,7 @@ _arguments "${_arguments_options[@]}" : \
 '--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
@@ -316,6 +354,14 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (info)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(diff)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(doctor)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -371,6 +417,8 @@ _webp_commands() {
 'encode:Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
+'diff:Compare two images\: report PSNR and the largest per-channel difference' \
+'doctor:Diagnose the environment\: PATH drop-in shadows, config, terminal, threads' \
 'config:Show resolved settings and where each came from (args, env, file, default)' \
 'explain:Explain an exit code\: what a failing run'\''s status number means' \
 'completions:Print a shell completion script' \
@@ -425,6 +473,16 @@ _webp__subcmd__decode_commands() {
     local commands; commands=()
     _describe -t commands 'webp decode commands' commands "$@"
 }
+(( $+functions[_webp__subcmd__diff_commands] )) ||
+_webp__subcmd__diff_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp diff commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__doctor_commands] )) ||
+_webp__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp doctor commands' commands "$@"
+}
 (( $+functions[_webp__subcmd__encode_commands] )) ||
 _webp__subcmd__encode_commands() {
     local commands; commands=()
@@ -442,6 +500,8 @@ _webp__subcmd__help_commands() {
 'encode:Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
+'diff:Compare two images\: report PSNR and the largest per-channel difference' \
+'doctor:Diagnose the environment\: PATH drop-in shadows, config, terminal, threads' \
 'config:Show resolved settings and where each came from (args, env, file, default)' \
 'explain:Explain an exit code\: what a failing run'\''s status number means' \
 'completions:Print a shell completion script' \
@@ -476,6 +536,16 @@ _webp__subcmd__help__subcmd__convert_commands() {
 _webp__subcmd__help__subcmd__decode_commands() {
     local commands; commands=()
     _describe -t commands 'webp help decode commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__diff_commands] )) ||
+_webp__subcmd__help__subcmd__diff_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help diff commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__doctor_commands] )) ||
+_webp__subcmd__help__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help doctor commands' commands "$@"
 }
 (( $+functions[_webp__subcmd__help__subcmd__encode_commands] )) ||
 _webp__subcmd__help__subcmd__encode_commands() {
