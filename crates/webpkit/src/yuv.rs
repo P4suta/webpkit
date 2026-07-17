@@ -18,10 +18,8 @@ use crate::prelude::*;
 /// [`chroma_height`](Self::chroma_height)). All three are packed with no row
 /// padding, matching libwebp's `WebPDecodeYUV`.
 ///
-/// Produced only by [`decode_yuv`](crate::decode_yuv); `#[non_exhaustive]` so the
-/// planes stay the source of truth even as the type gains accessors.
+/// Produced only by [`decode_yuv`](crate::decode_yuv).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-#[non_exhaustive]
 pub struct YuvImage {
     dims: Dimensions,
     y: Vec<u8>,

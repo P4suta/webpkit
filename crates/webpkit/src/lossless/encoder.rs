@@ -3,21 +3,26 @@
 
 use crate::Effort;
 use crate::image::Metadata;
+use crate::lossless::histogram;
 use crate::lossless::prelude::*;
 use crate::lossless::vp8l;
 
 /// Encode `argb` (native ARGB, `width * height` pixels, row-major) as a raw VP8L
-/// payload at `effort`: [`Effort::Fast`] emits only the literal + subtract-green
-/// tiers, [`Effort::Balanced`] runs the full Tier 0/1/2 LZ77 + color-cache search,
-/// and [`Effort::Best`] additionally tries the forward-transform families and keeps
-/// the smallest. Only `Best` diverges from `Balanced`, so the `Balanced`/`Fast`
-/// bytes are unchanged from the earlier tiers.
+/// payload at `effort`.
+///
+/// Every effort routes through the breadth-parameterized Tier 3 search
+/// ([`vp8l::encode::encode_best_at`]), so the spatial predictor, palette,
+/// cross-color and subtract-green transforms are always evaluated — no path skips
+/// them. An explicit [`Effort::level`] fixes the breadth (`0..=9`); [`Effort::AUTO`]
+/// picks one from a cheap content + pixel-count pre-analysis
+/// ([`histogram::auto_level`]). The transform-free floor stays in every candidate
+/// set and the winner is ranked by real emitted bytes, so the result is never
+/// larger than the plain LZ77 floor at any effort.
 pub(crate) fn encode_payload(effort: Effort, width: u32, height: u32, argb: &[u32]) -> Vec<u8> {
-    match effort {
-        Effort::Fast => vp8l::encode::encode_with(width, height, argb, false),
-        Effort::Balanced => vp8l::encode::encode(width, height, argb),
-        Effort::Best => vp8l::encode::encode_best(width, height, argb),
-    }
+    let level = effort
+        .explicit_level()
+        .unwrap_or_else(|| histogram::auto_level(width, argb));
+    vp8l::encode::encode_best_at(level, width, height, argb)
 }
 
 /// How [`crate::lossless::encode_image`] treats the metadata inherited from the source
@@ -36,7 +41,7 @@ pub struct EncoderConfig {
 }
 
 impl EncoderConfig {
-    /// Default configuration: [`Effort::Balanced`], no metadata.
+    /// Default configuration: [`Effort::AUTO`], no metadata.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -100,46 +105,108 @@ mod tests {
     use crate::image::Metadata;
 
     #[test]
-    fn default_is_balanced_no_metadata() {
+    fn default_is_auto_no_metadata() {
         let config = EncoderConfig::new();
-        assert_eq!(config.effort, Effort::Balanced);
+        assert_eq!(config.effort, Effort::AUTO);
         assert!(config.metadata.is_empty());
     }
 
     #[test]
-    fn effort_routes_to_the_expected_encoder() {
-        // Each effort tier dispatches to its VP8L encoder entry point: Fast to the
-        // literal-only path, Balanced to the Tier 2 search, Best to the tiered
-        // transform search. Best must never be larger than Balanced (it keeps the
-        // Balanced result as its floor).
+    fn explicit_level_routes_through_encode_best_at() {
+        // An explicit level dispatches straight to the breadth-parameterized Tier 3
+        // search at that level; the transform families always run, so even level 0
+        // evaluates the spatial predictor (no path skips it).
+        use crate::lossless::vp8l::encode::encode_best_at;
         let argb = [0xff10_2030u32, 0xff40_5060, 0xff70_8090, 0xffa0_b0c0];
+        for level in [0u8, 4, 9] {
+            assert_eq!(
+                encode_payload(Effort::level(level), 2, 2, &argb),
+                encode_best_at(level, 2, 2, &argb),
+                "level {level} must route to encode_best_at({level})"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_selects_a_level_and_never_regresses_the_floor() {
+        // AUTO resolves to the pre-analysis level and, like every level, keeps the
+        // transform-free floor as a candidate, so it is never larger than a plain
+        // `encode`. A smooth gradient must reach a deep (Best-class) breadth.
+        use crate::lossless::histogram::auto_level;
+        use crate::lossless::vp8l::encode::{encode, encode_best_at};
+        let gradient: Vec<u32> = (0..256u32)
+            .map(|i| {
+                let v = (i % 16 + i / 16) * 8;
+                0xff00_0000 | (v << 16) | (v << 8) | v
+            })
+            .collect();
+        let level = auto_level(16, &gradient);
         assert_eq!(
-            encode_payload(Effort::Fast, 2, 2, &argb),
-            crate::lossless::vp8l::encode::encode_with(2, 2, &argb, false),
-        );
-        assert_eq!(
-            encode_payload(Effort::Balanced, 2, 2, &argb),
-            crate::lossless::vp8l::encode::encode(2, 2, &argb),
-        );
-        assert_eq!(
-            encode_payload(Effort::Best, 2, 2, &argb),
-            crate::lossless::vp8l::encode::encode_best(2, 2, &argb),
+            encode_payload(Effort::AUTO, 16, 16, &gradient),
+            encode_best_at(level, 16, 16, &gradient),
         );
         assert!(
-            encode_payload(Effort::Best, 2, 2, &argb).len()
-                <= encode_payload(Effort::Balanced, 2, 2, &argb).len()
+            encode_payload(Effort::AUTO, 16, 16, &gradient).len()
+                <= encode(16, 16, &gradient).len()
+        );
+        assert!(
+            level >= 6,
+            "a smooth gradient must earn a deep breadth, got {level}"
+        );
+    }
+
+    #[test]
+    fn auto_default_beats_the_old_transform_free_baseline() {
+        // The keystone of the effort collapse: the AUTO default now always runs the
+        // spatial transforms, so it is dramatically smaller than the historical
+        // transform-free `Fast` path (literal + subtract-green only) — the structural
+        // end of the weak lossless default. Proven here against that old baseline for
+        // a smooth gradient (predictor-friendly) and a low-frequency "photo".
+        use crate::lossless::vp8l::encode::encode_with;
+        // A 16x16 planar gradient: the old baseline bloats it; AUTO collapses it to
+        // Best class (the predictor zeroes the residual) — a many-to-one win.
+        let gradient: Vec<u32> = (0..256u32)
+            .map(|i| {
+                let v = (i % 16 + i / 16) * 8;
+                0xff00_0000 | (v << 16) | (v << 8) | v
+            })
+            .collect();
+        let auto = encode_payload(Effort::AUTO, 16, 16, &gradient).len();
+        let old_fast = encode_with(16, 16, &gradient, false).len();
+        assert!(
+            auto * 4 < old_fast,
+            "gradient AUTO must crush the transform-free baseline: {auto} vs {old_fast}"
+        );
+        assert!(
+            auto < 200,
+            "gradient AUTO must be Best class, got {auto} bytes"
+        );
+        // A low-frequency color "photo": smoothly varying channels the predictor and
+        // cross-color still shrink below the transform-free literal/SG baseline.
+        let photo: Vec<u32> = (0..1024u32)
+            .map(|i| {
+                let (x, y) = (i % 32, i / 32);
+                let (red, green, blue) = ((x * 3 + y) & 0xff, (x + y * 2) & 0xff, (x + y) & 0xff);
+                0xff00_0000 | (red << 16) | (green << 8) | blue
+            })
+            .collect();
+        let auto_photo = encode_payload(Effort::AUTO, 32, 32, &photo).len();
+        let old_fast_photo = encode_with(32, 32, &photo, false).len();
+        assert!(
+            auto_photo < old_fast_photo,
+            "photo AUTO must beat the transform-free baseline: {auto_photo} vs {old_fast_photo}"
         );
     }
 
     #[test]
     fn builder_sets_fields() {
         let config = EncoderConfig::new()
-            .with_effort(Effort::Fast)
+            .with_effort(Effort::level(0))
             .with_metadata(Metadata {
                 exif: Some(vec![1, 2, 3]),
                 ..Metadata::none()
             });
-        assert_eq!(config.effort, Effort::Fast);
+        assert_eq!(config.effort, Effort::level(0));
         assert_eq!(config.metadata.exif.as_deref(), Some(&[1, 2, 3][..]));
     }
 

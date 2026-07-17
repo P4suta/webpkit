@@ -4,7 +4,7 @@
 //! inspects the container and handles **either** VP8L (lossless) or VP8 (lossy)
 //! input, and a single [`EncodeMode`] selects the encoder.
 
-use webpkit::{DecodeOptions, Effort, Encoder, Image, Metadata, PixelLayout};
+use webpkit::{DecodeOptions, Effort, Encoder, Image, LossyTuning, Metadata, PixelLayout};
 
 use crate::{
     error::CliError,
@@ -32,6 +32,8 @@ pub(crate) enum EncodeMode {
         quality: u8,
         /// Encoder effort tier.
         method: Effort,
+        /// Psychovisual tuning knobs (SNS, segments, filter strength/sharpness).
+        tuning: LossyTuning,
     },
 }
 
@@ -105,6 +107,7 @@ pub(crate) fn resolve_mode(
             EncodeMode::Lossy {
                 quality: flags.quality.unwrap_or(75),
                 method: flags.effort,
+                tuning: LossyTuning::default(),
             },
             false,
         ));
@@ -113,6 +116,7 @@ pub(crate) fn resolve_mode(
         EncodeMode::Lossy {
             quality: 75,
             method: flags.effort,
+            tuning: LossyTuning::default(),
         }
     } else {
         EncodeMode::Lossless {
@@ -127,7 +131,7 @@ pub(crate) fn resolve_mode(
 ///
 /// `0` (or an absent flag) leaves rayon's default of one worker per core. A
 /// positive count builds the single global pool that both the parallel bulk
-/// convert and the encoder's parallel `Effort::Best` search then draw from, so one
+/// convert and the encoder's parallel deep-effort search then draw from, so one
 /// flag bounds every layer of parallelism. Building the global pool can only fail
 /// if one already exists; this runs once at startup, so that case is ignored.
 pub(crate) fn configure_threads(threads: Option<u16>) {
@@ -227,13 +231,38 @@ pub(crate) fn encode(
             };
             encoder.encode_ref(image.as_image_ref())?
         },
-        EncodeMode::Lossy { quality, method } => Encoder::lossy()
+        EncodeMode::Lossy {
+            quality,
+            method,
+            tuning,
+        } => Encoder::lossy()
             .quality(quality)
             .effort(method)
+            .tuning(tuning)
             .metadata(metadata)
             .encode_ref(image.as_image_ref())?,
     };
     Ok(bytes)
+}
+
+/// Inter-frame animation optimization (gif2webp `-mixed`/`-kmin`/`-kmax`/`-min_size`),
+/// applied when a GIF is transcoded as an animation.
+///
+/// [`enabled`](Self::enabled) is off by default, which leaves the full-frame GIF
+/// output byte-identical to the naive path; the other fields shape the optimizer
+/// only once it is on.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct AnimOptimize {
+    /// Encode each frame as a minimal delta against the composited canvas.
+    pub(crate) enabled: bool,
+    /// Trial-encode each delta lossy and lossless, keeping the smaller (`-mixed`).
+    pub(crate) mixed: bool,
+    /// Exhaustively search blend/dispose/codec per delta (`-min_size`).
+    pub(crate) min_size: bool,
+    /// Force a keyframe at least every `kmax` frames (`0` = only the first).
+    pub(crate) kmax: u32,
+    /// Never place keyframes closer than `kmin` frames apart.
+    pub(crate) kmin: u32,
 }
 
 /// The result of encoding one input file: the WebP bytes, the source dimensions,
@@ -268,10 +297,11 @@ pub(crate) fn encode_input(
     mode: EncodeMode,
     selection: Selection,
     gif_as_animation: bool,
+    optimize: AnimOptimize,
 ) -> Result<Encoded, CliError> {
     #[cfg(feature = "formats")]
     if gif_as_animation && format == InputFormat::Gif {
-        let (bytes, width, height) = encode_gif_animation(bytes, mode)?;
+        let (bytes, width, height) = encode_gif_animation(bytes, mode, optimize)?;
         return Ok(Encoded {
             bytes,
             width,
@@ -280,7 +310,7 @@ pub(crate) fn encode_input(
         });
     }
     #[cfg(not(feature = "formats"))]
-    let _ = gif_as_animation;
+    let _ = (gif_as_animation, optimize);
 
     let image = format::read_image(bytes, format, None)?;
     let metadata = selection.apply(image.metadata());
@@ -298,17 +328,25 @@ pub(crate) fn encode_input(
 /// metadata (though [`AnimationEncoder`] itself supports it via
 /// [`AnimationEncoder::metadata`](webpkit::AnimationEncoder::metadata)).
 #[cfg(feature = "formats")]
-fn encode_gif_animation(bytes: &[u8], mode: EncodeMode) -> Result<(Vec<u8>, u32, u32), CliError> {
+fn encode_gif_animation(
+    bytes: &[u8],
+    mode: EncodeMode,
+    optimize: AnimOptimize,
+) -> Result<(Vec<u8>, u32, u32), CliError> {
     use webpkit::{
         AnimCodec, AnimationEncoder, BlendMode, Dimensions, DisposalMode, FrameMeta, ImageRef,
-        PixelLayout,
+        LossyParams, PixelLayout,
     };
 
     // Near-lossless has no per-frame animation analog, so a lossless mode yields
     // lossless (`VP8L`) frames regardless of its still-only preprocessing knob.
     let codec = match mode {
         EncodeMode::Lossless { .. } => AnimCodec::Lossless,
-        EncodeMode::Lossy { quality, .. } => AnimCodec::Lossy(quality),
+        EncodeMode::Lossy {
+            quality, tuning, ..
+        } => AnimCodec::Lossy {
+            params: LossyParams::new(quality).with_tuning(tuning),
+        },
     };
     let frames = format::image_input::read_gif_frames(bytes)?;
     let loop_count = format::image_input::read_gif_loop_count(bytes)?;
@@ -318,6 +356,23 @@ fn encode_gif_animation(bytes: &[u8], mode: EncodeMode) -> Result<(Vec<u8>, u32,
     let (width, height) = (first.image.width(), first.image.height());
     let canvas = Dimensions::new(width, height)?;
 
+    // `--optimize` diffs each full-canvas GIF frame into a minimal delta; the result
+    // composites pixel-identically to the naive full-frame animation below, only
+    // smaller. Off by default, so the naive path stays byte-identical.
+    if optimize.enabled {
+        let bytes =
+            optimize_gif_frames(&frames, canvas, loop_count, codec, mode.effort(), optimize)?;
+        return Ok((bytes, width, height));
+    }
+
+    // The `image` crate hands back full-canvas frames with the GIF's own disposal
+    // already applied to the pixels (see `read_gif_frames`), so each frame's real
+    // per-frame delay is honored via `duration_ms`, and its compositing is a plain
+    // full-canvas replace: `Overwrite` (do not alpha-blend over the previous, now
+    // stale, canvas — which would leak transparency) and `Keep` (the next frame is
+    // itself a full canvas that overwrites everything). Deriving the meta from that
+    // invariant, rather than a bare literal, is what keeps a transparent-GIF frame
+    // from compositing wrong.
     let meta_for = |frame: &format::image_input::AnimFrame| {
         FrameMeta::new(
             0,
@@ -340,4 +395,46 @@ fn encode_gif_animation(bytes: &[u8], mode: EncodeMode) -> Result<(Vec<u8>, u32,
         encoder = encoder.add_frame(frame_ref, meta_for(frame))?;
     }
     Ok((encoder.finish(), width, height))
+}
+
+/// Assemble the full-canvas GIF `frames` through the inter-frame optimizer, which
+/// derives each frame's minimal delta rectangle, blend, dispose, and codec while
+/// reproducing every frame exactly.
+///
+/// The lossy trial that `-mixed` / `-min_size` run uses the mode's own quality when
+/// the mode is lossy, else a neutral default — the same quality gif2webp trials with.
+#[cfg(feature = "formats")]
+fn optimize_gif_frames(
+    frames: &[format::image_input::AnimFrame],
+    canvas: webpkit::Dimensions,
+    loop_count: u16,
+    codec: webpkit::AnimCodec,
+    effort: Effort,
+    optimize: AnimOptimize,
+) -> Result<Vec<u8>, CliError> {
+    use webpkit::{AnimCodec, AnimationOptimizer, ImageRef, LossyParams, PixelLayout};
+
+    let lossy_params = match codec {
+        AnimCodec::Lossy { params } => params,
+        _ => LossyParams::new(75),
+    };
+    let mut it = frames.iter();
+    let first = it
+        .next()
+        .ok_or_else(|| CliError::Format("GIF has no frames".to_owned()))?;
+    let first_ref = ImageRef::new(canvas, PixelLayout::Rgba8, first.image.as_bytes())?;
+    let mut opt = AnimationOptimizer::new(canvas)
+        .loop_count(loop_count)
+        .effort(effort)
+        .codec(codec)
+        .lossy_params(lossy_params)
+        .mixed(optimize.mixed)
+        .min_size(optimize.min_size)
+        .keyframe_interval(optimize.kmin, optimize.kmax)
+        .add_frame(first_ref, first.duration_ms)?;
+    for frame in it {
+        let frame_ref = ImageRef::new(canvas, PixelLayout::Rgba8, frame.image.as_bytes())?;
+        opt = opt.add_frame(frame_ref, frame.duration_ms)?;
+    }
+    Ok(opt.optimize()?)
 }

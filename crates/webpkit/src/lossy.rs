@@ -27,15 +27,16 @@
 //! # Encoder
 //!
 //! [`encode`] produces a valid `VP8 ` key frame from an [`ImageRef`] at a chosen
-//! [`Quality`] and effort [`Effort`]. [`Effort::Fast`] uses fixed 16×16 DC
+//! [`Quality`] and effort [`Effort`]. A low explicit level uses fixed 16×16 DC
 //! prediction, the default coefficient probabilities, round-to-nearest
-//! quantization, a single segment and no loop filter. [`Effort::Balanced`] (the
-//! default) and [`Effort::Best`] add rate-distortion whole-block intra mode search
-//! (DC/V/H/TM), coefficient-probability optimization, per-macroblock skip coding,
-//! the in-loop deblocking filter (a frame-final pass at a level scaled to the
-//! quantizer), trellis (rate-distortion) quantization, and segmentation
-//! (complexity-clustered per-segment quantizers). [`Effort::Best`] additionally
-//! searches 4×4 (`B_PRED`) intra prediction. Because the encoder reconstructs —
+//! quantization, a single segment and no loop filter. Mid and high levels (and
+//! [`Effort::AUTO`], which picks a tier from the frame size) add rate-distortion
+//! whole-block intra mode search (DC/V/H/TM), coefficient-probability optimization,
+//! per-macroblock skip coding, the in-loop deblocking filter (a frame-final pass at
+//! a level scaled to the quantizer), trellis (rate-distortion) quantization, and
+//! segmentation (complexity-clustered per-segment quantizers). The top level
+//! additionally searches 4×4 (`B_PRED`) intra prediction. Because the encoder
+//! reconstructs —
 //! and filters — with the very same transforms and loop filter the decoder uses,
 //! `decode` of its output is byte-identical to its own reconstruction
 //! (self-consistency), and it is independently validated to be readable by
@@ -59,15 +60,19 @@ pub(crate) mod header;
 pub(crate) mod idct;
 pub(crate) mod loop_filter;
 pub(crate) mod mb;
+pub(crate) mod perceptual;
 pub(crate) mod predict;
 pub(crate) mod prelude;
 pub(crate) mod prob_opt;
 pub(crate) mod quant;
+pub(crate) mod rate;
 pub(crate) mod reconstruct;
 pub(crate) mod rgb_to_yuv;
+pub(crate) mod sharp_yuv;
 pub(crate) mod token;
 pub(crate) mod tokens;
 pub(crate) mod trellis;
+pub(crate) mod tuning;
 pub(crate) mod work;
 pub(crate) mod yuv;
 
@@ -187,8 +192,12 @@ pub use crate::{Codec, Dimensions, Effort, Error, Image, ImageRef, Metadata, Pix
 pub use decoder::IncrementalDecoder;
 #[cfg(feature = "std")]
 pub use encoder::encode_to;
-pub use encoder::{LossyConfig, MetadataPolicy, Quality, encode, encode_image, encode_vp8};
+pub use encoder::{
+    LossyConfig, LossyParams, MetadataPolicy, Quality, encode, encode_image, encode_vp8,
+};
 pub use frame_header::FrameHeader;
+pub use rate::{Attempt, RateSearch, RateTarget};
+pub use tuning::{AlphaFilterMode, AlphaMethod, LossyTuning, Preset};
 
 use crate::lossy::prelude::*;
 

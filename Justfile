@@ -214,7 +214,7 @@ gen-assets:
         done; \
         echo "  man/webp.1"; \
         run man > "$out/man/webp.1"; \
-        for c in encode decode convert info diff doctor config explain completions man; do \
+        for c in encode decode convert animate mux info diff doctor config explain completions man; do \
             echo "  man/webp-$c.1"; \
             run man "$c" > "$out/man/webp-$c.1"; \
         done'
@@ -285,10 +285,10 @@ no-std:
     cargo build -p webpkit --no-default-features --features alloc --target thumbv7em-none-eabi
 
 # In-process differential against the libwebp reference (links libwebp-sys) —
-# both codecs plus the umbrella alpha/animation cross-checks. All three oracle
-# suites now live in the one `webpkit` crate.
+# both codecs, the umbrella alpha/animation cross-checks, and the byte-exact
+# geometry rescaler. All oracle suites now live in the one `webpkit` crate.
 oracle:
-    cargo test -p webpkit --features oracle --test oracle --test oracle_lossless --test oracle_lossy
+    cargo test -p webpkit --features oracle --test oracle --test oracle_lossless --test oracle_lossy --test oracle_rescale
 
 # Run the umbrella round-trip example (lossless + lossy through the one API).
 example:

@@ -549,7 +549,9 @@ fn encode_lossy_anim_matches_libwebp_demux() {
             let img0 =
                 webpkit::ImageRef::new(canvas, webpkit::PixelLayout::Rgba8, &frames[0]).unwrap();
             let mut enc = webpkit::AnimationEncoder::new(canvas)
-                .codec(webpkit::AnimCodec::Lossy(90))
+                .codec(webpkit::AnimCodec::Lossy {
+                    params: webpkit::LossyParams::new(90),
+                })
                 .loop_count(0)
                 .add_frame(img0, frame_meta)
                 .unwrap();

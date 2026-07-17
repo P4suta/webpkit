@@ -1,10 +1,11 @@
 //! Criterion throughput benchmarks for the `lossy` VP8 (lossy) encoder.
 //!
 //! One `lossy_encode` group sweeps the shared [`webpkit_samples`] matrix (every
-//! [`Content`] archetype x [`SIZES`]) crossed with the effort [`Effort`]s at a
-//! fixed mid quality. `Fast` is the single-mode round-to-nearest path;
-//! `Balanced` runs the full per-mode RD search; `Best` additionally runs the
-//! trellis quantizer and the i4x4 luma search. Throughput is reported in
+//! [`Content`] archetype x [`SIZES`]) crossed with three representative efforts at
+//! a fixed mid quality: the fastest fixed level (`l0`) is the single-mode
+//! round-to-nearest path, the adaptive default (`auto`) picks a tier by frame size,
+//! and the deepest search (`l9`) adds the trellis quantizer and the i4x4 luma
+//! search. Throughput is reported in
 //! **input MB/s** via `Throughput::Bytes(edge * edge * 4)` (a method-independent
 //! basis: the raw RGBA byte count the encoder consumes), and each [`ImageRef`] is
 //! built **once** per `(content, edge)` outside the measured loop.
@@ -40,9 +41,9 @@ const ENCODE_QUALITY: u8 = 75;
 /// The effort methods timed, with their stable id fragment. `Best` is filtered by
 /// size below; `Fast`/`Balanced` run at every edge.
 const METHODS: [(&str, Effort); 3] = [
-    ("fast", Effort::Fast),
-    ("balanced", Effort::Balanced),
-    ("best", Effort::Best),
+    ("l0", Effort::level(0)),
+    ("auto", Effort::AUTO),
+    ("l9", Effort::level(9)),
 ];
 
 fn encode_benchmark(c: &mut Criterion) {
@@ -63,7 +64,7 @@ fn encode_benchmark(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(u64::from(edge) * u64::from(edge) * 4));
             for (name, method) in METHODS {
                 // Best's trellis + i4x4 search at 512 is too slow to iterate; cap it.
-                if method == Effort::Best && edge > 256 {
+                if method == Effort::level(9) && edge > 256 {
                     continue;
                 }
                 let cfg = LossyConfig::new()

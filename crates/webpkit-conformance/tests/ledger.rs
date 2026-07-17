@@ -146,6 +146,14 @@ fn committed_ledger_is_up_to_date() {
 
     let alpha_dir = root.join("fixtures/alpha");
     let results = compute_results(&alpha_dir).expect("recompute conformance ledger");
+    // Honesty gate: a ledger must never certify a FAILING decode.
+    for r in &results {
+        assert!(
+            r.passed,
+            "conformance case `{}` failed to decode; a ledger cannot certify it",
+            r.case
+        );
+    }
     let fresh = results_to_json(&results).expect("serialize conformance ledger");
 
     assert_eq!(
@@ -176,6 +184,14 @@ fn committed_anim_ledger_is_up_to_date() {
 
     let anim_dir = root.join("fixtures/anim");
     let results = compute_anim_results(&anim_dir).expect("recompute anim conformance ledger");
+    // Honesty gate: a ledger must never certify a FAILING decode.
+    for r in &results {
+        assert!(
+            r.passed,
+            "anim conformance case `{}` failed to decode; a ledger cannot certify it",
+            r.case
+        );
+    }
     let fresh = anim_results_to_json(&results).expect("serialize anim conformance ledger");
 
     assert_eq!(
@@ -637,6 +653,14 @@ mod regen {
     fn gen_ledger() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let results = compute_results(&root.join("fixtures/alpha")).expect("recompute ledger");
+        // Honesty gate: never regenerate a ledger that certifies a FAILING decode.
+        for r in &results {
+            assert!(
+                r.passed,
+                "conformance case `{}` failed to decode; refusing to regenerate",
+                r.case
+            );
+        }
         let json = results_to_json(&results).expect("serialize ledger");
         std::fs::write(root.join("conformance-results-alpha.json"), json).expect("write ledger");
     }
@@ -647,6 +671,14 @@ mod regen {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let results =
             compute_anim_results(&root.join("fixtures/anim")).expect("recompute anim ledger");
+        // Honesty gate: never regenerate a ledger that certifies a FAILING decode.
+        for r in &results {
+            assert!(
+                r.passed,
+                "anim conformance case `{}` failed to decode; refusing to regenerate",
+                r.case
+            );
+        }
         let json = anim_results_to_json(&results).expect("serialize anim ledger");
         std::fs::write(root.join("conformance-results-anim.json"), json)
             .expect("write anim ledger");

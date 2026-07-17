@@ -49,7 +49,7 @@ fn encode_vp8_sample(content: Content, edge: u32) -> Option<Vec<u8>> {
     let image = ImageRef::new(dims, PixelLayout::Rgba8, &sample.rgba).ok()?;
     let cfg = LossyConfig::new()
         .with_quality(DECODE_QUALITY)
-        .with_effort(Effort::Balanced);
+        .with_effort(Effort::AUTO);
     let (_dims, payload) = webpkit::lossy::encode_vp8(image, &cfg).ok()?;
     Some(payload)
 }
@@ -62,7 +62,7 @@ fn encode_container_sample(content: Content, edge: u32) -> Option<Vec<u8>> {
     let image = ImageRef::new(dims, PixelLayout::Rgba8, &sample.rgba).ok()?;
     let cfg = LossyConfig::new()
         .with_quality(DECODE_QUALITY)
-        .with_effort(Effort::Balanced);
+        .with_effort(Effort::AUTO);
     webpkit::lossy::encode(image, &cfg).ok()
 }
 

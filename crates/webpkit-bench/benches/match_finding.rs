@@ -34,7 +34,7 @@ use webpkit::lossless::{Dimensions, Effort, EncoderConfig, ImageRef, PixelLayout
 use webpkit_samples::{Content, SIZES, render};
 
 /// The DP-driven effort methods (both run `parse_optimal`); `fast` never scans.
-const METHODS: [(&str, Effort); 2] = [("balanced", Effort::Balanced), ("best", Effort::Best)];
+const METHODS: [(&str, Effort); 2] = [("auto", Effort::AUTO), ("l9", Effort::level(9))];
 
 /// The repetitive archetypes whose overlapping runs stress the match finder.
 const REPETITIVE: [Content; 3] = [Content::Solid, Content::Gradient, Content::Tiled];
@@ -58,8 +58,8 @@ fn match_finding_benchmark(c: &mut Criterion) {
             // Input MB/s: the raw RGBA byte count, independent of the method.
             group.throughput(Throughput::Bytes(u64::from(edge) * u64::from(edge) * 4));
             for (name, method) in METHODS {
-                // Best's Tier3 search at 512 is too slow to iterate; cap it.
-                if method == Effort::Best && edge > 256 {
+                // The deepest search at 512 is too slow to iterate; cap it.
+                if method == Effort::level(9) && edge > 256 {
                     continue;
                 }
                 let config = EncoderConfig::new().with_effort(method);

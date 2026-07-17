@@ -16,6 +16,9 @@ _webp() {
             ",$1")
                 cmd="webp"
                 ;;
+            webp,animate)
+                cmd="webp__subcmd__animate"
+                ;;
             webp,completions)
                 cmd="webp__subcmd__completions"
                 ;;
@@ -52,6 +55,9 @@ _webp() {
             webp,meta)
                 cmd="webp__subcmd__meta"
                 ;;
+            webp,mux)
+                cmd="webp__subcmd__mux"
+                ;;
             webp__subcmd__config,get)
                 cmd="webp__subcmd__config__subcmd__get"
                 ;;
@@ -63,6 +69,9 @@ _webp() {
                 ;;
             webp__subcmd__config__subcmd__help,help)
                 cmd="webp__subcmd__config__subcmd__help__subcmd__help"
+                ;;
+            webp__subcmd__help,animate)
+                cmd="webp__subcmd__help__subcmd__animate"
                 ;;
             webp__subcmd__help,completions)
                 cmd="webp__subcmd__help__subcmd__completions"
@@ -100,6 +109,9 @@ _webp() {
             webp__subcmd__help,meta)
                 cmd="webp__subcmd__help__subcmd__meta"
                 ;;
+            webp__subcmd__help,mux)
+                cmd="webp__subcmd__help__subcmd__mux"
+                ;;
             webp__subcmd__help__subcmd__config,get)
                 cmd="webp__subcmd__help__subcmd__config__subcmd__get"
                 ;;
@@ -111,6 +123,21 @@ _webp() {
                 ;;
             webp__subcmd__help__subcmd__meta,strip)
                 cmd="webp__subcmd__help__subcmd__meta__subcmd__strip"
+                ;;
+            webp__subcmd__help__subcmd__mux,get-frame)
+                cmd="webp__subcmd__help__subcmd__mux__subcmd__get__subcmd__frame"
+                ;;
+            webp__subcmd__help__subcmd__mux,insert)
+                cmd="webp__subcmd__help__subcmd__mux__subcmd__insert"
+                ;;
+            webp__subcmd__help__subcmd__mux,remove)
+                cmd="webp__subcmd__help__subcmd__mux__subcmd__remove"
+                ;;
+            webp__subcmd__help__subcmd__mux,replace)
+                cmd="webp__subcmd__help__subcmd__mux__subcmd__replace"
+                ;;
+            webp__subcmd__help__subcmd__mux,set)
+                cmd="webp__subcmd__help__subcmd__mux__subcmd__set"
                 ;;
             webp__subcmd__meta,help)
                 cmd="webp__subcmd__meta__subcmd__help"
@@ -136,6 +163,42 @@ _webp() {
             webp__subcmd__meta__subcmd__help,strip)
                 cmd="webp__subcmd__meta__subcmd__help__subcmd__strip"
                 ;;
+            webp__subcmd__mux,get-frame)
+                cmd="webp__subcmd__mux__subcmd__get__subcmd__frame"
+                ;;
+            webp__subcmd__mux,help)
+                cmd="webp__subcmd__mux__subcmd__help"
+                ;;
+            webp__subcmd__mux,insert)
+                cmd="webp__subcmd__mux__subcmd__insert"
+                ;;
+            webp__subcmd__mux,remove)
+                cmd="webp__subcmd__mux__subcmd__remove"
+                ;;
+            webp__subcmd__mux,replace)
+                cmd="webp__subcmd__mux__subcmd__replace"
+                ;;
+            webp__subcmd__mux,set)
+                cmd="webp__subcmd__mux__subcmd__set"
+                ;;
+            webp__subcmd__mux__subcmd__help,get-frame)
+                cmd="webp__subcmd__mux__subcmd__help__subcmd__get__subcmd__frame"
+                ;;
+            webp__subcmd__mux__subcmd__help,help)
+                cmd="webp__subcmd__mux__subcmd__help__subcmd__help"
+                ;;
+            webp__subcmd__mux__subcmd__help,insert)
+                cmd="webp__subcmd__mux__subcmd__help__subcmd__insert"
+                ;;
+            webp__subcmd__mux__subcmd__help,remove)
+                cmd="webp__subcmd__mux__subcmd__help__subcmd__remove"
+                ;;
+            webp__subcmd__mux__subcmd__help,replace)
+                cmd="webp__subcmd__mux__subcmd__help__subcmd__replace"
+                ;;
+            webp__subcmd__mux__subcmd__help,set)
+                cmd="webp__subcmd__mux__subcmd__help__subcmd__set"
+                ;;
             *)
                 ;;
         esac
@@ -143,7 +206,7 @@ _webp() {
 
     case "${cmd}" in
         webp)
-            opts="-v -o -q -m -r -h -V --verbose --quiet --color --threads --dry-run --output --quality --lossless --lossy --near-lossless --method --metadata --crop --resize --recursive --force --no-clobber --help --version decode encode convert info meta diff doctor config explain completions man help"
+            opts="-v -o -q -m -r -h -V --verbose --quiet --color --threads --dry-run --output --quality --lossless --lossy --near-lossless --method --metadata --crop --resize --recursive --force --no-clobber --help --version decode encode convert animate mux info meta diff doctor config explain completions man help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -178,11 +241,11 @@ _webp() {
                     return 0
                     ;;
                 --method)
-                    COMPREPLY=($(compgen -W "fast balanced best" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto fast best" -- "${cur}"))
                     return 0
                     ;;
                 -m)
-                    COMPREPLY=($(compgen -W "fast balanced best" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto fast best" -- "${cur}"))
                     return 0
                     ;;
                 --metadata)
@@ -194,6 +257,84 @@ _webp() {
                     return 0
                     ;;
                 --resize)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__animate)
+            opts="-o -m -v -h --output --delay --loop --bgcolor --dispose --blend --lossy --canvas --method --input-format --optimize --mixed --min-size --kmax --kmin --verbose --quiet --color --threads --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --output)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -o)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delay)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --loop)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --bgcolor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --dispose)
+                    COMPREPLY=($(compgen -W "keep background" -- "${cur}"))
+                    return 0
+                    ;;
+                --blend)
+                    COMPREPLY=($(compgen -W "blend overwrite" -- "${cur}"))
+                    return 0
+                    ;;
+                --lossy)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --canvas)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --method)
+                    COMPREPLY=($(compgen -W "auto fast best" -- "${cur}"))
+                    return 0
+                    ;;
+                -m)
+                    COMPREPLY=($(compgen -W "auto fast best" -- "${cur}"))
+                    return 0
+                    ;;
+                --input-format)
+                    COMPREPLY=($(compgen -W "png ppm pam jpeg gif tiff bmp raw" -- "${cur}"))
+                    return 0
+                    ;;
+                --kmax)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --kmin)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -238,7 +379,7 @@ _webp() {
                     return 0
                     ;;
                 --effort)
-                    COMPREPLY=($(compgen -W "fast balanced best" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto fast best" -- "${cur}"))
                     return 0
                     ;;
                 --codec)
@@ -344,11 +485,11 @@ _webp() {
                     return 0
                     ;;
                 --method)
-                    COMPREPLY=($(compgen -W "fast balanced best" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto fast best" -- "${cur}"))
                     return 0
                     ;;
                 -m)
-                    COMPREPLY=($(compgen -W "fast balanced best" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto fast best" -- "${cur}"))
                     return 0
                     ;;
                 --quality)
@@ -481,7 +622,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__encode)
-            opts="-o -m -q -v -h --output --input-format --width --height --layout --method --lossless --lossy --quality --near-lossless --crop --resize --target-size --min-psnr --metadata --verbose --quiet --color --threads --dry-run --help"
+            opts="-o -m -q -v -h --output --input-format --width --height --layout --method --lossless --lossy --quality --near-lossless --crop --resize --target-size --min-psnr --metadata --optimize --mixed --min-size --kmax --kmin --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -512,11 +653,11 @@ _webp() {
                     return 0
                     ;;
                 --method)
-                    COMPREPLY=($(compgen -W "fast balanced best" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto fast best" -- "${cur}"))
                     return 0
                     ;;
                 -m)
-                    COMPREPLY=($(compgen -W "fast balanced best" -- "${cur}"))
+                    COMPREPLY=($(compgen -W "auto fast best" -- "${cur}"))
                     return 0
                     ;;
                 --quality)
@@ -549,6 +690,14 @@ _webp() {
                     ;;
                 --metadata)
                     COMPREPLY=($(compgen -W "all none icc exif xmp" -- "${cur}"))
+                    return 0
+                    ;;
+                --kmax)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --kmin)
+                    COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
                 --color)
@@ -589,8 +738,22 @@ _webp() {
             return 0
             ;;
         webp__subcmd__help)
-            opts="decode encode convert info meta diff doctor config explain completions man help"
+            opts="decode encode convert animate mux info meta diff doctor config explain completions man help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__animate)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -826,6 +989,90 @@ _webp() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        webp__subcmd__help__subcmd__mux)
+            opts="get-frame set remove insert replace"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__mux__subcmd__get__subcmd__frame)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__mux__subcmd__insert)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__mux__subcmd__remove)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__mux__subcmd__replace)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__help__subcmd__mux__subcmd__set)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         webp__subcmd__info)
             opts="-v -h --json --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
@@ -1038,6 +1285,304 @@ _webp() {
                     return 0
                     ;;
                 -o)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux)
+            opts="-v -h --verbose --quiet --color --threads --dry-run --help get-frame set remove insert replace help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__get__subcmd__frame)
+            opts="-o -v -h --output --verbose --quiet --color --threads --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --output)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -o)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__help)
+            opts="get-frame set remove insert replace help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__help__subcmd__get__subcmd__frame)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__help__subcmd__insert)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__help__subcmd__remove)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__help__subcmd__replace)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__help__subcmd__set)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__insert)
+            opts="-o -v -h --output --at --delay --blend --dispose --verbose --quiet --color --threads --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --output)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -o)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --at)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delay)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --blend)
+                    COMPREPLY=($(compgen -W "blend overwrite" -- "${cur}"))
+                    return 0
+                    ;;
+                --dispose)
+                    COMPREPLY=($(compgen -W "keep background" -- "${cur}"))
+                    return 0
+                    ;;
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__remove)
+            opts="-o -v -h --output --verbose --quiet --color --threads --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --output)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -o)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__replace)
+            opts="-o -v -h --output --at --verbose --quiet --color --threads --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --output)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -o)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --at)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --color)
+                    COMPREPLY=($(compgen -W "auto always never" -- "${cur}"))
+                    return 0
+                    ;;
+                --threads)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        webp__subcmd__mux__subcmd__set)
+            opts="-o -v -h --output --loop --bgcolor --verbose --quiet --color --threads --dry-run --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --output)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                -o)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --loop)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --bgcolor)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

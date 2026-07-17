@@ -58,7 +58,7 @@ impl core::fmt::Display for IoError {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for IoError {}
+impl core::error::Error for IoError {}
 
 /// Errors returned by the WebP codecs (VP8L lossless, VP8 lossy) and this shell crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +83,10 @@ pub enum Error {
     InvalidDimensions,
     /// The pixel buffer length does not equal `width * height * 4` bytes.
     PixelBufferMismatch,
+    /// A [`crop`](crate::Image::crop) rectangle does not lie fully inside the source
+    /// image — distinct from an empty or over-range window, which is an
+    /// [`InvalidDimensions`](Self::InvalidDimensions) error.
+    CropOutOfBounds,
     /// A well-formed WebP that uses a feature this build does not decode.
     UnsupportedFeature,
     /// The extended (`VP8X`) container or one of its chunks is malformed.
@@ -121,6 +125,9 @@ impl core::fmt::Display for Error {
             Self::PixelBufferMismatch => {
                 f.write_str("pixel buffer length does not match width * height * 4")
             },
+            Self::CropOutOfBounds => {
+                f.write_str("crop rectangle does not fit inside the source image")
+            },
             Self::UnsupportedFeature => f.write_str("unsupported WebP feature"),
             Self::InvalidContainer => f.write_str("malformed WebP extended (VP8X) container"),
             Self::InvalidFrame => f.write_str(
@@ -139,10 +146,10 @@ impl core::fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for Error {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
+            #[cfg(feature = "std")]
             Self::Io(e) => Some(e),
             _ => None,
         }
@@ -180,6 +187,7 @@ mod tests {
             },
             Error::InvalidDimensions,
             Error::PixelBufferMismatch,
+            Error::CropOutOfBounds,
             Error::UnsupportedFeature,
             Error::InvalidContainer,
             Error::InvalidFrame,
@@ -249,8 +257,7 @@ mod tests {
     /// above is `no_std`-safe and cannot name it.
     #[test]
     fn io_display_is_non_empty() {
-        let err: Error =
-            std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof").into();
+        let err: Error = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof").into();
         assert!(!err.to_string().is_empty());
     }
 }

@@ -74,7 +74,11 @@ pub fn rewrite_metadata(
     }
 
     let base = Vp8xFlags::for_output(metadata, has_alpha);
-    let flags = if animated { base.with_animation() } else { base };
+    let flags = if animated {
+        base.with_animation()
+    } else {
+        base
+    };
     let mut body = Vec::new();
     push_chunk(&mut body, FourCc::VP8X, &Vp8xInfo::build(flags, canvas));
     if let Some(icc) = &metadata.icc_profile {
@@ -124,7 +128,11 @@ mod tests {
 
     /// The top-level chunk ids, in order.
     fn ids(file: &[u8]) -> Vec<FourCc> {
-        chunks(file).unwrap().filter_map(Result::ok).map(|c| c.id).collect()
+        chunks(file)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|c| c.id)
+            .collect()
     }
 
     /// The payloads of the image-bitstream chunks, so a rewrite can be checked to
@@ -214,7 +222,10 @@ mod tests {
         // An animation (VP8X anim + ANIM + ANMF): the rebuilt VP8X keeps the alpha
         // and animation flags and adds only the requested Exif flag.
         let canvas = Dimensions::new(16, 16).unwrap();
-        let mut body = chunk(FourCc::VP8X, &Vp8xInfo::build(Vp8xFlags(0x10 | 0x02), canvas));
+        let mut body = chunk(
+            FourCc::VP8X,
+            &Vp8xInfo::build(Vp8xFlags(0x10 | 0x02), canvas),
+        );
         body.extend_from_slice(&chunk(FourCc::ANIM, &[0u8; 6]));
         body.extend_from_slice(&chunk(FourCc::ANMF, &[1, 2, 3, 4]));
         let file = webp(&body);
@@ -230,7 +241,10 @@ mod tests {
         assert!(vp8x.flags.is_animated() && vp8x.flags.has_alpha() && vp8x.flags.has_exif());
         assert!(!vp8x.flags.has_icc() && !vp8x.flags.has_xmp());
         // The frame chunks pass through untouched.
-        assert_eq!(ids(&out), vec![FourCc::VP8X, FourCc::ANIM, FourCc::ANMF, FourCc::EXIF]);
+        assert_eq!(
+            ids(&out),
+            vec![FourCc::VP8X, FourCc::ANIM, FourCc::ANMF, FourCc::EXIF]
+        );
     }
 
     #[test]

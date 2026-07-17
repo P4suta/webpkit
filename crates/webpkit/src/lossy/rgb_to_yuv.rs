@@ -23,7 +23,7 @@
 use crate::lossy::prelude::*;
 
 /// Fixed-point precision of the RGB→YUV matrix (libwebp `YUV_FIX`).
-const YUV_FIX: u32 = 16;
+pub(crate) const YUV_FIX: u32 = 16;
 /// Rounding added to the luma accumulator (libwebp `YUV_HALF`).
 const YUV_HALF: i32 = 1 << (YUV_FIX - 1);
 /// Rounding added to a chroma accumulator that already sums 4 samples: the
@@ -32,6 +32,12 @@ const YUV_HALF: i32 = 1 << (YUV_FIX - 1);
 const UV_ROUND: i32 = YUV_HALF << 2;
 /// The `128` chroma center, pre-shifted for the `>> (YUV_FIX + 2)` descale.
 const UV_OFFSET: i32 = 128 << (YUV_FIX + 2);
+/// Studio-swing `VP8RGBToU` matrix row (libwebp): the blue-difference chroma weights
+/// applied to red/green/blue. Shared with [`crate::lossy::sharp_yuv`], which folds them
+/// into a signed chroma delta.
+pub(crate) const U_COEFF: [i32; 3] = [-9719, -19081, 28800];
+/// Studio-swing `VP8RGBToV` matrix row (libwebp): the red-difference chroma weights.
+pub(crate) const V_COEFF: [i32; 3] = [28800, -24116, -4684];
 
 /// The source luma/chroma planes for one frame, padded to whole macroblocks.
 pub(crate) struct SourceYuv {
@@ -60,7 +66,7 @@ impl SourceYuv {
 }
 
 /// libwebp `VP8RGBToY`: studio-swing luma of one pixel (result in `16..=235`).
-fn rgb_to_y(r: i32, g: i32, b: i32) -> u8 {
+pub(crate) fn rgb_to_y(r: i32, g: i32, b: i32) -> u8 {
     let luma = 16839 * r + 33059 * g + 6420 * b;
     ((luma + YUV_HALF + (16 << YUV_FIX)) >> YUV_FIX).clamp(0, 255) as u8
 }
@@ -72,13 +78,13 @@ fn clip_uv_sum(acc: i32) -> u8 {
 }
 
 /// libwebp `VP8RGBToU` over a summed 2×2 RGB block.
-fn rgb_to_u(sr: i32, sg: i32, sb: i32) -> u8 {
-    clip_uv_sum(-9719 * sr - 19081 * sg + 28800 * sb)
+pub(crate) fn rgb_to_u(sr: i32, sg: i32, sb: i32) -> u8 {
+    clip_uv_sum(U_COEFF[0] * sr + U_COEFF[1] * sg + U_COEFF[2] * sb)
 }
 
 /// libwebp `VP8RGBToV` over a summed 2×2 RGB block.
-fn rgb_to_v(sr: i32, sg: i32, sb: i32) -> u8 {
-    clip_uv_sum(28800 * sr - 24116 * sg - 4684 * sb)
+pub(crate) fn rgb_to_v(sr: i32, sg: i32, sb: i32) -> u8 {
+    clip_uv_sum(V_COEFF[0] * sr + V_COEFF[1] * sg + V_COEFF[2] * sb)
 }
 
 /// Convert an RGBA source (`rgba`, 4 bytes/pixel, row-major `width` × `height`,

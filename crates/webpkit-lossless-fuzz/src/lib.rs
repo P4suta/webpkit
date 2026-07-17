@@ -72,10 +72,9 @@ pub fn roundtrip_reached(data: &[u8]) -> bool {
     let image =
         ImageRef::new(dims, PixelLayout::Rgba8, rgba).expect("buffer length matches the frame");
 
-    // Every effort tier, so the whole encode surface is fuzzed: Fast is literal +
-    // subtract-green only, Balanced adds LZ77 and the color cache, Best adds the
-    // Tier-3 transforms (predictor / cross-color / palette / meta-Huffman).
-    for effort in [Effort::Fast, Effort::Balanced, Effort::Best] {
+    // The fastest fixed level, the adaptive default, and the deepest search, so the
+    // whole encode surface — including the always-on forward transforms — is fuzzed.
+    for effort in [Effort::level(0), Effort::AUTO, Effort::level(9)] {
         let config = EncoderConfig::default().with_effort(effort);
         let webp = webpkit::lossless::encode(image, &config).expect("encode is infallible");
         let (out_dims, out_rgba) =

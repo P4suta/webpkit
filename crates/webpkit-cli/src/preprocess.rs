@@ -11,21 +11,14 @@
 //! header alone; [`Pipeline::apply`] runs the ops on a real [`Image`]. The two must
 //! agree, and a test pins that they do.
 //!
-//! We are deliberately **not** byte-identical to libwebp's rescaler: libwebp uses
-//! its own fixed-point resampler, and matching it bit-for-bit is a non-goal. What
-//! matches is the output *dimensions*; the pixels are ours.
+//! Both crop and resize delegate to `webpkit`'s core geometry engine — the resize is
+//! the bit-exact `WebPRescaler` port, so the pixels now match libwebp's `cwebp
+//! -resize` byte-for-byte (not just the dimensions). The core is zero-dependency, so
+//! `--resize` works even under `--no-default-features`.
 
 use webpkit::{Dimensions, Image};
 
 use crate::error::CliError;
-
-/// The resampling filter used for `--resize`, named in the help and docs.
-///
-/// Lanczos3 is the highest-quality general-purpose choice the `image` crate
-/// offers. It is not libwebp's resampler — see the module docs — so the pixels
-/// differ even where the dimensions match.
-#[cfg(feature = "formats")]
-const RESIZE_FILTER: image::imageops::FilterType = image::imageops::FilterType::Lanczos3;
 
 /// A crop rectangle in source-pixel coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,34 +121,14 @@ impl Resize {
         Ok(Self { width, height })
     }
 
-    /// The output dimensions from `input`, resolving a `0` axis to keep aspect.
-    ///
-    /// A derived axis is `round(other * input_other / input_this)`, clamped to at
-    /// least 1 — the same aspect-preserving rule libwebp applies for a `0` side.
+    /// The output dimensions from `input`, resolving a `0` axis to keep aspect via
+    /// the core geometry's [`Dimensions::scaled`] (libwebp's ceil rule). An
+    /// over-range target is an honest error, never a silent clamp.
     fn project(self, input: Dimensions) -> Result<Dimensions, CliError> {
-        let (iw, ih) = (u64::from(input.width()), u64::from(input.height()));
-        let width = if self.width == 0 {
-            scale(iw, u64::from(self.height), ih)
-        } else {
-            u64::from(self.width)
-        };
-        let height = if self.height == 0 {
-            scale(ih, u64::from(self.width), iw)
-        } else {
-            u64::from(self.height)
-        };
-        let clamp = |v: u64| u32::try_from(v.min(u64::from(webpkit::MAX_DIMENSION))).unwrap_or(1);
-        Dimensions::new(clamp(width), clamp(height)).map_err(CliError::from)
+        input
+            .scaled(self.width, self.height)
+            .map_err(CliError::from)
     }
-}
-
-/// `round(a * b / c)` in u64, clamped to at least 1 so a derived axis never
-/// collapses to zero.
-fn scale(a: u64, b: u64, c: u64) -> u64 {
-    if c == 0 {
-        return 1;
-    }
-    ((a * b + c / 2) / c).max(1)
 }
 
 /// One preprocessing step. Crop always precedes resize in a [`Pipeline`].
@@ -215,14 +188,12 @@ impl Pipeline {
     /// Run the pipeline over a decoded image.
     ///
     /// Validates crops against the real dimensions (so `apply` and [`Self::project`]
-    /// agree), then crops by exact byte selection and resizes with the `image`
-    /// crate. Metadata is carried through.
+    /// agree), then crops by exact byte selection and resizes with the core
+    /// geometry's bit-exact rescaler. Metadata is carried through.
     ///
     /// # Errors
     ///
-    /// [`CliError::Usage`] for an out-of-bounds crop, or [`CliError::Format`] if a
-    /// resize build fails (only when the `formats` feature is off, or on an
-    /// impossible buffer).
+    /// [`CliError::Codec`] for an out-of-bounds crop or an over-range resize.
     pub(crate) fn apply(&self, mut image: Image) -> Result<Image, CliError> {
         for stage in &self.stages {
             image = match stage {
@@ -234,48 +205,21 @@ impl Pipeline {
     }
 }
 
-/// Crop `image` to `crop` by copying the sub-rectangle's rows, preserving the
-/// image's pixel layout and metadata and recomputing `has_alpha`.
+/// Crop `image` to `crop` via the core geometry, preserving layout and metadata.
+///
+/// The projection is run first so an out-of-bounds window is a friendly usage error
+/// naming the offending rectangle (the same message [`Pipeline::project`] gives from a
+/// header), rather than the core's terser bounds error.
 fn apply_crop(image: &Image, crop: Crop) -> Result<Image, CliError> {
-    let out_dims = crop.project(image.dimensions())?;
-    let (src_w, x, y, w, h) = (
-        image.width() as usize,
-        crop.x as usize,
-        crop.y as usize,
-        crop.width as usize,
-        crop.height as usize,
-    );
-    let src = image.as_bytes();
-    let row_bytes = w * 4;
-    let mut out = Vec::with_capacity(row_bytes * h);
-    for ry in y..y + h {
-        let start = (ry * src_w + x) * 4;
-        out.extend_from_slice(&src[start..start + row_bytes]);
-    }
-    Ok(Image::new(out_dims, image.layout(), out)?.with_metadata(image.metadata().clone()))
+    crop.project(image.dimensions())?;
+    Ok(image.crop(webpkit::Rect::new(crop.x, crop.y, crop.width, crop.height))?)
 }
 
-/// Resize `image` to the projected target with the `image` crate's Lanczos3 filter.
-#[cfg(feature = "formats")]
+/// Resize `image` to the projected target with the core geometry's bit-exact
+/// `WebPRescaler` port — byte-identical to libwebp's `cwebp -resize`.
 fn apply_resize(image: &Image, resize: Resize) -> Result<Image, CliError> {
     let out_dims = resize.project(image.dimensions())?;
-    let metadata = image.metadata().clone();
-    let rgba = image::RgbaImage::try_from(image).map_err(CliError::from)?;
-    let resized =
-        image::imageops::resize(&rgba, out_dims.width(), out_dims.height(), RESIZE_FILTER);
-    let dynamic = image::DynamicImage::ImageRgba8(resized);
-    Ok(Image::try_from(&dynamic)?.with_metadata(metadata))
-}
-
-/// Without the `formats` feature there is no resampler, so `--resize` is refused
-/// rather than silently ignored.
-#[cfg(not(feature = "formats"))]
-fn apply_resize(_image: &Image, _resize: Resize) -> Result<Image, CliError> {
-    Err(CliError::Usage(
-        "`--resize` needs the `formats` feature (the `image` crate's resampler), \
-         which this build was compiled without"
-            .to_owned(),
-    ))
+    Ok(image.resize(out_dims))
 }
 
 /// Parse a base-10 `u32`, trimming surrounding whitespace.

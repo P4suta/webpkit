@@ -1,8 +1,9 @@
 //! The `dwebp` drop-in: libwebp's `dwebp` command grammar.
 //!
 //! Decodes a WebP to PNG (default), PPM, or PAM, or — for a lossy `VP8 ` still —
-//! to raw YUV 4:2:0 planes (`-yuv`) or their PGM arrangement (`-pgm`); `-flip` and
-//! `-alpha` are honored on the RGBA path.
+//! to raw YUV 4:2:0 planes (`-yuv`) or their PGM arrangement (`-pgm`). On the RGBA
+//! path `-crop`/`-scale` transform the decoded pixels through the core geometry (the
+//! bit-exact rescaler), and `-flip`/`-alpha` are honored.
 
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
@@ -10,10 +11,11 @@ use webpkit::{Image, PixelLayout};
 
 use crate::{
     codec,
-    diag::{self, ArgvSpan, Diagnostic},
+    diag::{self, Diagnostic},
     error::CliError,
     format::{self, OutputFormat},
     io::{Sink, Source},
+    preprocess::{Crop, Pipeline, Resize},
     report::Reporter,
     term,
 };
@@ -83,11 +85,23 @@ impl YuvOut {
 
 /// A parsed `dwebp` invocation.
 #[derive(Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "a flat accumulator of independent dwebp boolean flags (dither_requested, \
+              flip, alpha, quiet); a state machine would obscure the one-flag-per-field map"
+)]
 struct Config {
     input: Option<PathBuf>,
     output: Option<PathBuf>,
     format: Option<OutputFormat>,
     yuv: Option<YuvOut>,
+    /// `-crop x y w h`, applied to the decoded pixels before `-scale`.
+    crop: Option<Crop>,
+    /// `-scale`/`-resize w h`, applied after `-crop` (a `0` axis keeps aspect).
+    resize: Option<Resize>,
+    /// A dithering flag was requested; this exact decoder has nothing to dither, so a
+    /// verbose note explains the no-op rather than the tool staying silent.
+    dither_requested: bool,
     flip: bool,
     alpha: bool,
     verbose: u8,
@@ -142,6 +156,17 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
         PixelLayout::Rgba8,
         Some(webpkit::DEFAULT_MAX_PIXELS),
     )?;
+    // Geometry first (crop, then scale), on the decoded RGBA via the core rescaler.
+    let pipeline = Pipeline::new(config.crop, config.resize);
+    if !pipeline.is_empty() {
+        image = pipeline.apply(image)?;
+    }
+    if config.dither_requested {
+        reporter.detail(
+            "-dither/-alpha_dither have no effect: this decoder reconstructs the exact \
+             stored pixels, so there is no lossy banding to hide",
+        );
+    }
     if config.alpha {
         image = alpha_as_gray(&image)?;
     }
@@ -205,15 +230,45 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
             },
             "-v" => config.verbose = config.verbose.saturating_add(1),
             // Accepted for compatibility; no-ops for a lossless RGBA decoder.
-            "-nofancy" | "-nofilter" | "-nodither" | "-alpha_dither" | "-mt" | "-incremental"
-            | "-noasm" => {},
+            "-nofancy" | "-nofilter" | "-mt" | "-incremental" | "-noasm" => {},
+            // Pixel geometry, applied tool-side to the decoded RGBA buffer via the
+            // core rescaler — `-crop x y w h`, `-scale`/`-resize w h`.
+            "-crop" => {
+                let x = value_u32(args, &mut index, "-crop")?;
+                let y = value_u32(args, &mut index, "-crop")?;
+                let width = value_u32(args, &mut index, "-crop")?;
+                let height = value_u32(args, &mut index, "-crop")?;
+                config.crop = Some(Crop {
+                    x,
+                    y,
+                    width,
+                    height,
+                });
+            },
+            "-scale" | "-resize" => {
+                let width = value_u32(args, &mut index, &token)?;
+                let height = value_u32(args, &mut index, &token)?;
+                config.resize = Some(Resize::new(width, height)?);
+            },
+            // Dithering hides banding in *lossy* reconstruction; this decoder rebuilds
+            // the exact stored pixels, so there is nothing to perturb. The flags are
+            // accepted (and their strength validated) rather than rejected, and are a
+            // documented no-op — see the `-v` note emitted at decode time.
+            "-dither" => {
+                let strength = value_u32(args, &mut index, "-dither")?;
+                if strength > 100 {
+                    return Err(CliError::Usage(format!(
+                        "`-dither` strength is 0-100, got `{strength}`"
+                    )));
+                }
+                config.dither_requested |= strength > 0;
+            },
+            "-alpha_dither" => config.dither_requested = true,
+            "-nodither" => {},
             #[cfg(feature = "formats")]
             "-bmp" => config.format = Some(OutputFormat::Bmp),
             #[cfg(feature = "formats")]
             "-tiff" => config.format = Some(OutputFormat::Tiff),
-            "-crop" | "-resize" | "-scale" | "-dither" => {
-                return Err(reject(&rendered, index, &token));
-            },
             // Without the `formats` feature the `image`-crate encoders are absent, so
             // BMP/TIFF stay rejected by name rather than accepted and then failing.
             #[cfg(not(feature = "formats"))]
@@ -242,41 +297,18 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
     Ok(Parsed::Run(Box::new(config)))
 }
 
-/// The tailored cause and help for one rejected `dwebp` output/preprocessing flag.
-struct Rejection {
-    cause: &'static str,
-    help: &'static [&'static str],
-}
-
-fn rejection_of(flag: &str) -> Rejection {
-    match flag {
-        "-bmp" | "-tiff" => Rejection {
-            cause: "BMP and TIFF output needs the `formats` feature, which this build \
-                    was compiled without.",
-            help: &["choose an always-available format:", "  -png | -ppm | -pam"],
-        },
-        "-dither" => Rejection {
-            cause: "this decoder reconstructs the exact pixels; libwebp's -dither \
-                    perturbs its lossy output to hide banding, which has nothing to \
-                    act on here.",
-            help: &["decode without -dither; the result is already exact."],
-        },
-        _ => Rejection {
-            cause: "cropping, resizing, and scaling are pixel preprocessing this decoder does \
-                    not perform.",
-            help: &["decode first, then transform the result with an image tool."],
-        },
-    }
-}
-
-/// Build the rejection diagnostic for `flag` at `index`, with a caret and its own
-/// cause and help.
+/// Build the rejection diagnostic for a `-bmp`/`-tiff` flag at `index` in a build
+/// without the `formats` feature — the one remaining `dwebp` rejection now that crop,
+/// scale, and dither are wired.
+#[cfg(not(feature = "formats"))]
 fn reject(args: &[String], index: usize, flag: &str) -> CliError {
-    let rejection = rejection_of(flag);
-    let mut diag = Diagnostic::new(format!("`{flag}` is not supported by this decoder"))
-        .with_cause(rejection.cause)
-        .with_help(rejection.help.iter().copied());
-    if let Some(span) = ArgvSpan::at_token("dwebp", args, index) {
+    let mut diag = Diagnostic::new(format!("`{flag}` is not supported by this build"))
+        .with_cause(
+            "BMP and TIFF output needs the `formats` feature, which this build was \
+             compiled without.",
+        )
+        .with_help(["choose an always-available format:", "  -png | -ppm | -pam"]);
+    if let Some(span) = diag::ArgvSpan::at_token("dwebp", args, index) {
         diag = diag.with_span(span);
     }
     CliError::Rejected(Box::new(diag))
@@ -346,6 +378,8 @@ fn print_help() {
          \x20 -ppm / -pam    netpbm output\n\
          {BMP_TIFF_HELP}\
          \x20 -yuv / -pgm    raw YUV 4:2:0 planes / their PGM arrangement (lossy input)\n\
+         \x20 -crop x y w h  crop the decoded image to a pixel window\n\
+         \x20 -scale w h     resize (bit-exact rescaler; 0 on one axis keeps aspect)\n\
          \x20 -flip          flip vertically\n\
          \x20 -alpha         output the alpha plane as grayscale\n\
          \x20 -quiet / -v    quieter / more verbose\n\
@@ -367,4 +401,14 @@ fn value<'a>(
     *index += 1;
     args.get(*index)
         .ok_or_else(|| CliError::Usage(format!("`{flag}` needs a value")))
+}
+
+/// The next value parsed as a non-negative integer, for `-crop`/`-scale` operands.
+fn value_u32(args: &[OsString], index: &mut usize, flag: &str) -> Result<u32, CliError> {
+    let text = value(args, index, flag)?.to_string_lossy().into_owned();
+    text.trim().parse().map_err(|_| {
+        CliError::Usage(format!(
+            "`{flag}` expected a non-negative integer, got `{text}`"
+        ))
+    })
 }

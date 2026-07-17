@@ -210,7 +210,7 @@ fn measure_work_lossy_decode(sample: &webpkit_samples::Sample) -> Result<WorkCas
         webpkit::lossy::ImageRef::new(dims, webpkit::lossy::PixelLayout::Rgba8, &sample.rgba)?;
     let cfg = webpkit::lossy::LossyConfig::new()
         .with_quality(WORK_DECODE_QUALITY)
-        .with_effort(webpkit::lossy::Effort::Balanced);
+        .with_effort(webpkit::lossy::Effort::AUTO);
     let (_dims, payload) = webpkit::lossy::encode_vp8(image, &cfg)?;
 
     webpkit::work_count::reset();
@@ -247,13 +247,13 @@ fn compute_work() -> Result<WorkLedger> {
     let mut cases = Vec::new();
     for sample in webpkit_samples::matrix() {
         for &method in &ALL_METHODS {
-            if method == webpkit::lossless::Effort::Best && sample.edge > WORK_BEST_MAX_EDGE {
+            if method == webpkit::lossless::Effort::level(9) && sample.edge > WORK_BEST_MAX_EDGE {
                 continue;
             }
             cases.push(measure_work_lossless(&sample, method)?);
         }
         for &method in &LOSSY_METHODS {
-            if method == webpkit::lossy::Effort::Best && sample.edge > WORK_BEST_MAX_EDGE {
+            if method == webpkit::lossy::Effort::level(9) && sample.edge > WORK_BEST_MAX_EDGE {
                 continue;
             }
             cases.push(measure_work_lossy(&sample, method)?);

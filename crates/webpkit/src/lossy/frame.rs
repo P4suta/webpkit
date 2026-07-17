@@ -45,8 +45,8 @@
 
 use crate::lossy::bool_enc::BoolEncoder;
 use crate::lossy::constants::{
-    B_DC_PRED, BMODES_PROBA, COEFFS_PROBA_0, CoeffProbas, CoeffStats, CoeffUpdateFlags, DC_PRED,
-    H_PRED, NUM_BMODES, NUM_MB_SEGMENTS, TM_PRED, V_PRED,
+    AC_TABLE, B_DC_PRED, BMODES_PROBA, COEFFS_PROBA_0, CoeffProbas, CoeffStats, CoeffUpdateFlags,
+    DC_PRED, H_PRED, NUM_BMODES, NUM_MB_SEGMENTS, TM_PRED, V_PRED,
 };
 use crate::lossy::decode::{FilterHeader, MbData, SegmentHeader};
 use crate::lossy::enc_header::{
@@ -55,14 +55,16 @@ use crate::lossy::enc_header::{
 use crate::lossy::fdct::{fdct4x4, fwht};
 use crate::lossy::idct::{transform_one, transform_wht};
 use crate::lossy::loop_filter::FInfo;
+use crate::lossy::perceptual;
 use crate::lossy::predict::{predict_chroma8, predict_luma4, predict_luma16};
 use crate::lossy::prelude::*;
 use crate::lossy::prob_opt;
-use crate::lossy::quant::{QPair, Quantized, Quantizer, quantize_block};
+use crate::lossy::quant::{QPair, Quantized, Quantizer, quantize_block, sns_quant_delta};
 use crate::lossy::reconstruct::{
     Planes, compute_fstrengths, fill_top_right_lane, filter_frame, reconstruct_mb_at, resolve_finfo,
 };
 use crate::lossy::rgb_to_yuv::{self, SourceYuv};
+use crate::lossy::sharp_yuv;
 use crate::lossy::tokens::{
     Block, MbTokens, NzContext, count_mb_residuals, emit_mb_residuals, put_bmode, put_is_i4x4,
     put_segment_id, put_uvmode, put_ymode16,
@@ -135,9 +137,58 @@ impl Effort {
     }
 }
 
+/// The four active psychovisual knobs threaded from
+/// [`LossyTuning`](crate::lossy::LossyTuning) into the frame encode: spatial-noise
+/// shaping strength (`0..=100`), macroblock segment count (`1..=4`), and the in-loop
+/// deblocking-filter strength (`0..=100`) and sharpness (`0..=7`). Every knob is gated
+/// by the resolved [`Effort`] (`Fast` runs no mode search / segmentation / filter, so
+/// the knobs are inert there and its output stays byte-identical).
+#[derive(Clone, Copy)]
+pub(crate) struct FrameTuning {
+    /// Spatial-noise-shaping strength (`0..=100`); `0` disables perceptual shaping.
+    pub(crate) sns_strength: u8,
+    /// Number of macroblock quantizer segments (`1..=4`).
+    pub(crate) segments: u8,
+    /// In-loop deblocking-filter strength (`0..=100`); `0` disables the filter.
+    pub(crate) filter_strength: u8,
+    /// In-loop deblocking-filter sharpness (`0..=7`).
+    pub(crate) filter_sharpness: u8,
+    /// Whether to replace the plain 4:2:0 box chroma with luminance-guided (sharp) chroma
+    /// ([`crate::lossy::sharp_yuv`]). `false` (the default) leaves the box path — and every
+    /// output byte — unchanged; only the U/V planes are affected when it is set.
+    pub(crate) sharp_yuv: bool,
+    /// Number of entropy-refinement passes (`1..=10`; libwebp's `StatLoop`). `1` (the
+    /// default) is the single-pass, byte-identical encode; a higher count re-plans the
+    /// frame against the previous pass's optimized coefficient probabilities, so the
+    /// trellis rate model — and the encoded size — converge. Only acted on by tiers that
+    /// optimize probabilities (`Full`/`Best`); `Fast` has no proba stage and always runs
+    /// one pass.
+    pub(crate) passes: u8,
+}
+
+impl FrameTuning {
+    /// The auto / near-best baseline matching `cwebp`'s default shaping — the tuning
+    /// [`encode_frame`] uses when no explicit [`FrameTuning`] is supplied. Production
+    /// threads an explicit [`FrameTuning`] built from the caller's
+    /// [`LossyTuning`](crate::lossy::LossyTuning) (whose default holds the same values),
+    /// so this constant backs only the test-facing [`encode_frame`] convenience.
+    #[cfg(test)]
+    pub(crate) const AUTO: Self = Self {
+        sns_strength: 50,
+        segments: 4,
+        filter_strength: 60,
+        filter_sharpness: 0,
+        sharp_yuv: false,
+        passes: 1,
+    };
+}
+
 /// Encode an RGBA source (`rgba`, 4 bytes/pixel, row-major `width` × `height`) at
 /// base quantizer index `base_q` (`0..=127`) into a raw `VP8 ` key-frame payload,
-/// with the search depth selected by the resolved [`Effort`] gates.
+/// with the search depth selected by the resolved [`Effort`] gates and the near-best
+/// [`FrameTuning::AUTO`] psychovisual shaping. The test-facing convenience over
+/// [`encode_frame_tuned`], which production uses to thread the caller's tuning.
+#[cfg(test)]
 #[must_use]
 pub(crate) fn encode_frame(
     rgba: &[u8],
@@ -146,7 +197,21 @@ pub(crate) fn encode_frame(
     base_q: i32,
     effort: Effort,
 ) -> Vec<u8> {
-    encode_frame_impl(rgba, width, height, base_q, effort).0
+    encode_frame_impl(rgba, width, height, base_q, effort, FrameTuning::AUTO).0
+}
+
+/// Encode an RGBA source with an explicit [`FrameTuning`] — the seam the public
+/// encoder uses to thread the caller's [`LossyTuning`](crate::lossy::LossyTuning).
+#[must_use]
+pub(crate) fn encode_frame_tuned(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    base_q: i32,
+    effort: Effort,
+    tuning: FrameTuning,
+) -> Vec<u8> {
+    encode_frame_impl(rgba, width, height, base_q, effort, tuning).0
 }
 
 /// The frame's per-macroblock skip-coding decision (libwebp `CalcSkipProba`):
@@ -194,6 +259,54 @@ struct MbPlan {
 /// The encode core, additionally returning the reconstructed [`Planes`] so tests
 /// can assert self-consistency against the decoder's reconstruction.
 ///
+/// Drives up to `tuning.passes` entropy-refinement passes (libwebp's `StatLoop`).
+/// The first pass plans the frame against the default coefficient probabilities and
+/// is byte-identical to a single pass; each further pass re-plans against the
+/// previous pass's optimized table, so the trellis rate model — and the encoded
+/// size — converge. Only tiers that optimize probabilities (`Full`/`Best`) refine;
+/// `Fast` has no proba stage and runs exactly one pass, so `passes` is inert there
+/// (and the whole tier stays byte-identical). The smallest payload across the passes
+/// is returned, so a multi-pass encode is never larger than the single-pass floor.
+fn encode_frame_impl(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    base_q: i32,
+    effort: Effort,
+    tuning: FrameTuning,
+) -> (Vec<u8>, Planes) {
+    // Only the proba-optimizing tiers refine; Fast has no table to iterate.
+    let passes = if effort.optimize_probas() {
+        usize::from(tuning.passes.max(1))
+    } else {
+        1
+    };
+    // Pass 1 plans against the defaults (the byte-identical floor). Its optimized
+    // table (`next`) becomes the cost model the next pass's trellis charges against.
+    let (mut best_payload, mut best_planes, mut next) =
+        encode_one_pass(rgba, width, height, base_q, effort, tuning, &COEFFS_PROBA_0);
+    for _ in 1..passes {
+        // No optimized table (a Fast tier that never runs multi-pass) → nothing to
+        // refine against; stop.
+        let Some(cost) = next else { break };
+        let (payload, planes, n) =
+            encode_one_pass(rgba, width, height, base_q, effort, tuning, &cost);
+        // Keep the smallest payload (ties resolve to the earlier pass), so pass 1 is
+        // the floor a refinement can only match or beat.
+        if payload.len() < best_payload.len() {
+            best_payload = payload;
+            best_planes = planes;
+        }
+        next = n;
+    }
+    (best_payload, best_planes)
+}
+
+/// One encode pass: plan, choose the filter, emit the partitions against `cost` (the
+/// trellis cost model), and deblock. Returns the raw `VP8 ` payload, the reconstructed
+/// (filtered) [`Planes`], and — for a proba-optimizing tier — the optimized
+/// coefficient-probability table the next pass should plan against.
+///
 /// Pass 1 ([`plan_frame`]) predicts (searching intra modes when
 /// `effort.search_modes`, else fixing `DC_PRED`), transforms, quantizes and
 /// reconstructs every macroblock, buffering each one's modes and tokens in an
@@ -213,45 +326,75 @@ struct MbPlan {
 /// `effort.apply_filter` is set, the reconstructed [`Planes`] are deblocked in place
 /// by the frame-final in-loop filter before they are returned — with the exact
 /// per-macroblock strengths the decoder re-derives from the emitted filter header.
-fn encode_frame_impl(
+fn encode_one_pass(
     rgba: &[u8],
     width: usize,
     height: usize,
     base_q: i32,
     effort: Effort,
-) -> (Vec<u8>, Planes) {
+    tuning: FrameTuning,
+    cost: &CoeffProbas,
+) -> (Vec<u8>, Planes, Option<CoeffProbas>) {
     let gates = SearchGates {
         search_modes: effort.search_modes(),
         uses_i4x4: effort.uses_i4x4(),
         uses_trellis: effort.uses_trellis(),
+        sns_strength: tuning.sns_strength,
     };
     let FramePlan {
         plans: mb_plans,
         mut planes,
         mb_w,
         mb_h,
-        seg_params,
-    } = plan_frame(rgba, width, height, base_q, gates, effort.uses_segments());
+        mut seg_params,
+        seg_base_q,
+    } = plan_frame(
+        rgba,
+        width,
+        height,
+        base_q,
+        gates,
+        effort.uses_segments(),
+        tuning,
+        cost,
+    );
     let skip = resolve_skip(&mb_plans, mb_w * mb_h, effort.consider_skip());
     // The in-loop filter is a frame-final post-process: it never feeds prediction,
     // quantization or token emission, so the token stream (and its byte size) is
-    // unchanged by it. Choose it once, emit it into the control header, and apply
-    // it to the reconstruction below.
-    let filter = choose_filter(base_q, effort.apply_filter());
+    // unchanged by it. Choose it once (per-segment strengths derived from each
+    // segment's quantizer, the filter strength/sharpness knobs), emit it into the
+    // control header, and apply it to the reconstruction below.
+    let filter = choose_filter(
+        base_q,
+        effort.apply_filter(),
+        tuning.filter_strength,
+        tuning.filter_sharpness,
+    );
+    // Per-segment filter deltas ride in the segment header (relative to `filter.level`),
+    // so a coarser (busier) segment deblocks harder than a flat one. When the frame is
+    // unsegmented there is nothing to carry — the base level already reflects `base_q`.
+    if let Some(seg) = seg_params.as_mut() {
+        seg.filter_strength = segment_filter_deltas(
+            filter.level,
+            seg_base_q,
+            effort.apply_filter(),
+            tuning.filter_strength,
+        );
+    }
     let header = HeaderParams {
         base_q,
         filter: &filter,
         segments: seg_params,
     };
-    let (part0_bytes, token_bytes) = if effort.optimize_probas() {
-        let (part0, token, _default_total, _optimized_total) =
+    let (part0_bytes, token_bytes, next) = if effort.optimize_probas() {
+        let (part0, token, _default_total, _optimized_total, opt_probas) =
             emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
-        (part0, token)
+        (part0, token, Some(opt_probas))
     } else {
         // Fast: emit the default probability section and default-table tokens
         // directly — no count / optimize / keep-smaller. This reproduces the
         // default candidate `emit_best_partitions` would have kept as its floor.
-        emit_partitions(
+        let (part0, token) = emit_partitions(
             &mb_plans,
             mb_w,
             mb_h,
@@ -259,13 +402,22 @@ fn encode_frame_impl(
             &COEFFS_PROBA_0,
             &CoeffUpdateFlags::default(),
             skip,
-        )
+        );
+        (part0, token, None)
     };
 
     // Deblock the reconstruction with the exact per-macroblock strengths the
     // decoder re-derives from the emitted header, so decode-of-output stays
     // byte-identical to these returned planes (a no-op when the filter is off).
-    apply_loop_filter(&mut planes, &mb_plans, mb_w, mb_h, &filter, skip.use_skip);
+    apply_loop_filter(
+        &mut planes,
+        &mb_plans,
+        mb_w,
+        mb_h,
+        &filter,
+        skip.use_skip,
+        seg_params,
+    );
 
     let fps = u32::try_from(part0_bytes.len()).unwrap_or(0);
     let header = frame_header_bytes(
@@ -278,7 +430,7 @@ fn encode_frame_impl(
     payload.extend_from_slice(&header);
     payload.extend_from_slice(&part0_bytes);
     payload.extend_from_slice(&token_bytes);
-    (payload, planes)
+    (payload, planes, next)
 }
 
 /// Decide whether the frame codes per-macroblock skip and, if so, the skip
@@ -310,24 +462,28 @@ struct SearchGates {
     uses_i4x4: bool,
     /// Select coefficient levels by rate-distortion trellis (else round-to-nearest).
     uses_trellis: bool,
+    /// Spatial-noise-shaping strength (`0..=100`) weighting the perceptual texture term
+    /// in the luma mode decision; carried into each macroblock's [`QuantPlan`].
+    sns_strength: u8,
 }
 
-/// The number of fixed k-means refinement passes over the per-macroblock
-/// complexity. Small and fixed so the segmentation is fully deterministic.
+/// The activity value that yields a zero SNS quant delta (the midpoint of the
+/// `0..=255` [`mb_activity`] range) — the single-segment / zero-strength anchor.
+const NEUTRAL_ACTIVITY: u8 = 128;
+/// The most k-means refinement passes over the per-macroblock activity. Fixed so the
+/// segmentation is fully deterministic; the displacement early-out (below) usually
+/// stops sooner.
 const KMEANS_ITERS: usize = 6;
-/// How much *finer* (smaller quantizer index) the flattest segment is coded than
-/// the frame base — flat content shows quantization error, so it keeps quality.
-const SEG_Q_FINER: i64 = 4;
-/// How much *coarser* (larger quantizer index) the busiest segment is coded than
-/// the frame base — texture masks quantization error, so it can save bits.
-const SEG_Q_COARSER: i64 = 16;
-/// The minimum complexity spread, as a reciprocal fraction of the busiest
-/// macroblock, required to segment the frame: the spread `max - min` must be at
-/// least `max / SEG_SPREAD_DEN`. A complexity-uniform frame (e.g. a smooth gradient,
-/// whose blocks all carry the same low AC) falls short and stays single-segment, so
-/// its already-fine quantizer is not stretched into visible banding; only genuinely
-/// mixed content (flat regions beside busy ones) clears the bar.
-const SEG_SPREAD_DEN: i64 = 4;
+/// The k-means early-out threshold (libwebp `AssignSegments`): once the total centroid
+/// displacement across a pass drops below this many activity units, the clustering has
+/// converged and further passes cannot move a macroblock.
+const KMEANS_MIN_DISPLACEMENT: i64 = 5;
+/// The number of histogram bins over `|fdct| >> 3` (libwebp `MAX_COEFF_THRESH + 1`) the
+/// [`mb_activity`] metric accumulates into.
+const ACTIVITY_BINS: usize = 32;
+/// The activity numerator (libwebp `ALPHA_SCALE = 2 * MAX_ALPHA`): the `GetAlpha` ratio is
+/// `510 * last_non_zero / max_value`, clamped into `0..=255`.
+const ACTIVITY_SCALE: i32 = 510;
 
 /// The frame's macroblock segmentation: the per-macroblock segment id, the four
 /// per-segment base quantizer indices (to build the `[Quantizer; 4]`), and the
@@ -343,43 +499,44 @@ struct Segmentation {
     params: Option<SegmentParams>,
 }
 
-/// Partition the macroblocks into up to four quantizer segments by an integer
-/// k-means over each macroblock's source luma AC energy (a texture/complexity
-/// proxy), mapping busier segments to a slightly coarser quantizer and flatter ones
-/// to a slightly finer quantizer. Deterministic (fixed init + fixed iterations, all
-/// integer). A near-uniform frame (or one whose clusters collapse to one) falls back
-/// to a single segment. `enabled` is the tier gate; when false the frame is one
-/// segment at `base_q`.
-fn plan_segmentation(src: &SourceYuv, base_q: i32, enabled: bool) -> Segmentation {
+/// Partition the macroblocks into up to `tuning.segments` (`1..=4`) quantizer segments
+/// by an integer k-means over each macroblock's source luma **activity** (libwebp's
+/// `GetAlpha` texture metric, [`mb_activity`]), then set each segment's quantizer by the
+/// zero-centered SNS delta ([`sns_quant_delta`]) for its representative activity at
+/// `tuning.sns_strength`: flat (low-activity) segments are coded finer, busy ones
+/// coarser. Deterministic (fixed init + bounded passes, all integer). `enabled` is the
+/// tier gate; when it is false, `tuning.segments == 1`, or `tuning.sns_strength == 0`
+/// (every delta is zero) the frame stays a single segment at `base_q`, byte-identical
+/// to the pre-SNS encoder.
+fn plan_segmentation(
+    src: &SourceYuv,
+    base_q: i32,
+    enabled: bool,
+    tuning: FrameTuning,
+) -> Segmentation {
     let n = src.mb_w * src.mb_h;
     let single = || Segmentation {
         seg_ids: vec![0u8; n],
         base_q: [base_q; 4],
         params: None,
     };
-    if !enabled {
+    let nb = usize::from(tuning.segments.clamp(1, 4));
+    if !enabled || nb <= 1 || tuning.sns_strength == 0 {
         return single();
     }
-    let mut complexity = Vec::with_capacity(n);
+    let mut activity = Vec::with_capacity(n);
     for mb_y in 0..src.mb_h {
         for mb_x in 0..src.mb_w {
-            complexity.push(mb_complexity(src, mb_x, mb_y));
+            activity.push(i64::from(mb_activity(src, mb_x, mb_y)));
         }
     }
-    // Only segment when the complexity is meaningfully non-uniform: the spread must
-    // clear `max / SEG_SPREAD_DEN`, so a flat or complexity-uniform frame (a solid
-    // color, a smooth gradient) stays single-segment and its fine quantizer is not
-    // stretched into banding.
-    let min_c = complexity.iter().copied().min().unwrap_or(0);
-    let max_c = complexity.iter().copied().max().unwrap_or(0);
-    if max_c <= 0 || (max_c - min_c) * SEG_SPREAD_DEN < max_c {
+    let (seg_ids, count, seg_a) = kmeans_segments(&activity, nb);
+    let seg_base_q = segment_base_qs(base_q, count, seg_a, tuning.sns_strength);
+    // If the SNS deltas collapse every segment to the same quantizer (uniform activity,
+    // or the deltas cancel), segmentation buys nothing but header bytes — fall back.
+    if count <= 1 || seg_base_q[..count].iter().all(|&q| q == base_q) {
         return single();
     }
-    let (seg_ids, count, seg_c) = kmeans_segments(&complexity);
-    if count <= 1 {
-        return single();
-    }
-    let seg_base_q = segment_base_qs(base_q, count, seg_c);
     let mut quantizer = [0i32; 4];
     for (delta, &bq) in quantizer.iter_mut().zip(&seg_base_q) {
         *delta = bq - base_q;
@@ -390,19 +547,22 @@ fn plan_segmentation(src: &SourceYuv, base_q: i32, enabled: bool) -> Segmentatio
         base_q: seg_base_q,
         params: Some(SegmentParams {
             quantizer,
+            filter_strength: [0; 4],
             tree_probs,
         }),
     }
 }
 
-/// One macroblock's complexity: the source luma AC energy, summed over its sixteen
-/// 4×4 blocks as the sum of the absolute forward-DCT AC coefficients (positions
-/// `1..16`). Invariant to the block's DC level, so it measures texture, not
-/// brightness — flat blocks score ~0 while busy/noisy blocks score high.
-fn mb_complexity(src: &SourceYuv, mb_x: usize, mb_y: usize) -> i64 {
+/// One macroblock's texture **activity** in `0..=255` (libwebp `GetAlpha` over the
+/// `VP8CollectHistogram` distribution): forward-DCT each of the sixteen 4×4 source luma
+/// blocks, drop the DC (so brightness does not register), bin every remaining
+/// coefficient by `|coeff| >> 3` into [`ACTIVITY_BINS`] buckets, and score
+/// `510 * last_non_zero_bin / max_bin_population`, clamped into `0..=255`. Flat blocks
+/// pile into bin `0` and score ~0; busy blocks spread into high bins and score high.
+fn mb_activity(src: &SourceYuv, mb_x: usize, mb_y: usize) -> u8 {
     let stride = src.y_stride();
     let base = mb_y * 16 * stride + mb_x * 16;
-    let mut energy = 0i64;
+    let mut dist = [0i32; ACTIVITY_BINS];
     for n in 0..16usize {
         let (bx, by) = ((n % 4) * 4, (n / 4) * 4);
         let mut block = [0i16; 16];
@@ -412,60 +572,90 @@ fn mb_complexity(src: &SourceYuv, mb_x: usize, mb_y: usize) -> i64 {
             }
         }
         work!(MbComplexityFdct);
-        for &c in fdct4x4(block).iter().skip(1) {
-            energy += i64::from(c.unsigned_abs());
+        let mut coeffs = fdct4x4(block);
+        coeffs[0] = 0; // drop the DC so activity measures texture, not brightness
+        for &c in &coeffs {
+            let bin = usize::from(c.unsigned_abs() >> 3).min(ACTIVITY_BINS - 1);
+            dist[bin] += 1;
         }
     }
-    energy
+    get_alpha(dist)
 }
 
-/// Integer k-means (`K = 4`, deterministic evenly-spaced init, [`KMEANS_ITERS`]
-/// passes) over the per-macroblock `complexity`. Returns the per-macroblock segment
-/// id (contiguous `0..count`), the number of non-empty segments `count`, and each
-/// segment's representative (mean) complexity. A degenerate all-equal input returns
-/// a single segment.
-fn kmeans_segments(complexity: &[i64]) -> (Vec<u8>, usize, [i64; 4]) {
-    let n = complexity.len();
-    let min_c = complexity.iter().copied().min().unwrap_or(0);
-    let max_c = complexity.iter().copied().max().unwrap_or(0);
-    if n == 0 || min_c == max_c {
-        return (vec![0u8; n], 1, [min_c; 4]);
+/// libwebp `GetAlpha`: `510 * last_non_zero_bin / max_bin_population`, clamped into
+/// `0..=255`. `0` when no bin above the empty floor is populated.
+fn get_alpha(dist: [i32; ACTIVITY_BINS]) -> u8 {
+    let mut max_value = 0i32;
+    let mut last_non_zero = 1usize;
+    for (k, &value) in dist.iter().enumerate() {
+        if value > 0 {
+            if value > max_value {
+                max_value = value;
+            }
+            last_non_zero = k;
+        }
     }
-    let span = max_c - min_c;
+    let alpha = if max_value > 1 {
+        ACTIVITY_SCALE * i32::try_from(last_non_zero).unwrap_or(0) / max_value
+    } else {
+        0
+    };
+    u8::try_from(alpha.clamp(0, 255)).unwrap_or(0)
+}
+
+/// Integer k-means over the per-macroblock `activity` into `nb` (`1..=4`) segments
+/// (libwebp `AssignSegments`): evenly-spaced init, monotone nearest-centroid assign,
+/// weighted-mean update, and the [`KMEANS_MIN_DISPLACEMENT`] early-out. Returns the
+/// per-macroblock segment id (contiguous `0..count`), the number of non-empty segments
+/// `count`, and each segment's representative (mean) activity. A degenerate all-equal
+/// input returns a single segment.
+fn kmeans_segments(activity: &[i64], nb: usize) -> (Vec<u8>, usize, [i64; 4]) {
+    let n = activity.len();
+    let nb = nb.clamp(1, 4);
+    let min_a = activity.iter().copied().min().unwrap_or(0);
+    let max_a = activity.iter().copied().max().unwrap_or(0);
+    if n == 0 || nb <= 1 || min_a == max_a {
+        return (vec![0u8; n], 1, [min_a; 4]);
+    }
+    // Even-init: `nb` centroids spread across `[min, max]` (`nb - 1` gaps).
+    let span = max_a - min_a;
     let mut centroids = [0i64; 4];
-    for (k, cen) in centroids.iter_mut().enumerate() {
-        *cen = min_c + span * i64::try_from(k).unwrap_or(0) / 3;
+    let divisor = i64::try_from(nb - 1).unwrap_or(1).max(1);
+    for (k, cen) in centroids.iter_mut().take(nb).enumerate() {
+        *cen = min_a + span * i64::try_from(k).unwrap_or(0) / divisor;
     }
     let mut assign = vec![0u8; n];
     for _ in 0..KMEANS_ITERS {
-        assign_nearest(complexity, centroids, &mut assign);
-        update_centroids(complexity, &assign, &mut centroids);
+        assign_nearest(activity, centroids, nb, &mut assign);
+        if update_centroids(activity, &assign, &mut centroids, nb) < KMEANS_MIN_DISPLACEMENT {
+            break;
+        }
     }
-    assign_nearest(complexity, centroids, &mut assign);
+    assign_nearest(activity, centroids, nb, &mut assign);
 
     // Collapse empty clusters: remap the used centroid indices to contiguous ids and
-    // record each surviving segment's mean complexity.
-    let (sum, cnt) = cluster_sums(complexity, &assign);
+    // record each surviving segment's mean activity.
+    let (sum, cnt) = cluster_sums(activity, &assign);
     let mut remap = [0u8; 4];
-    let mut seg_c = [0i64; 4];
+    let mut seg_a = [0i64; 4];
     let mut count = 0usize;
-    for k in 0..4 {
+    for k in 0..nb {
         if cnt[k] > 0 {
             remap[k] = u8::try_from(count).unwrap_or(0);
-            seg_c[count] = sum[k] / cnt[k];
+            seg_a[count] = sum[k] / cnt[k];
             count += 1;
         }
     }
     let seg_ids = assign.iter().map(|&a| remap[usize::from(a)]).collect();
-    (seg_ids, count, seg_c)
+    (seg_ids, count, seg_a)
 }
 
-/// Assign each complexity value to its nearest centroid (ties → lowest index).
-fn assign_nearest(complexity: &[i64], centroids: [i64; 4], assign: &mut [u8]) {
-    for (&c, a) in complexity.iter().zip(assign.iter_mut()) {
+/// Assign each value to its nearest of the first `nb` centroids (ties → lowest index).
+fn assign_nearest(values: &[i64], centroids: [i64; 4], nb: usize, assign: &mut [u8]) {
+    for (&c, a) in values.iter().zip(assign.iter_mut()) {
         let mut best = 0usize;
         let mut best_d = i64::MAX;
-        for (k, &cen) in centroids.iter().enumerate() {
+        for (k, &cen) in centroids.iter().take(nb).enumerate() {
             work!(KmeansCompare);
             let d = (c - cen).abs();
             if d < best_d {
@@ -477,11 +667,11 @@ fn assign_nearest(complexity: &[i64], centroids: [i64; 4], assign: &mut [u8]) {
     }
 }
 
-/// Per-cluster complexity sum and count under `assign`.
-fn cluster_sums(complexity: &[i64], assign: &[u8]) -> ([i64; 4], [i64; 4]) {
+/// Per-cluster value sum and count under `assign`.
+fn cluster_sums(values: &[i64], assign: &[u8]) -> ([i64; 4], [i64; 4]) {
     let mut sum = [0i64; 4];
     let mut cnt = [0i64; 4];
-    for (&c, &a) in complexity.iter().zip(assign) {
+    for (&c, &a) in values.iter().zip(assign) {
         let k = usize::from(a);
         sum[k] += c;
         cnt[k] += 1;
@@ -489,37 +679,33 @@ fn cluster_sums(complexity: &[i64], assign: &[u8]) -> ([i64; 4], [i64; 4]) {
     (sum, cnt)
 }
 
-/// Move each non-empty centroid to its cluster's integer mean (empty clusters keep
-/// their position, so the segment count can only shrink, never wander).
-fn update_centroids(complexity: &[i64], assign: &[u8], centroids: &mut [i64; 4]) {
-    let (sum, cnt) = cluster_sums(complexity, assign);
-    for (cen, (&s, &c)) in centroids.iter_mut().zip(sum.iter().zip(&cnt)) {
+/// Move each non-empty of the first `nb` centroids to its cluster's integer mean
+/// (empty clusters keep their position, so the count can only shrink, never wander),
+/// and return the total absolute centroid displacement — the k-means early-out signal.
+fn update_centroids(values: &[i64], assign: &[u8], centroids: &mut [i64; 4], nb: usize) -> i64 {
+    let (sum, cnt) = cluster_sums(values, assign);
+    let mut displacement = 0i64;
+    for (cen, (&s, &c)) in centroids.iter_mut().zip(sum.iter().zip(&cnt)).take(nb) {
         if c > 0 {
-            *cen = s / c;
+            let moved = s / c;
+            displacement += (moved - *cen).abs();
+            *cen = moved;
         }
     }
+    displacement
 }
 
-/// Map each of the `count` segments' representative complexity to a base quantizer
-/// index: the flattest segment is coded [`SEG_Q_FINER`] below `base_q` and the
-/// busiest [`SEG_Q_COARSER`] above it, linearly interpolated between, then clamped
-/// into `0..=127`. Unused segments (`count..4`) keep `base_q`.
-fn segment_base_qs(base_q: i32, count: usize, seg_c: [i64; 4]) -> [i32; 4] {
+/// Map each of the `count` segments' representative activity to a base quantizer index
+/// by the zero-centered SNS delta ([`sns_quant_delta`]) at `sns_strength`: a flat
+/// (low-activity) segment is coded finer (negative delta), a busy one coarser (positive
+/// delta), anchored on `base_q` and clamped into `0..=127`. A mid-activity segment or a
+/// zero strength leaves the quantizer at `base_q`. Unused segments (`count..4`) keep
+/// `base_q`.
+fn segment_base_qs(base_q: i32, count: usize, seg_a: [i64; 4], sns_strength: u8) -> [i32; 4] {
     let mut qs = [base_q; 4];
-    if count <= 1 {
-        return qs;
-    }
-    let used = &seg_c[..count];
-    let min_c = used.iter().copied().min().unwrap_or(0);
-    let max_c = used.iter().copied().max().unwrap_or(0);
-    if max_c == min_c {
-        return qs;
-    }
-    let span = max_c - min_c;
-    let range = SEG_Q_FINER + SEG_Q_COARSER;
-    for (q, &c) in qs.iter_mut().zip(used) {
-        let offset = (c - min_c) * range / span - SEG_Q_FINER;
-        *q = (base_q + i32::try_from(offset).unwrap_or(0)).clamp(0, 127);
+    for (q, &a) in qs.iter_mut().take(count).zip(&seg_a) {
+        let activity = u8::try_from(a.clamp(0, 255)).unwrap_or(NEUTRAL_ACTIVITY);
+        *q = (base_q + sns_quant_delta(activity, sns_strength)).clamp(0, 127);
     }
     qs
 }
@@ -552,13 +738,16 @@ fn tree_prob(zeros: u64, total: u64) -> u8 {
 }
 
 /// The result of [`plan_frame`]: the buffered per-macroblock plans, the finished
-/// reconstruction, the macroblock grid size, and the optional segmentation params.
+/// reconstruction, the macroblock grid size, the optional segmentation params, and the
+/// per-segment base quantizer indices (used to derive the per-segment filter strengths).
 struct FramePlan {
     plans: Vec<MbPlan>,
     planes: Planes,
     mb_w: usize,
     mb_h: usize,
     seg_params: Option<SegmentParams>,
+    /// Per-segment base quantizer index (all `base_q` when unsegmented).
+    seg_base_q: [i32; 4],
 }
 
 /// Pass 1: predict, transform/quantize and reconstruct every macroblock, returning
@@ -577,6 +766,12 @@ struct FramePlan {
               flags, reconstruction) share tightly-threaded `&mut planes` state, so \
               splitting it would need a 7+ argument helper and fragment one unit"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the frame plan is the source, its geometry, the base quantizer, the \
+              search gates, the segmentation gate, the psychovisual tuning and the \
+              trellis cost model — independent inputs, not a bundle"
+)]
 fn plan_frame(
     rgba: &[u8],
     width: usize,
@@ -584,23 +779,41 @@ fn plan_frame(
     base_q: i32,
     gates: SearchGates,
     uses_segments: bool,
+    tuning: FrameTuning,
+    probas: &CoeffProbas,
 ) -> FramePlan {
-    let src = rgb_to_yuv::from_rgba(rgba, width, height);
+    let mut src = rgb_to_yuv::from_rgba(rgba, width, height);
+    // Sharp-YUV is an opt-in chroma refinement: it overwrites only the U/V planes with the
+    // luminance-guided subsampling, leaving the luma plane (and, when off, every byte)
+    // untouched. The subsequent VP8 encode is agnostic to which chroma it received.
+    if tuning.sharp_yuv {
+        sharp_yuv::refine_chroma(rgba, width, height, &mut src);
+    }
     let (mb_w, mb_h) = (src.mb_w, src.mb_h);
     // Partition the macroblocks into up to four quantizer segments (Full/Best), then
     // build one forward quantizer per segment. A single-segment frame reuses
     // `Quantizer::new(base_q)` for all four slots, so the fast path is unchanged.
-    let seg = plan_segmentation(&src, base_q, uses_segments);
+    let seg = plan_segmentation(&src, base_q, uses_segments, tuning);
     let quants = seg.base_q.map(Quantizer::new);
 
     let mut planes = Planes::new(mb_w, mb_h);
-    let mb_plans = run_mb_planning(&mut planes, &src, &seg.seg_ids, &quants, mb_w, mb_h, gates);
+    let mb_plans = run_mb_planning(
+        &mut planes,
+        &src,
+        &seg.seg_ids,
+        &quants,
+        mb_w,
+        mb_h,
+        gates,
+        probas,
+    );
     FramePlan {
         plans: mb_plans,
         planes,
         mb_w,
         mb_h,
         seg_params: seg.params,
+        seg_base_q: seg.base_q,
     }
 }
 
@@ -629,7 +842,7 @@ fn plan_one_mb(
     has_left: bool,
     is_rightmost: bool,
     segment: u8,
-    plan: QuantPlan,
+    plan: QuantPlan<'_>,
     gates: SearchGates,
 ) -> MbPlan {
     let y_off = (mb_y * 16 + 1) * planes.y_stride + (mb_x * 16 + 1);
@@ -751,6 +964,12 @@ fn plan_one_mb(
 /// Plan every macroblock in raster order against the shared frame `planes`. The
 /// serial reference: also the wavefront scheduler's small-frame fallback and the
 /// byte-for-byte oracle its parallel result is tested against.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the planner takes the target planes, the source, the segment map and \
+              its quantizers, the grid size, the search gates and the trellis cost \
+              model — independent inputs threaded straight to `plan_one_mb`"
+)]
 fn plan_frame_serial(
     planes: &mut Planes,
     src: &SourceYuv,
@@ -759,6 +978,7 @@ fn plan_frame_serial(
     mb_w: usize,
     mb_h: usize,
     gates: SearchGates,
+    probas: &CoeffProbas,
 ) -> Vec<MbPlan> {
     let mut mb_plans = Vec::with_capacity(mb_w * mb_h);
     for mb_y in 0..mb_h {
@@ -767,6 +987,8 @@ fn plan_frame_serial(
             let plan = QuantPlan {
                 quant: quants[usize::from(segment)],
                 uses_trellis: gates.uses_trellis,
+                sns_strength: gates.sns_strength,
+                probas,
             };
             mb_plans.push(plan_one_mb(
                 planes,
@@ -789,6 +1011,11 @@ fn plan_frame_serial(
 /// build overrides this with a wavefront-parallel scheduler (see the cfg'd
 /// definition below).
 #[cfg(not(feature = "rayon"))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "forwards the planner's inputs (planes, source, segment map/quantizers, \
+              grid size, gates, trellis cost model) straight to `plan_frame_serial`"
+)]
 fn run_mb_planning(
     planes: &mut Planes,
     src: &SourceYuv,
@@ -797,8 +1024,9 @@ fn run_mb_planning(
     mb_w: usize,
     mb_h: usize,
     gates: SearchGates,
+    probas: &CoeffProbas,
 ) -> Vec<MbPlan> {
-    plan_frame_serial(planes, src, seg_ids, quants, mb_w, mb_h, gates)
+    plan_frame_serial(planes, src, seg_ids, quants, mb_w, mb_h, gates, probas)
 }
 
 /// Below this macroblock count the wavefront's fork/join overhead outweighs the
@@ -832,6 +1060,12 @@ struct ReconBlocks {
 /// per-MB search is already parallelized to the Amdahl ceiling set by the serial
 /// entropy-coding emit, so larger units only added overhead.
 #[cfg(feature = "rayon")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the wavefront planner takes the target planes, the source, the segment \
+              map/quantizers, the grid size, the search gates and the trellis cost \
+              model — independent inputs seeded into each per-macroblock task"
+)]
 fn run_mb_planning(
     planes: &mut Planes,
     src: &SourceYuv,
@@ -840,6 +1074,7 @@ fn run_mb_planning(
     mb_w: usize,
     mb_h: usize,
     gates: SearchGates,
+    probas: &CoeffProbas,
 ) -> Vec<MbPlan> {
     use rayon::prelude::*;
 
@@ -850,7 +1085,7 @@ fn run_mb_planning(
     // so the wavefront would only add overhead — it stays serial.
     let n = mb_w * mb_h;
     if n < PARALLEL_MB_THRESHOLD || !gates.search_modes {
-        return plan_frame_serial(planes, src, seg_ids, quants, mb_w, mb_h, gates);
+        return plan_frame_serial(planes, src, seg_ids, quants, mb_w, mb_h, gates, probas);
     }
 
     // Skew 2 pushes the i4x4 top-right neighbor to an earlier diagonal; Balanced
@@ -875,6 +1110,8 @@ fn run_mb_planning(
                     let plan = QuantPlan {
                         quant: quants[usize::from(segment)],
                         uses_trellis: gates.uses_trellis,
+                        sns_strength: gates.sns_strength,
+                        probas,
                     };
                     // Reuse this worker thread's scratch pair (allocated once) instead
                     // of allocating a mini `Planes`/`SourceYuv` per macroblock.
@@ -1077,7 +1314,7 @@ fn emit_best_partitions(
     mb_h: usize,
     header: HeaderParams<'_>,
     skip: SkipCoding,
-) -> (Vec<u8>, Vec<u8>, usize, usize) {
+) -> (Vec<u8>, Vec<u8>, usize, usize, CoeffProbas) {
     // Count pass: tally the token statistics with the identical NzContext threading
     // that emission uses (including skipping the same macroblocks), then derive the
     // optimized table. The statistics table is ~16 KiB, so it lives on the heap.
@@ -1113,9 +1350,9 @@ fn emit_best_partitions(
     let optimized_total = part0_o.len() + token_o.len();
 
     if optimized_total < default_total {
-        (part0_o, token_o, default_total, optimized_total)
+        (part0_o, token_o, default_total, optimized_total, opt_probas)
     } else {
-        (part0_d, token_d, default_total, optimized_total)
+        (part0_d, token_d, default_total, optimized_total, opt_probas)
     }
 }
 
@@ -1284,26 +1521,66 @@ fn emit_intra_modes(
     }
 }
 
+/// The per-segment in-loop deblocking-filter level for a segment coded at quantizer
+/// index `q` under the `filter_strength` knob (`0..=100`), a fixed-point port of
+/// libwebp's `SetupFilterStrength`: `level0 = 5 * filter_strength`, the quantizer step
+/// `qstep = kAcTable[clip(q)] >> 2` stands in for the pixel-difference delta, and
+/// `f = level0 * qstep / 256`. A result below `2` disables the filter for that segment
+/// (`0`), else it clamps into `0..=63`. `filter_strength == 0` always yields `0`. The
+/// sharpness term is not folded in here — it rides in the emitted [`FilterHeader`] and
+/// is applied identically by `compute_fstrengths`/the decoder.
+///
+/// (libwebp additionally divides by `256 + beta_s`, a per-segment SNS bias we do not
+/// model; `beta_s = 0` here. Byte-exact parity with `cwebp` filtering is not a goal —
+/// the derivation is self-consistent because the decoder re-derives from the emitted
+/// header — so the term is dropped.)
+fn segment_filter_level(q: i32, filter_strength: u8, apply_filter: bool) -> i32 {
+    if !apply_filter || filter_strength == 0 {
+        return 0;
+    }
+    let level0 = 5 * i32::from(filter_strength);
+    let idx = usize::try_from(q.clamp(0, 127)).unwrap_or(0);
+    let qstep = i32::from(AC_TABLE[idx]) >> 2;
+    let f = level0 * qstep / 256;
+    if f < 2 { 0 } else { f.min(63) }
+}
+
 /// Choose the frame's in-loop deblocking-filter parameters. The normal (non-simple)
-/// filter is used, with a level that rises with the base quantizer — a conservative
-/// deblocking heuristic — and is `0` at the very highest quality (small `base_q`) so
-/// near-lossless output is not blurred. `level = base_q * 3 / 8` (clamped `0..=63`)
-/// gives `base_q 0 → 0`, `40 → 15`, `127 → 47`. When `apply_filter` is false (the
-/// `Fast` method) the level is 0, so the filter is off and the frame is byte-identical
-/// to an unfiltered encode. Sharpness is 0 and no per-reference/per-mode deltas are
-/// used, matching what [`write_control_header`] emits and the decoder re-derives.
-fn choose_filter(base_q: i32, apply_filter: bool) -> FilterHeader {
-    let level = if apply_filter {
-        (base_q * 3 / 8).clamp(0, 63)
-    } else {
-        0
-    };
+/// filter is used at a base level derived from the frame's base quantizer and the
+/// `filter_strength` knob ([`segment_filter_level`]), so it strengthens with coarser
+/// quantization and is `0` at the highest quality (or when `filter_strength == 0`). The
+/// `filter_sharpness` knob (`0..=7`) rides in the header and is applied by the decoder.
+/// When `apply_filter` is false (the `Fast` method) the level is `0`, so the filter is
+/// off and the frame is byte-identical to an unfiltered encode.
+fn choose_filter(
+    base_q: i32,
+    apply_filter: bool,
+    filter_strength: u8,
+    filter_sharpness: u8,
+) -> FilterHeader {
     FilterHeader {
         simple: false,
-        level,
-        sharpness: 0,
+        level: segment_filter_level(base_q, filter_strength, apply_filter),
+        sharpness: i32::from(filter_sharpness),
         ..FilterHeader::default()
     }
+}
+
+/// The per-segment loop-filter strength deltas emitted in the segment header, each
+/// relative to the base `filter.level` (the decoder adds `filter.level` back, since the
+/// deltas are coded `absolute_delta = false`). A busier segment (coarser quantizer)
+/// deblocks harder than a flat one. Unused segments (`count..4`) carry `0`.
+fn segment_filter_deltas(
+    base_level: i32,
+    seg_base_q: [i32; 4],
+    apply_filter: bool,
+    filter_strength: u8,
+) -> [i32; 4] {
+    let mut deltas = [0i32; 4];
+    for (delta, &q) in deltas.iter_mut().zip(&seg_base_q) {
+        *delta = segment_filter_level(q, filter_strength, apply_filter) - base_level;
+    }
+    deltas
 }
 
 /// The VP8 filter type of a header: `0` off (level 0), `1` simple, `2` normal —
@@ -1333,13 +1610,11 @@ const fn filter_type_of(filter: &FilterHeader) -> u8 {
 /// byte-for-byte. `use_skip` must equal the header's skip flag so the
 /// `use_skip && skip` term matches on both sides.
 ///
-/// Segmentation only splits the *quantizer*, never the loop filter: the encoder
-/// always emits per-segment `filter_strength = 0`, so `compute_fstrengths` yields
-/// the SAME strength for every segment (`= strength_for(filter, filter.level)`) —
-/// segment-invariant. That is why `segment: 0` below is a valid lookup for every
-/// macroblock regardless of its quant segment, and why the strengths table matches
-/// the decoder's byte-for-byte. **If per-segment filter deltas are ever emitted,
-/// this must thread `plan.segment` instead of the fixed `0`.**
+/// `seg_params` is the exact segment header the control partition emitted (per-segment
+/// quantizer and filter-strength deltas), so rebuilding a matching [`SegmentHeader`]
+/// and threading each macroblock's `plan.segment` reproduces the decoder's per-segment
+/// [`compute_fstrengths`] table byte-for-byte. An unsegmented frame passes `None` and
+/// every macroblock resolves against the single base strength.
 fn apply_loop_filter(
     planes: &mut Planes,
     mb_plans: &[MbPlan],
@@ -1347,27 +1622,37 @@ fn apply_loop_filter(
     mb_h: usize,
     filter: &FilterHeader,
     use_skip: bool,
+    seg_params: Option<SegmentParams>,
 ) {
     let filter_type = filter_type_of(filter);
     if filter_type == 0 {
         return;
     }
-    // Filter strengths are segment-invariant (we emit per-segment filter_strength
-    // = 0), so an unsegmented SegmentHeader reproduces the decoder's per-segment
-    // strengths table exactly whether or not the quantizer is segmented.
-    let segment = SegmentHeader {
-        use_segment: false,
-        update_map: false,
-        absolute_delta: true,
-        quantizer: [0; NUM_MB_SEGMENTS],
-        filter_strength: [0; NUM_MB_SEGMENTS],
-    };
+    // Rebuild the emitted segment header: with per-segment filter-strength deltas
+    // (relative, `absolute_delta = false`) `compute_fstrengths` yields a distinct
+    // strength per segment, and `plan.segment` selects it — matching the decoder.
+    let segment = seg_params.map_or(
+        SegmentHeader {
+            use_segment: false,
+            update_map: false,
+            absolute_delta: true,
+            quantizer: [0; NUM_MB_SEGMENTS],
+            filter_strength: [0; NUM_MB_SEGMENTS],
+        },
+        |seg| SegmentHeader {
+            use_segment: true,
+            update_map: true,
+            absolute_delta: false,
+            quantizer: seg.quantizer,
+            filter_strength: seg.filter_strength,
+        },
+    );
     let fstrengths = compute_fstrengths(&segment, filter);
     let finfo: Vec<FInfo> = mb_plans
         .iter()
         .map(|plan| {
             let mb = MbData {
-                segment: 0,
+                segment: plan.segment,
                 is_i4x4: plan.is_i4x4,
                 skip: plan.skippable,
                 non_zero_y: u32::from(plan.has_residual),
@@ -1385,11 +1670,19 @@ fn apply_loop_filter(
 /// round-to-nearest (`Fast`). Threaded as one value so the macroblock and intra-4×4
 /// encode paths stay within their argument budgets.
 #[derive(Clone, Copy)]
-struct QuantPlan {
+struct QuantPlan<'a> {
     /// The per-plane forward quantizers for the frame's base index.
     quant: Quantizer,
     /// Whether to run trellis quantization instead of round-to-nearest.
     uses_trellis: bool,
+    /// Spatial-noise-shaping strength (`0..=100`) weighting the perceptual texture
+    /// term in the luma mode decision; `0` reduces the decision to plain SSE.
+    sns_strength: u8,
+    /// The coefficient-probability table the trellis charges its rate against. Pass 1
+    /// (the byte-identical default) uses [`COEFFS_PROBA_0`]; a multi-pass encode threads
+    /// the previous pass's optimized table so the level decisions converge with the
+    /// distribution that will actually code them (libwebp's `StatLoop`).
+    probas: &'a CoeffProbas,
 }
 
 /// Quantize one 4×4 coefficient block, choosing rate-distortion trellis levels
@@ -1404,11 +1697,12 @@ fn quantize_one(
     first: usize,
     plane: usize,
     uses_trellis: bool,
+    probas: &CoeffProbas,
 ) -> Quantized {
     work!(QuantizeCall);
     if uses_trellis {
         let lambda = trellis_lambda(pair.ac.q);
-        trellis_quantize_block(coeffs, pair, first, 0, plane, &COEFFS_PROBA_0, lambda)
+        trellis_quantize_block(coeffs, pair, first, 0, plane, probas, lambda)
     } else {
         quantize_block(coeffs, pair.dc, pair.ac, first)
     }
@@ -1443,11 +1737,12 @@ fn encode_luma16_residual(
     planes: &Planes,
     mb_x: usize,
     mb_y: usize,
-    plan: QuantPlan,
+    plan: QuantPlan<'_>,
 ) -> Luma16Encode {
     let QuantPlan {
         quant,
         uses_trellis,
+        ..
     } = plan;
     // The 16 luma blocks occupy decoder indices 0..256; a full 384 scratch lets the
     // shared `transform_wht` scatter the reconstructed DCs into their slots.
@@ -1474,7 +1769,7 @@ fn encode_luma16_residual(
 
     // Y2: forward-WHT the 16 DCs, quantize, and scatter the reconstructed DC into
     // each luma block's DC slot exactly as the decoder does.
-    let y2 = quantize_one(fwht(dcs), quant.y2, 0, 1, uses_trellis);
+    let y2 = quantize_one(fwht(dcs), quant.y2, 0, 1, uses_trellis, plan.probas);
     if y2.last + 1 > 1 {
         transform_wht(y2.recon, &mut coeffs);
     } else {
@@ -1487,7 +1782,7 @@ fn encode_luma16_residual(
     // Luma AC: quantize positions 1..16 with the luma factors (DC carried by Y2).
     let mut blocks = [Block::default(); 16];
     for n in 0..16 {
-        let q = quantize_one(luma_coeffs[n], quant.y1, 1, 0, uses_trellis);
+        let q = quantize_one(luma_coeffs[n], quant.y1, 1, 0, uses_trellis, plan.probas);
         coeffs[n * 16 + 1..n * 16 + 16].copy_from_slice(&q.recon[1..16]);
         blocks[n] = Block {
             levels: q.levels,
@@ -1515,11 +1810,12 @@ fn encode_chroma8_residual(
     planes: &Planes,
     mb_x: usize,
     mb_y: usize,
-    plan: QuantPlan,
+    plan: QuantPlan<'_>,
 ) -> Chroma8Encode {
     let QuantPlan {
         quant,
         uses_trellis,
+        ..
     } = plan;
     let uv_off = (mb_y * 8 + 1) * planes.uv_stride + (mb_x * 8 + 1);
     let mut coeffs = [0i16; 128];
@@ -1537,7 +1833,7 @@ fn encode_chroma8_residual(
                 uv_off + by * planes.uv_stride + bx,
                 planes.uv_stride,
             );
-            let q = quantize_one(fdct4x4(residual), quant.uv, 0, 2, uses_trellis);
+            let q = quantize_one(fdct4x4(residual), quant.uv, 0, 2, uses_trellis, plan.probas);
             let idx = which * 4 + n;
             coeffs[idx * 16..idx * 16 + 16].copy_from_slice(&q.recon);
             blocks[idx] = Block {
@@ -1560,7 +1856,7 @@ fn encode_mb(
     planes: &Planes,
     mb_x: usize,
     mb_y: usize,
-    plan: QuantPlan,
+    plan: QuantPlan<'_>,
 ) -> ([i16; 384], MbTokens) {
     let luma = encode_luma16_residual(src, planes, mb_x, mb_y, plan);
     let chroma = encode_chroma8_residual(src, planes, mb_x, mb_y, plan);
@@ -1705,20 +2001,20 @@ const fn chroma_lambda(q_ac: i32) -> i64 {
 /// coefficients: the Y2 block plus the sixteen luma AC blocks (`first = 1`). The
 /// entry non-zero context of every block is approximated as 0 (it only tunes the rate
 /// estimate for the mode comparison, never self-consistency), matching the trellis.
-fn luma16_token_bits(y2: Block, luma: &[Block; 16]) -> i64 {
-    let mut bits = block_token_cost(y2.levels, 0, y2.last, 1, 0, &COEFFS_PROBA_0);
+fn luma16_token_bits(y2: Block, luma: &[Block; 16], probas: &CoeffProbas) -> i64 {
+    let mut bits = block_token_cost(y2.levels, 0, y2.last, 1, 0, probas);
     for b in luma {
-        bits += block_token_cost(b.levels, 1, b.last, 0, 0, &COEFFS_PROBA_0);
+        bits += block_token_cost(b.levels, 1, b.last, 0, 0, probas);
     }
     bits
 }
 
 /// The exact token-tree bit cost (1/256-bit units) of one macroblock's eight chroma
 /// blocks (`first = 0`), entry context approximated as 0 (see [`luma16_token_bits`]).
-fn chroma8_token_bits(chroma: &[Block; 8]) -> i64 {
+fn chroma8_token_bits(chroma: &[Block; 8], probas: &CoeffProbas) -> i64 {
     chroma
         .iter()
-        .map(|b| block_token_cost(b.levels, 0, b.last, 2, 0, &COEFFS_PROBA_0))
+        .map(|b| block_token_cost(b.levels, 0, b.last, 2, 0, probas))
         .sum()
 }
 
@@ -1748,6 +2044,29 @@ fn luma16_reconstruction_sse(
     sse_block(&src.y, src_off, src_stride, &planes.y, y_off, stride, 16)
 }
 
+/// The luma **perceptual** distortion of the 16×16 reconstruction currently in
+/// `planes.y` (at `y_off`) against the source macroblock: the plain reconstruction
+/// `sse` plus libwebp's texture term ([`perceptual::disto16`]). The texture term is
+/// gated by `tlambda = (sns_strength * q_ac) >> 5`; at `sns_strength == 0` this is
+/// exactly `sse`, so the luma mode decision reduces to plain SSE. Only the luma i16/i4
+/// decisions use this — chroma keeps plain SSE.
+fn luma16_perceptual_disto(
+    sse: i64,
+    planes: &Planes,
+    y_off: usize,
+    src: &SourceYuv,
+    mb_x: usize,
+    mb_y: usize,
+    plan: QuantPlan<'_>,
+) -> i64 {
+    let tlambda = perceptual::tlambda(plan.sns_strength, plan.quant.y1.ac.q);
+    let src_stride = src.y_stride();
+    let src_off = mb_y * 16 * src_stride + mb_x * 16;
+    let src_win = perceptual::PlaneWindow::new(&src.y, src_off, src_stride);
+    let rec_win = perceptual::PlaneWindow::new(&planes.y, y_off, planes.y_stride);
+    perceptual::disto16(sse, tlambda, &src_win, &rec_win)
+}
+
 /// Encode the macroblock's luma as sixteen intra-4×4 sub-blocks, reconstructing each
 /// into `planes.y` in raster order (so later sub-blocks predict from reconstructed
 /// siblings, exactly as [`reconstruct::reconstruct_luma_i4x4`] does). Returns the
@@ -1771,11 +2090,12 @@ fn search_luma_i4x4(
     mb_y: usize,
     has_top: bool,
     is_rightmost: bool,
-    plan: QuantPlan,
+    plan: QuantPlan<'_>,
 ) -> (I4x4Luma, i64, i64) {
     let QuantPlan {
         quant,
         uses_trellis,
+        ..
     } = plan;
     let stride = planes.y_stride;
     let src_stride = src.y_stride();
@@ -1819,7 +2139,7 @@ fn search_luma_i4x4(
             sub,
             stride,
         );
-        let q = quantize_one(fdct4x4(residual), quant.y1, 0, 3, uses_trellis);
+        let q = quantize_one(fdct4x4(residual), quant.y1, 0, 3, uses_trellis, plan.probas);
         cand.coeffs[n * 16..n * 16 + 16].copy_from_slice(&q.recon);
         if q.recon.iter().any(|&c| c != 0) {
             transform_one(&q.recon, &mut planes.y, sub, stride);
@@ -1829,7 +2149,7 @@ fn search_luma_i4x4(
             levels: q.levels,
             last: q.last,
         };
-        bits += block_token_cost(q.levels, 0, q.last, 3, 0, &COEFFS_PROBA_0) + I4X4_SUBMODE_COST;
+        bits += block_token_cost(q.levels, 0, q.last, 3, 0, plan.probas) + I4X4_SUBMODE_COST;
     }
 
     let mb_src_off = mb_y * 16 * src_stride + mb_x * 16;
@@ -1862,25 +2182,29 @@ fn try_i4x4_luma(
     mb: (usize, usize),
     has_top: bool,
     is_rightmost: bool,
-    plan: QuantPlan,
+    plan: QuantPlan<'_>,
 ) -> Option<I4x4Luma> {
     let quant = plan.quant;
     let (mb_x, mb_y) = mb;
     let y_off = (mb_y * 16 + 1) * planes.y_stride + (mb_x * 16 + 1);
 
     // 16×16 candidate: reconstruction distortion + true token bits (Y2 + the sixteen
-    // AC blocks, first = 1) + the single 16×16 mode signal.
+    // AC blocks, first = 1) + the single 16×16 mode signal. Score the perceptual
+    // distortion while planes.y still holds the 16×16 reconstruction (the i4x4 search
+    // overwrites it next).
     let dist16 = luma16_reconstruction_sse(planes, coeffs, y_off, src, mb_x, mb_y);
-    let bits16 = I16X16_MODE_COST + luma16_token_bits(tokens.y2, &tokens.luma);
+    let perceptual16 = luma16_perceptual_disto(dist16, planes, y_off, src, mb_x, mb_y, plan);
+    let bits16 = I16X16_MODE_COST + luma16_token_bits(tokens.y2, &tokens.luma, plan.probas);
 
     // i4x4 candidate (leaves its reconstruction in planes.y; the caller's final
     // reconstruct_mb overwrites it with whichever candidate wins).
     let (cand, dist4, bits4) =
         search_luma_i4x4(planes, y_off, src, mb_x, mb_y, has_top, is_rightmost, plan);
+    let perceptual4 = luma16_perceptual_disto(dist4, planes, y_off, src, mb_x, mb_y, plan);
 
     let lambda = i4x4_lambda(quant.y1.ac.q);
-    let cost16 = RD_DISTO_MULT * dist16 + lambda * bits16;
-    let cost4 = RD_DISTO_MULT * dist4 + lambda * bits4;
+    let cost16 = RD_DISTO_MULT * perceptual16 + lambda * bits16;
+    let cost4 = RD_DISTO_MULT * perceptual4 + lambda * bits4;
     (cost4 < cost16).then_some(cand)
 }
 
@@ -2018,7 +2342,7 @@ fn select_luma16_mode_rd(
     mb: (usize, usize),
     has_top: bool,
     has_left: bool,
-    plan: QuantPlan,
+    plan: QuantPlan<'_>,
 ) -> (u8, Luma16Encode) {
     let (mb_x, mb_y) = mb;
     let stride = planes.y_stride;
@@ -2032,11 +2356,12 @@ fn select_luma16_mode_rd(
         }
         predict_luma16(&mut planes.y, y_off, stride, mode, has_top, has_left);
         let enc = encode_luma16_residual(src, planes, mb_x, mb_y, plan);
-        let bits = I16X16_MODE_COST + luma16_token_bits(enc.y2, &enc.blocks);
+        let bits = I16X16_MODE_COST + luma16_token_bits(enc.y2, &enc.blocks, plan.probas);
         // Reconstruct into planes.y (which holds this candidate's prediction) to score
         // the post-quant distortion; the next iteration re-predicts over it.
         let sse = luma16_reconstruction_sse(planes, &enc.coeffs, y_off, src, mb_x, mb_y);
-        let cost = RD_DISTO_MULT * sse + lambda * bits;
+        let disto = luma16_perceptual_disto(sse, planes, y_off, src, mb_x, mb_y, plan);
+        let cost = RD_DISTO_MULT * disto + lambda * bits;
         if cost < best_cost {
             best_cost = cost;
             best_mode = mode;
@@ -2065,7 +2390,7 @@ fn select_chroma8_mode_rd(
     mb: (usize, usize),
     has_top: bool,
     has_left: bool,
-    plan: QuantPlan,
+    plan: QuantPlan<'_>,
 ) -> (u8, Chroma8Encode) {
     let (mb_x, mb_y) = mb;
     let stride = planes.uv_stride;
@@ -2080,7 +2405,7 @@ fn select_chroma8_mode_rd(
         predict_chroma8(&mut planes.u, uv_off, stride, mode, has_top, has_left);
         predict_chroma8(&mut planes.v, uv_off, stride, mode, has_top, has_left);
         let enc = encode_chroma8_residual(src, planes, mb_x, mb_y, plan);
-        let bits = chroma8_token_bits(&enc.blocks);
+        let bits = chroma8_token_bits(&enc.blocks, plan.probas);
         let sse = chroma8_reconstruction_sse(planes, &enc.coeffs, uv_off, src, mb_x, mb_y);
         let cost = RD_DISTO_MULT * sse + lambda * bits;
         if cost < best_cost {
@@ -2109,11 +2434,12 @@ mod tests {
     )]
 
     use super::{
-        Effort, FramePlan, SearchGates, emit_best_partitions, encode_frame, encode_frame_impl,
-        plan_frame, residual_block, residual_block_reference, sse_block, sse_block_reference,
+        Effort, FramePlan, FrameTuning, SearchGates, emit_best_partitions, encode_frame,
+        encode_frame_impl, plan_frame, residual_block, residual_block_reference, sse_block,
+        sse_block_reference,
     };
     use crate::lossy::bool_dec::BoolDecoder;
-    use crate::lossy::constants::{DC_PRED, H_PRED, V_PRED};
+    use crate::lossy::constants::{COEFFS_PROBA_0, DC_PRED, H_PRED, V_PRED};
     use crate::lossy::decode::{self, Frame};
     use crate::lossy::frame_header::{FrameHeader, KEY_FRAME_HEADER_LEN};
 
@@ -2123,6 +2449,7 @@ mod tests {
         search_modes: true,
         uses_i4x4: false,
         uses_trellis: true,
+        sns_strength: FrameTuning::AUTO.sns_strength,
     };
 
     /// The full Balanced/Best effort: mode search, probability optimization, skip
@@ -2236,7 +2563,7 @@ mod tests {
             mb_w * mb_h >= PARALLEL_MB_THRESHOLD,
             "{w}x{h} must exercise the parallel path"
         );
-        let seg = plan_segmentation(&src, 40, true);
+        let seg = plan_segmentation(&src, 40, true, FrameTuning::AUTO);
         let quants = seg.base_q.map(Quantizer::new);
 
         let mut wave_planes = Planes::new(mb_w, mb_h);
@@ -2248,6 +2575,7 @@ mod tests {
             mb_w,
             mb_h,
             gates,
+            &COEFFS_PROBA_0,
         );
         let mut serial_planes = Planes::new(mb_w, mb_h);
         let ser_result = plan_frame_serial(
@@ -2258,6 +2586,7 @@ mod tests {
             mb_w,
             mb_h,
             gates,
+            &COEFFS_PROBA_0,
         );
 
         // Compare only the real reconstructed image region (inside the 1-pixel
@@ -2325,11 +2654,13 @@ mod tests {
             search_modes: true,
             uses_i4x4: true,
             uses_trellis: true,
+            sns_strength: FrameTuning::AUTO.sns_strength,
         };
         let balanced = SearchGates {
             search_modes: true,
             uses_i4x4: false,
             uses_trellis: true,
+            sns_strength: FrameTuning::AUTO.sns_strength,
         };
         for &gates in &[best, balanced] {
             for &(w, h) in &[(256usize, 256usize), (272, 256), (256, 272), (512, 256)] {
@@ -2404,12 +2735,187 @@ mod tests {
         // + skip consideration + in-loop deblocking filter). The decoder's
         // reconstruction is post-filter, so this pins that the encoder applies the
         // exact same filter the decoder re-derives from the emitted header.
-        let (payload, enc_planes) = encode_frame_impl(rgba, w, h, base_q, BALANCED);
+        let (payload, enc_planes) =
+            encode_frame_impl(rgba, w, h, base_q, BALANCED, FrameTuning::AUTO);
         let (dec_planes, dw, dh) = decode::reconstruct_to_planes(&payload).unwrap();
         assert_eq!((dw, dh), (w, h), "dimensions");
         assert_eq!(enc_planes.y, dec_planes.y, "luma plane mismatch");
         assert_eq!(enc_planes.u, dec_planes.u, "U plane mismatch");
         assert_eq!(enc_planes.v, dec_planes.v, "V plane mismatch");
+    }
+
+    /// Self-consistency under an explicit [`FrameTuning`] (the seam the public
+    /// psychovisual knobs thread through): the decoder re-derives every per-segment
+    /// quantizer and filter-strength delta from the emitted header, so
+    /// `decode(encode) == reconstruction` must hold for any knob setting.
+    fn assert_self_consistent_tuned(
+        rgba: &[u8],
+        w: usize,
+        h: usize,
+        base_q: i32,
+        effort: Effort,
+        tuning: FrameTuning,
+    ) {
+        let (payload, enc) = encode_frame_impl(rgba, w, h, base_q, effort, tuning);
+        let (dec, dw, dh) = decode::reconstruct_to_planes(&payload).unwrap();
+        let ctx = format!(
+            "q{base_q} {effort:?} sns{} seg{} f{} sharp{}",
+            tuning.sns_strength, tuning.segments, tuning.filter_strength, tuning.filter_sharpness
+        );
+        assert_eq!((dw, dh), (w, h), "dimensions [{ctx}]");
+        assert_eq!(enc.y_stride, dec.y_stride, "luma stride [{ctx}]");
+        // Compare every real luma sample (left/top borders and interior MB boundaries
+        // included); the four-column right scratch margin lies beyond the frame width
+        // and the i4x4 top-right-lane setup may leave it in a harmless different state,
+        // so it is excluded — the same margin-aware check as `assert_self_consistent_best`.
+        let stride = enc.y_stride;
+        let real_cols = 1 + w.div_ceil(16) * 16;
+        for (i, (&a, &b)) in enc.y.iter().zip(&dec.y).enumerate() {
+            if i % stride < real_cols {
+                assert_eq!(
+                    a,
+                    b,
+                    "luma mismatch at row {}, col {} [{ctx}]",
+                    i / stride,
+                    i % stride
+                );
+            }
+        }
+        assert_eq!(enc.u, dec.u, "U plane mismatch [{ctx}]");
+        assert_eq!(enc.v, dec.v, "V plane mismatch [{ctx}]");
+    }
+
+    /// A `w`×`h` frame whose left half is flat and right half is a high-contrast
+    /// checkerboard — two distinct activity levels, so k-means segmentation and the
+    /// per-segment filter deltas genuinely fire under a non-zero SNS strength.
+    fn split_activity_image(w: usize, h: usize) -> Vec<u8> {
+        image(w, h, |x, _| {
+            if x < w / 2 {
+                [96, 128, 160]
+            } else if x % 2 == 0 {
+                [20, 20, 20]
+            } else {
+                [235, 235, 235]
+            }
+        })
+    }
+
+    #[test]
+    fn every_knob_setting_stays_self_consistent() {
+        // Sweep each active psychovisual knob across its full range (plus two combined
+        // extremes) at both Full and Best on multi-activity content, asserting
+        // decode-of-output equals the encoder's own reconstruction for all of them.
+        // Segmentation and the per-segment filter only engage when the content and the
+        // knobs allow, but self-consistency must hold either way.
+        let (w, h) = (48usize, 48usize);
+        let rgba = split_activity_image(w, h);
+        let base = FrameTuning::AUTO;
+        let mut tunings = Vec::new();
+        for &sns_strength in &[0u8, 25, 50, 75, 100] {
+            tunings.push(FrameTuning {
+                sns_strength,
+                ..base
+            });
+        }
+        for &segments in &[1u8, 2, 3, 4] {
+            tunings.push(FrameTuning { segments, ..base });
+        }
+        for &filter_strength in &[0u8, 20, 40, 60, 80, 100] {
+            tunings.push(FrameTuning {
+                filter_strength,
+                ..base
+            });
+        }
+        for &filter_sharpness in &[0u8, 1, 3, 5, 7] {
+            tunings.push(FrameTuning {
+                filter_sharpness,
+                ..base
+            });
+        }
+        // Sharp-YUV swaps the chroma planes for the luminance-guided subsampling; the
+        // decoder still reconstructs exactly what the encoder coded, so self-consistency
+        // must hold with it on (a round-trip check of the whole sharp path).
+        tunings.push(FrameTuning {
+            sharp_yuv: true,
+            ..base
+        });
+        tunings.push(FrameTuning {
+            sns_strength: 100,
+            segments: 4,
+            filter_strength: 100,
+            filter_sharpness: 7,
+            sharp_yuv: true,
+            passes: 1,
+        });
+        tunings.push(FrameTuning {
+            sns_strength: 80,
+            segments: 3,
+            filter_strength: 30,
+            filter_sharpness: 2,
+            sharp_yuv: false,
+            passes: 1,
+        });
+        for tuning in tunings {
+            for &effort in &[Effort::Full, Effort::Best] {
+                for &q in &[20i32, 70] {
+                    assert_self_consistent_tuned(&rgba, w, h, q, effort, tuning);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn filter_strength_knob_moves_the_emitted_filter_level() {
+        // The filter-strength knob drives the emitted in-loop filter level: 0 disables
+        // it, a non-zero knob emits a filter, and a stronger knob raises the level the
+        // decoder re-derives — the knob is wired to the bitstream, not inert.
+        let (w, h) = (48usize, 48usize);
+        let rgba = split_activity_image(w, h);
+        let level = |fs: u8| {
+            let tuning = FrameTuning {
+                filter_strength: fs,
+                ..FrameTuning::AUTO
+            };
+            decoded_filter_level(&encode_frame_impl(&rgba, w, h, 40, BALANCED, tuning).0)
+        };
+        assert_eq!(level(0), 0, "filter_strength 0 disables the loop filter");
+        assert!(level(20) > 0, "a non-zero filter knob emits a filter");
+        assert!(
+            level(100) > level(20),
+            "a stronger filter knob raises the level"
+        );
+    }
+
+    #[test]
+    fn sns_strength_knob_changes_the_encoded_stream() {
+        // On multi-activity content the SNS knob engages both segmentation and the
+        // perceptual mode decision, so strength 0 (single segment, plain SSE) and a
+        // high strength must yield different bytes, and both stay self-consistent.
+        let (w, h) = (48usize, 48usize);
+        let rgba = split_activity_image(w, h);
+        let encode = |sns: u8| {
+            let tuning = FrameTuning {
+                sns_strength: sns,
+                ..FrameTuning::AUTO
+            };
+            encode_frame_impl(&rgba, w, h, 40, BALANCED, tuning).0
+        };
+        assert_ne!(
+            encode(0),
+            encode(100),
+            "the SNS knob must change the stream"
+        );
+        assert_self_consistent_tuned(
+            &rgba,
+            w,
+            h,
+            40,
+            BALANCED,
+            FrameTuning {
+                sns_strength: 100,
+                ..FrameTuning::AUTO
+            },
+        );
     }
 
     #[test]
@@ -2440,7 +2946,16 @@ mod tests {
             mb_w,
             mb_h,
             ..
-        } = plan_frame(&rgba, w, h, base_q, FULL_GATES, true);
+        } = plan_frame(
+            &rgba,
+            w,
+            h,
+            base_q,
+            FULL_GATES,
+            true,
+            FrameTuning::AUTO,
+            &COEFFS_PROBA_0,
+        );
         let nb_skip = mb_plans.iter().filter(|p| p.skippable).count();
         assert!(
             nb_skip > 0,
@@ -2505,7 +3020,7 @@ mod tests {
             }
         });
         let base_q = 40; // level = 40 * 3 / 8 = 15 > 0
-        let (payload, _enc) = encode_frame_impl(&rgba, w, h, base_q, BALANCED);
+        let (payload, _enc) = encode_frame_impl(&rgba, w, h, base_q, BALANCED, FrameTuning::AUTO);
         assert!(
             decoded_filter_level(&payload) > 0,
             "Balanced must enable the loop filter on blocky content"
@@ -2625,7 +3140,7 @@ mod tests {
         let rgba = image(48, 48, |_x, y| {
             [(y * 7) as u8, (y * 3 + 20) as u8, (y * 11) as u8]
         });
-        let (payload, enc_planes) = encode_frame_impl(&rgba, 48, 48, 16, FAST);
+        let (payload, enc_planes) = encode_frame_impl(&rgba, 48, 48, 16, FAST, FrameTuning::AUTO);
 
         let (dec_planes, dw, dh) = decode::reconstruct_to_planes(&payload).unwrap();
         assert_eq!((dw, dh), (48, 48), "dimensions");
@@ -2655,15 +3170,24 @@ mod tests {
             mb_h,
             seg_params: seg,
             ..
-        } = plan_frame(rgba, width, height, base_q, FULL_GATES, true);
+        } = plan_frame(
+            rgba,
+            width,
+            height,
+            base_q,
+            FULL_GATES,
+            true,
+            FrameTuning::AUTO,
+            &COEFFS_PROBA_0,
+        );
         let skip = super::resolve_skip(&mb_plans, mb_w * mb_h, true);
-        let filter = super::choose_filter(base_q, true);
+        let filter = super::choose_filter(base_q, true, 60, 0);
         let header = super::HeaderParams {
             base_q,
             filter: &filter,
             segments: seg,
         };
-        let (_part0, _token, default_total, optimized_total) =
+        let (_part0, _token, default_total, optimized_total, _probas) =
             emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
         (
             default_total + KEY_FRAME_HEADER_LEN,
@@ -2727,7 +3251,7 @@ mod tests {
     /// losing candidate evaluation and the decoder's reconstruction. Chroma has no
     /// such margin (`uv_stride = 1 + mb_w*8`), so both planes are compared in full.
     fn assert_self_consistent_best(rgba: &[u8], w: usize, h: usize, base_q: i32) {
-        let (payload, enc) = encode_frame_impl(rgba, w, h, base_q, Effort::Best);
+        let (payload, enc) = encode_frame_impl(rgba, w, h, base_q, Effort::Best, FrameTuning::AUTO);
         let (dec, dw, dh) = decode::reconstruct_to_planes(&payload).unwrap();
         assert_eq!((dw, dh), (w, h), "dimensions");
         assert_eq!(enc.y_stride, dec.y_stride, "luma stride");
@@ -2937,6 +3461,7 @@ mod tests {
             search_modes: true,
             uses_i4x4: false,
             uses_trellis,
+            sns_strength: FrameTuning::AUTO.sns_strength,
         };
         let FramePlan {
             plans: mb_plans,
@@ -2944,15 +3469,24 @@ mod tests {
             mb_h,
             seg_params: seg,
             ..
-        } = plan_frame(rgba, w, h, base_q, gates, true);
+        } = plan_frame(
+            rgba,
+            w,
+            h,
+            base_q,
+            gates,
+            true,
+            FrameTuning::AUTO,
+            &COEFFS_PROBA_0,
+        );
         let skip = super::resolve_skip(&mb_plans, mb_w * mb_h, true);
-        let filter = super::choose_filter(base_q, true);
+        let filter = super::choose_filter(base_q, true, 60, 0);
         let header = super::HeaderParams {
             base_q,
             filter: &filter,
             segments: seg,
         };
-        let (_p0, _t, d, o) = emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
+        let (_p0, _t, d, o, _probas) = emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
         KEY_FRAME_HEADER_LEN + d.min(o)
     }
 
@@ -3191,15 +3725,24 @@ mod tests {
             mb_h,
             seg_params: seg,
             ..
-        } = plan_frame(rgba, w, h, base_q, FULL_GATES, uses_segments);
+        } = plan_frame(
+            rgba,
+            w,
+            h,
+            base_q,
+            FULL_GATES,
+            uses_segments,
+            FrameTuning::AUTO,
+            &COEFFS_PROBA_0,
+        );
         let skip = super::resolve_skip(&mb_plans, mb_w * mb_h, true);
-        let filter = super::choose_filter(base_q, true);
+        let filter = super::choose_filter(base_q, true, 60, 0);
         let header = super::HeaderParams {
             base_q,
             filter: &filter,
             segments: seg,
         };
-        let (_p0, _t, d, o) = emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
+        let (_p0, _t, d, o, _probas) = emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
         KEY_FRAME_HEADER_LEN + d.min(o)
     }
 
@@ -3242,29 +3785,29 @@ mod tests {
     /// (it prints the actual table on mismatch) and pasting the printed block here.
     const GOLDEN_EXPECTED: &str = "\
 gradient fast 190 fdbe0b6ce4ec645c
-gradient balanced 88 c7ce577d895f26b6
-gradient best 102 46518c082c50e880
+gradient balanced 104 8ded861974c278bc
+gradient best 105 794ee2ab27bff891
 noisy fast 7975 f970e253b081638d
-noisy balanced 4544 7f2dffe17d7c8fad
-noisy best 4025 ab505fb17bc7592b
+noisy balanced 3928 6445bf58456e852a
+noisy best 3558 89dcb150ad8be9c1
 flat fast 40 66b6a4ee87e184a3
-flat balanced 37 6a59173075c587f1
-flat best 37 6a59173075c587f1
+flat balanced 39 345288bf6a40e2d0
+flat best 39 345288bf6a40e2d0
 checker fast 65 a42deaf46567ecd9
-checker balanced 56 39d3ef5ea037e62e
-checker best 56 39d3ef5ea037e62e
+checker balanced 56 6b05842252d1046e
+checker best 56 6b05842252d1046e
 stripe fast 1680 145aef26907ace38
-stripe balanced 322 5b465081386645c0
-stripe best 118 7ffbbd64ba73c260
+stripe balanced 322 d0284fcbb5c77800
+stripe best 118 00cc0a30e8a48b20
 diagonal fast 415 46ac66199192122b
-diagonal balanced 171 b4eb4e5cd54c6239
-diagonal best 292 3142ea1a996bcdef
+diagonal balanced 293 ce4f77901717f62c
+diagonal best 352 28ebd17e1489c006
 mixed fast 4363 13644d2cc4723cd5
-mixed balanced 1922 38409a433944177e
-mixed best 2014 34de49d21d0f919d
+mixed balanced 2194 68463b656f1c9df3
+mixed best 2251 88a14a71a9ad4b73
 horizontal fast 667 81e58ac967acf023
-horizontal balanced 176 6665e53feb38e76f
-horizontal best 156 c863e535b5dde61a";
+horizontal balanced 282 0efb696deedf3513
+horizontal best 222 f827cced43febb3a";
 
     /// Golden exact-encode test — THE high-leverage encoder-decision net. Encodes a
     /// diverse set of fixed images (smooth gradient, AC-rich noise, flat blocks,
@@ -3414,13 +3957,13 @@ horizontal best 156 c863e535b5dde61a";
         // tree_prob(1, 2) = (1*255/2).clamp(1,255) = 127. Pins the `* 255 / total`
         // scaling and the constant-return mutants.
         assert_eq!(super::tree_prob(1, 2), 127, "tree_prob(1,2)");
-        // segment_base_qs: 2 segments with mean complexity {100, 900} around base_q 40.
-        // range = FINER+COARSER = 20, span = 800. flattest → 40-4 = 36, busiest →
-        // 40+(800*20/800 - 4) = 56. Pins the interpolation arithmetic end to end.
+        // segment_base_qs: 2 segments with mean activity {64, 192} around base_q 40 at
+        // sns 100. sns_quant_delta = (activity-128)*100/512: flat 64 -> -12 (q 28),
+        // busy 192 -> +12 (q 52). Pins the zero-centered SNS delta end to end.
         assert_eq!(
-            super::segment_base_qs(40, 2, [100, 900, 0, 0]),
-            [36, 56, 40, 40],
-            "per-segment base quantizers"
+            super::segment_base_qs(40, 2, [64, 192, 0, 0], 100),
+            [28, 52, 40, 40],
+            "per-segment SNS base quantizers"
         );
     }
 
@@ -3429,13 +3972,14 @@ horizontal best 156 c863e535b5dde61a";
         // assign_nearest breaks equidistant ties to the LOWEST index (strict `<`):
         // 10 is 5 from both centroid 5 and centroid 15, so it must land in cluster 0.
         let mut assign = [9u8];
-        super::assign_nearest(&[10], [5, 15, 0, 0], &mut assign);
+        super::assign_nearest(&[10], [5, 15, 0, 0], 2, &mut assign);
         assert_eq!(assign[0], 0, "equidistant tie -> lowest centroid index");
-        // update_centroids moves each non-empty centroid to its cluster's integer mean:
-        // cluster 0 = {10, 20} -> 15. Pins the `> 0` guard and the `sum / count` move.
+        // update_centroids moves each non-empty centroid to its cluster's integer mean
+        // and returns the total displacement: cluster 0 = {10, 20} -> 15, moved from 0.
         let mut cent = [0i64; 4];
-        super::update_centroids(&[10, 20], &[0, 0], &mut cent);
+        let disp = super::update_centroids(&[10, 20], &[0, 0], &mut cent, 2);
         assert_eq!(cent[0], 15, "centroid 0 -> mean(10,20)");
+        assert_eq!(disp, 15, "displacement = |15 - 0|");
     }
 
     // ---- mutation-kill (round 2): surgical decision-path unit tests ------------
@@ -3526,7 +4070,16 @@ horizontal best 156 c863e535b5dde61a";
         let rgba = image(64, 64, |_, _| [120, 90, 200]);
         let FramePlan {
             plans: mb_plans, ..
-        } = plan_frame(&rgba, 64, 64, 40, FULL_GATES, true);
+        } = plan_frame(
+            &rgba,
+            64,
+            64,
+            40,
+            FULL_GATES,
+            true,
+            FrameTuning::AUTO,
+            &COEFFS_PROBA_0,
+        );
         assert!(
             mb_plans.iter().any(|p| !p.has_residual),
             "a flat frame must contain zero-residual macroblocks"
@@ -3545,18 +4098,27 @@ horizontal best 156 c863e535b5dde61a";
             mb_h,
             seg_params: seg,
             ..
-        } = plan_frame(&noisy, 96, 96, 40, FULL_GATES, true);
+        } = plan_frame(
+            &noisy,
+            96,
+            96,
+            40,
+            FULL_GATES,
+            true,
+            FrameTuning::AUTO,
+            &COEFFS_PROBA_0,
+        );
         let skip = super::resolve_skip(&mb_plans, mb_w * mb_h, true);
-        let filter = super::choose_filter(40, true);
+        let filter = super::choose_filter(40, true, 60, 0);
         let header = super::HeaderParams {
             base_q: 40,
             filter: &filter,
             segments: seg,
         };
-        let (_p0, _t, default_total, optimized_total) =
+        let (_p0, _t, default_total, optimized_total, _probas) =
             emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
-        assert_eq!(default_total, 6789, "default candidate byte-length sum");
-        assert_eq!(optimized_total, 4534, "optimized candidate byte-length sum");
+        assert_eq!(default_total, 5784, "default candidate byte-length sum");
+        assert_eq!(optimized_total, 3914, "optimized candidate byte-length sum");
     }
 
     #[test]
@@ -3584,39 +4146,48 @@ horizontal best 156 c863e535b5dde61a";
             mb_w: 4,
             mb_h: 1,
         };
-        let seg = super::plan_segmentation(&src, 40, true);
+        let seg = super::plan_segmentation(&src, 40, true, FrameTuning::AUTO);
         assert!(
             seg.params.is_some(),
-            "an exact-boundary complexity spread must still segment (strict <)"
+            "two distinct activity levels must segment under the near-best tuning"
         );
     }
 
     #[test]
     fn skippable_luma_last_index_boundary_is_strict() {
         // `skippable` requires every luma block's `last < 1` (no AC beyond DC-position).
-        // On mixed content at q96, macroblock 15 has an empty Y2, empty chroma, and
-        // every luma block `last <= 1` with at least one exactly 1, so the strict `< 1`
-        // keeps it NON-skippable; the `<= 1` mutant would wrongly mark it skippable.
-        let rgba = mixed_image(96, 96);
-        let FramePlan {
-            plans: mb_plans, ..
-        } = plan_frame(&rgba, 96, 96, 96, FULL_GATES, true);
-        let p = &mb_plans[15];
-        // Preconditions pinning this macroblock as the boundary witness (guard drift).
-        assert!(p.tokens.y2.last < 0, "witness needs an empty Y2");
+        // A macroblock with an empty Y2, empty chroma, and every luma block `last <= 1`
+        // with at least one exactly 1 sits on that boundary: the strict `< 1` keeps it
+        // NON-skippable; the `<= 1` mutant would wrongly mark it skippable. Scan a range
+        // of qualities over mixed content for such a witness (robust to which
+        // macroblock/quality the mode/quant choice lands it on).
+        let rgba = stripe_image(96, 96);
+        let witness = (2..=127)
+            .find_map(|q| {
+                let FramePlan {
+                    plans: mb_plans, ..
+                } = plan_frame(
+                    &rgba,
+                    96,
+                    96,
+                    q,
+                    FULL_GATES,
+                    true,
+                    FrameTuning::AUTO,
+                    &COEFFS_PROBA_0,
+                );
+                mb_plans.into_iter().find(|p| {
+                    p.tokens.y2.last < 0
+                        && p.tokens.chroma.iter().all(|b| b.last < 0)
+                        && p.tokens.luma.iter().all(|b| b.last <= 1)
+                        && p.tokens.luma.iter().any(|b| b.last == 1)
+                })
+            })
+            .expect("stripe content must contain a luma-last==1 boundary macroblock");
         assert!(
-            p.tokens.chroma.iter().all(|b| b.last < 0),
-            "witness needs empty chroma"
+            !witness.skippable,
+            "a luma last==1 block must not be skippable"
         );
-        assert!(
-            p.tokens.luma.iter().all(|b| b.last <= 1),
-            "witness needs all luma last <= 1"
-        );
-        assert!(
-            p.tokens.luma.iter().any(|b| b.last == 1),
-            "witness needs a luma last == 1"
-        );
-        assert!(!p.skippable, "a luma last==1 block must not be skippable");
     }
 
     #[test]
@@ -3631,7 +4202,7 @@ horizontal best 156 c863e535b5dde61a";
         let payload = encode_frame(&rgba, 16, 16, 24, BALANCED);
         assert_eq!(
             golden_digest(&payload),
-            0x58d0_7689_230c_bae4,
+            0x56cc_6d7b_a58f_d6dd,
             "at a size tie the encoder must keep the default probability table"
         );
     }
@@ -3644,6 +4215,7 @@ horizontal best 156 c863e535b5dde61a";
         // distortion (and, via the cascade into later sub-blocks' predictions, the bits).
         // Pin the exact returned SSE for a fixed random block at base_q 0.
         use super::{Planes, QuantPlan, Quantizer};
+        use crate::lossy::constants::COEFFS_PROBA_0;
         use crate::lossy::rgb_to_yuv::SourceYuv;
         let mut planes = Planes::new(1, 1);
         let ys = planes.y_stride;
@@ -3658,6 +4230,8 @@ horizontal best 156 c863e535b5dde61a";
         let plan = QuantPlan {
             quant: Quantizer::new(0),
             uses_trellis: false,
+            sns_strength: 0,
+            probas: &COEFFS_PROBA_0,
         };
         let (_cand, dist, _bits) =
             super::search_luma_i4x4(&mut planes, y_off, &src, 0, 0, false, true, plan);
@@ -3676,6 +4250,7 @@ horizontal best 156 c863e535b5dde61a";
         // giving cost16 = 256 * 7280 + 2 * 671 = 1_865_022 == cost4. The strict `<` then
         // keeps 16x16 (None); the `<=` mutant flips to i4x4 (Some).
         use super::{Planes, QuantPlan, Quantizer};
+        use crate::lossy::constants::COEFFS_PROBA_0;
         use crate::lossy::rgb_to_yuv::SourceYuv;
         use crate::lossy::tokens::{Block, MbTokens};
 
@@ -3727,6 +4302,8 @@ horizontal best 156 c863e535b5dde61a";
         let plan = QuantPlan {
             quant: Quantizer::new(12),
             uses_trellis: false,
+            sns_strength: 0,
+            probas: &COEFFS_PROBA_0,
         };
         let result = super::try_i4x4_luma(
             &mut planes,
@@ -3768,10 +4345,10 @@ horizontal best 156 c863e535b5dde61a";
     /// under each of those mutations. Regenerate by running this test (it prints the
     /// actual table on mismatch) and pasting the block.
     const RD_GOLDEN_EXPECTED: &str = "\
-rd_rx0_ry5_d0_q48 7636466a29603289
-rd_rx1_ry0_d0_q8 61c2b9c1ed64bf8c
-rd_rx0_ry2_d0_q24 93e87313480c6866
-rd_rx0_ry5_d60_q24 ac767fb717bd3476";
+rd_rx0_ry5_d0_q48 8bf2cf76968f0a1d
+rd_rx1_ry0_d0_q8 af6becf29ccc028e
+rd_rx0_ry2_d0_q24 963cf5ce80e9d47e
+rd_rx0_ry5_d60_q24 f47a591a224ab56b";
 
     #[test]
     fn rd_cost_arithmetic_golden() {
@@ -3809,7 +4386,7 @@ rd_rx0_ry5_d60_q24 ac767fb717bd3476";
         let a = [
             100i64, 105, 110, 1100, 1105, 1110, 2100, 2105, 2110, 3100, 3105, 3110,
         ];
-        let (ids_a, cnt_a, seg_a) = super::kmeans_segments(&a);
+        let (ids_a, cnt_a, seg_a) = super::kmeans_segments(&a, 4);
         assert_eq!(ids_a, vec![0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], "A ids");
         assert_eq!(cnt_a, 4, "A count");
         assert_eq!(seg_a, [105, 1105, 2105, 3105], "A segment means");
@@ -3817,7 +4394,7 @@ rd_rx0_ry5_d60_q24 ac767fb717bd3476";
         let b = [
             1000i64, 1010, 1020, 1100, 1110, 1120, 1200, 1210, 1220, 1300, 1310, 1320,
         ];
-        let (ids_b, cnt_b, seg_b) = super::kmeans_segments(&b);
+        let (ids_b, cnt_b, seg_b) = super::kmeans_segments(&b, 4);
         assert_eq!(ids_b, vec![0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], "B ids");
         assert_eq!(cnt_b, 4, "B count");
         assert_eq!(seg_b, [1010, 1110, 1210, 1310], "B segment means");

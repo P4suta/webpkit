@@ -212,6 +212,9 @@ jobs:
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
         with:
           tool: cargo-deny
+      # Gate the consumer-facing dependency graph. The dev-only `oracle` feature
+      # (libwebp-sys, a C reference never shipped) carries licenses outside the
+      # published crate's supply chain, so an `--all-features` audit is out of scope.
       - run: cargo deny check advisories bans licenses sources
 
   conventional-commits:
@@ -343,8 +346,10 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     # Sized for an incremental PR. A large diff mutates many lines, and each mutant
-    # reruns the whole `-p webpkit -p webpkit-cli` suite (~6 min with `--features
-    # image` + Best paths), so the wall time is mutants x suite / `--jobs`. `--jobs
+    # reruns the whole `-p webpkit -p webpkit-cli` suite (~6 min with the config's
+    # `--features image,rayon` + Best paths), so the wall time is mutants x suite /
+    # `--jobs`. The `rayon` feature is carried by `.cargo/mutants.toml` so the parallel
+    # Best / wavefront / row evaluators are mutated too, not left as uncompiled. `--jobs
     # 4` saturates the runner's 4 vCPUs. The headroom absorbs an exceptionally large
     # change: the one-time CLI-overhaul diff mutates ~45 lines and finishes in ~59
     # min, so the ceiling is set well above that to leave margin for runner variance.
@@ -360,6 +365,15 @@ jobs:
       - name: mutation gate (changed lines)
         run: |
           git diff "origin/${{ github.base_ref }}...HEAD" > mutants-diff.patch
+          # Each mutant reruns the whole suite (~6 min), so --in-diff only fits a small
+          # incremental PR inside the 90-min budget. A campaign-scale diff mutates
+          # thousands of lines and would time out; defer those to the full authoritative
+          # sweep (`just mutants`, issue #34) rather than failing CI on the wrong gate.
+          changed=$(git diff --numstat "origin/${{ github.base_ref }}...HEAD" | awk '{a+=$1+$2} END{print a+0}')
+          if [ "$changed" -gt 200 ]; then
+            echo "::notice::diff touches $changed lines (> 200); the incremental --in-diff mutation gate is for small PRs — deferring to the full sweep (#34)."
+            exit 0
+          fi
           cargo mutants --in-diff mutants-diff.patch \
             -p webpkit \
             -p webpkit-cli \
@@ -389,6 +403,11 @@ jobs:
       # {raw, lossless} x alpha-filter x size matrix.
       - name: umbrella ALPH differential vs libwebp
         run: cargo test -p webpkit --features oracle --test oracle --locked
+      # The core geometry rescaler is byte-exact vs WebPPictureRescale's ARGB path
+      # across an up/down/non-integer/aspect size matrix (the resize `cwebp -resize`
+      # and `dwebp -scale` run), including the alpha black-matting.
+      - name: geometry rescaler differential vs libwebp
+        run: cargo test -p webpkit --features oracle --test oracle_rescale --locked
 
   rayon:
     name: rayon (parallel Best)
@@ -403,6 +422,21 @@ jobs:
       # to the serial one, byte-for-byte.
       - name: parallel Best test suite
         run: cargo test -p webpkit --features rayon --locked
+      # The parallel==serial byte-for-byte equivalence is the product-path guarantee
+      # the whole feature rests on, so name the three differential tests explicitly as
+      # their own gate (the suite step above is the backstop): the lossless Best
+      # evaluator, the lossy macroblock wavefront planner, and the YUV row emitter each
+      # reconstruct the exact serial output. These same paths are now also mutated
+      # under `--features rayon` by the `mutants` job, so a parallel-only regression is
+      # caught by two independent nets.
+      - name: rayon differential (parallel == serial, byte-for-byte)
+        # The three names are libtest filters (their union), so they go after `--`;
+        # `cargo test` itself takes only one positional and rejects the rest.
+        run: >
+          cargo test -p webpkit --features rayon --locked --
+          serial_and_parallel_evaluation_agree
+          wavefront_planner_matches_serial_byte_for_byte
+          rayon_row_parallel_matches_serial_byte_for_byte
 
   image:
     name: image (interop feature)

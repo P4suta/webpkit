@@ -9,8 +9,11 @@
 //!    `error`, `image`, `container`, `stream`, `anim`, `alpha`, `effort`,
 //!    `prelude`) must not depend on either codec, and the `lossless` engine must
 //!    not depend on `lossy`. The `lossy` engine *may* use `lossless` (a lossy
-//!    image's `ALPH` plane is a VP8L stream), and the facade (`lib.rs` /
-//!    `encoder.rs`) may use anything.
+//!    image's `ALPH` plane is a VP8L stream), and the facade (`lib.rs`,
+//!    `encoder.rs`, `mux.rs`) may use anything. `mux.rs` is facade, not shell:
+//!    `AnimationMux` is the authoring counterpart to `AnimationEncoder` and, like
+//!    it, composes container framing with codec knowledge (peeking a passthrough
+//!    frame's VP8L header for its alpha bit) rather than staying bitstream-agnostic.
 //! 2. **Intra-codec layering.** Inside `lossless/` and `lossy/`, every
 //!    `crate::<zone>::<module>` edge must point at an equal-or-lower layer.
 //!
@@ -63,6 +66,7 @@ const LOSSY_LAYERS: &[(&str, u8)] = &[
     ("constants", 0),
     ("prelude", 0),
     ("work", 0),
+    ("tuning", 0),
     ("idct", 1),
     ("predict", 1),
     ("loop_filter", 1),
@@ -70,6 +74,7 @@ const LOSSY_LAYERS: &[(&str, u8)] = &[
     ("fdct", 1),
     ("quant", 1),
     ("rgb_to_yuv", 1),
+    ("perceptual", 1),
     ("frame_header", 2),
     ("header", 2),
     ("mb", 2),
@@ -80,11 +85,13 @@ const LOSSY_LAYERS: &[(&str, u8)] = &[
     ("enc_header", 2),
     ("prob_opt", 2),
     ("trellis", 2),
+    ("sharp_yuv", 2),
     ("decode_incr", 3),
     ("frame", 3),
     ("alpha", 3),
     ("decoder", 4),
     ("encoder", 4),
+    ("rate", 4),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -104,7 +111,7 @@ fn classify(rel: &Path) -> (Zone, Option<String>) {
         .collect();
     let strip = |s: &str| s.trim_end_matches(".rs").to_owned();
     match comps.as_slice() {
-        ["lib.rs" | "encoder.rs"] => (Zone::Facade, None),
+        ["lib.rs" | "encoder.rs" | "mux.rs"] => (Zone::Facade, None),
         ["lossless.rs"] => (Zone::Lossless, None),
         ["lossy.rs"] => (Zone::Lossy, None),
         ["lossless", rest @ ..] => (Zone::Lossless, rest.first().map(|s| strip(s))),

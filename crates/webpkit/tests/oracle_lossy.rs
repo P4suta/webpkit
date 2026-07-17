@@ -898,7 +898,7 @@ fn our_skip_encode_is_read_bit_exactly_by_libwebp() {
         webpkit::lossy::ImageRef::new(dims, webpkit::lossy::PixelLayout::Rgba8, &rgba).unwrap();
     let cfg = webpkit::lossy::LossyConfig::new()
         .with_quality(75)
-        .with_effort(webpkit::lossy::Effort::Balanced);
+        .with_effort(webpkit::lossy::Effort::level(4));
     let webp = webpkit::lossy::encode(img, &cfg).unwrap();
     let payload = vp8_payload(&webp);
 
@@ -937,7 +937,7 @@ fn our_i4x4_encode_is_read_bit_exactly_by_libwebp() {
         webpkit::lossy::ImageRef::new(dims, webpkit::lossy::PixelLayout::Rgba8, &rgba).unwrap();
     let cfg = webpkit::lossy::LossyConfig::new()
         .with_quality(50)
-        .with_effort(webpkit::lossy::Effort::Best);
+        .with_effort(webpkit::lossy::Effort::level(9));
     let webp = webpkit::lossy::encode(img, &cfg).unwrap();
     let payload = vp8_payload(&webp);
 
@@ -975,7 +975,7 @@ fn our_filtered_encode_is_read_bit_exactly_by_libwebp() {
         webpkit::lossy::ImageRef::new(dims, webpkit::lossy::PixelLayout::Rgba8, &rgba).unwrap();
     let cfg = webpkit::lossy::LossyConfig::new()
         .with_quality(50)
-        .with_effort(webpkit::lossy::Effort::Balanced);
+        .with_effort(webpkit::lossy::Effort::level(4));
     let webp = webpkit::lossy::encode(img, &cfg).unwrap();
     let payload = vp8_payload(&webp);
 
@@ -1013,7 +1013,7 @@ fn our_segmented_encode_is_read_bit_exactly_by_libwebp() {
         webpkit::lossy::ImageRef::new(dims, webpkit::lossy::PixelLayout::Rgba8, &rgba).unwrap();
     let cfg = webpkit::lossy::LossyConfig::new()
         .with_quality(60)
-        .with_effort(webpkit::lossy::Effort::Balanced);
+        .with_effort(webpkit::lossy::Effort::level(4));
     let webp = webpkit::lossy::encode(img, &cfg).unwrap();
     let payload = vp8_payload(&webp);
 
@@ -1156,4 +1156,204 @@ fn encode_image_metadata_survives_libwebp_demux() {
     assert_eq!(libwebp_demux_chunk(&stripped, b"ICCP\0"), Some(icc));
     assert_eq!(libwebp_demux_chunk(&stripped, b"EXIF\0"), None);
     assert_eq!(libwebp_demux_chunk(&stripped, b"XMP \0"), None);
+}
+
+// ---- sharp-YUV tolerance oracle -------------------------------------------
+
+/// A saturated vertical color split (`left` on the left half, `right` on the right):
+/// the canonical case the plain 4:2:0 box downsample handles poorly, since a chroma
+/// sample straddling the seam averages two opposite hues and the decoder then bleeds
+/// that muddy value back across the edge.
+fn split_rgb(width: u32, height: u32, left: [u8; 3], right: [u8; 3]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(usize::try_from(width * height * 3).unwrap());
+    for _y in 0..height {
+        for x in 0..width {
+            let px = if x < width / 2 { left } else { right };
+            out.extend_from_slice(&px);
+        }
+    }
+    out
+}
+
+/// A coarse two-hue checkerboard (`block`-pixel cells) — chroma edges in both axes.
+fn checker2_rgb(width: u32, height: u32, a: [u8; 3], b: [u8; 3], block: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(usize::try_from(width * height * 3).unwrap());
+    for y in 0..height {
+        for x in 0..width {
+            let px = if ((x / block) + (y / block)).is_multiple_of(2) {
+                a
+            } else {
+                b
+            };
+            out.extend_from_slice(&px);
+        }
+    }
+    out
+}
+
+/// JPEG full-range chroma (Cb, Cr) of an 8-bit RGB triple (BT.601 primaries).
+fn rgb_to_chroma(r: f64, g: f64, b: f64) -> (f64, f64) {
+    let cb = 0.5f64.mul_add(
+        b,
+        (-0.331_264f64).mul_add(g, (-0.168_736f64).mul_add(r, 128.0)),
+    );
+    let cr = (-0.081_312f64).mul_add(b, (-0.418_688f64).mul_add(g, 0.5f64.mul_add(r, 128.0)));
+    (cb, cr)
+}
+
+/// Chroma-only PSNR (dB) of a decoded RGBA buffer against the source RGB, measured
+/// over the (Cb, Cr) plane so it scores the color-subsampling fidelity in isolation
+/// from luma. Returns `99.0` for an essentially exact match.
+fn chroma_psnr_rgba_vs_rgb(rgba: &[u8], rgb: &[u8]) -> f64 {
+    let mut se = 0.0f64;
+    let mut n = 0.0f64;
+    for (dec, src) in rgba.chunks_exact(4).zip(rgb.chunks_exact(3)) {
+        let (dcb, dcr) = rgb_to_chroma(f64::from(dec[0]), f64::from(dec[1]), f64::from(dec[2]));
+        let (scb, scr) = rgb_to_chroma(f64::from(src[0]), f64::from(src[1]), f64::from(src[2]));
+        let db = dcb - scb;
+        let dr = dcr - scr;
+        se = db.mul_add(db, se);
+        se = dr.mul_add(dr, se);
+        n += 2.0;
+    }
+    if se < 1.0 {
+        return 99.0;
+    }
+    10.0 * (255.0 * 255.0 / (se / n)).log10()
+}
+
+/// Encode `rgb` (`width*height*3`) with the libwebp ADVANCED encoder and
+/// `use_sharp_yuv = 1` — the reference luminance-guided (`libsharpyuv`) chroma path
+/// this subsystem ports. Method/quality mirror our own encode so the chroma metric
+/// compares the two sharp conversions, not the surrounding encoder settings.
+fn libwebp_encode_sharp_yuv(rgb: &[u8], width: u32, height: u32, quality: f32) -> Vec<u8> {
+    let mut config = libwebp_sys::WebPConfig::new().unwrap();
+    config.lossless = 0;
+    config.quality = quality;
+    config.method = 4;
+    config.use_sharp_yuv = 1;
+    // SAFETY: `config` is a fully-initialized WebPConfig.
+    assert!(
+        unsafe { libwebp_sys::WebPValidateConfig(&raw const config) } != 0,
+        "invalid encoder config"
+    );
+
+    let mut picture = libwebp_sys::WebPPicture::new().unwrap();
+    picture.use_argb = 0;
+    picture.width = i32::try_from(width).unwrap();
+    picture.height = i32::try_from(height).unwrap();
+    let stride = i32::try_from(width * 3).unwrap();
+    // SAFETY: `rgb` holds `width*height*3` bytes at `stride`; picture dims match.
+    assert!(
+        unsafe { libwebp_sys::WebPPictureImportRGB(&raw mut picture, rgb.as_ptr(), stride) } != 0,
+        "WebPPictureImportRGB failed"
+    );
+
+    let mut writer = std::mem::MaybeUninit::<libwebp_sys::WebPMemoryWriter>::uninit();
+    // SAFETY: `WebPMemoryWriterInit` initializes the whole struct in place.
+    unsafe { libwebp_sys::WebPMemoryWriterInit(writer.as_mut_ptr()) };
+    let mut writer = unsafe { writer.assume_init() };
+    picture.writer = Some(libwebp_sys::WebPMemoryWrite);
+    picture.custom_ptr = (&raw mut writer).cast();
+
+    // SAFETY: `config`/`picture` are fully set up; the writer appends to `writer`.
+    let ok = unsafe { libwebp_sys::WebPEncode(&raw const config, &raw mut picture) };
+    assert!(
+        ok != 0 && picture.error_code == libwebp_sys::WebPEncodingError::VP8_ENC_OK,
+        "sharp encode failed: {:?}",
+        picture.error_code
+    );
+    // SAFETY: on success `writer.mem` points at `writer.size` valid bytes.
+    let bytes = unsafe { std::slice::from_raw_parts(writer.mem, writer.size) }.to_vec();
+    // SAFETY: free the writer buffer and the picture's planes exactly once.
+    unsafe { libwebp_sys::WebPMemoryWriterClear(&raw mut writer) };
+    unsafe { libwebp_sys::WebPPictureFree(&raw mut picture) };
+    bytes
+}
+
+/// Encode `rgb` with our lossy encoder at `quality`, toggling sharp-YUV via the public
+/// [`webpkit::lossy::LossyTuning`], and return the decoded RGBA (via libwebp, which
+/// reconstructs our stream identically to our own decoder — proven by the Level-A
+/// tests above), so all three streams are scored through one decoder.
+fn ours_decode_rgba(rgb: &[u8], width: u32, height: u32, quality: u8, sharp: bool) -> Vec<u8> {
+    let rgba = rgb_to_rgba(rgb);
+    let dims = webpkit::lossy::Dimensions::new(width, height).unwrap();
+    let img =
+        webpkit::lossy::ImageRef::new(dims, webpkit::lossy::PixelLayout::Rgba8, &rgba).unwrap();
+    let cfg = webpkit::lossy::LossyConfig::new()
+        .with_quality(quality)
+        .with_tuning(webpkit::lossy::LossyTuning::new().with_sharp_yuv(sharp));
+    let webp = webpkit::lossy::encode(img, &cfg).unwrap();
+    let (_w, _h, rgba) = libwebp_decode_rgba(&webp);
+    rgba
+}
+
+/// TOLERANCE oracle for the sharp-YUV subsystem. On saturated-edge content our
+/// fixed-point luminance-guided chroma must (1) beat our own plain 2×2 box path in
+/// chroma PSNR — the whole point of the subsystem — and (2) land within a tolerance
+/// band of libwebp's float `libsharpyuv` at the same quality. Byte-exactness is not
+/// expected (fixed-point gamma reformulation); only chroma parity.
+#[allow(
+    clippy::print_stderr,
+    reason = "an oracle diagnostic: emit the measured per-case chroma PSNR (ours-box / \
+              ours-sharp / cwebp-sharp) so a tolerance regression is legible in the log"
+)]
+#[test]
+fn sharp_yuv_chroma_is_within_tolerance_of_cwebp_and_beats_box() {
+    // Improvement must be real, not noise; parity band absorbs the encoder + gamma
+    // reformulation gap between our integer path and libwebp's float one.
+    const MIN_IMPROVEMENT_DB: f64 = 0.5;
+    const PARITY_BAND_DB: f64 = 3.0;
+
+    let (w, h) = (64u32, 48u32);
+    let cases: [(&str, Vec<u8>); 4] = [
+        ("red|blue", split_rgb(w, h, [230, 20, 20], [20, 20, 230])),
+        ("red|green", split_rgb(w, h, [230, 20, 20], [20, 220, 20])),
+        (
+            "magenta|cyan",
+            split_rgb(w, h, [235, 20, 235], [20, 235, 235]),
+        ),
+        (
+            "checker",
+            checker2_rgb(w, h, [235, 20, 60], [20, 120, 235], 8),
+        ),
+    ];
+    let quality = 90u8;
+    let mut total_gain = 0.0f64;
+    for (name, rgb) in &cases {
+        let box_rgba = ours_decode_rgba(rgb, w, h, quality, false);
+        let sharp_rgba = ours_decode_rgba(rgb, w, h, quality, true);
+        let cwebp_rgba = {
+            let webp = libwebp_encode_sharp_yuv(rgb, w, h, f32::from(quality));
+            let (_w, _h, rgba) = libwebp_decode_rgba(&webp);
+            rgba
+        };
+
+        let box_psnr = chroma_psnr_rgba_vs_rgb(&box_rgba, rgb);
+        let sharp_psnr = chroma_psnr_rgba_vs_rgb(&sharp_rgba, rgb);
+        let cwebp_psnr = chroma_psnr_rgba_vs_rgb(&cwebp_rgba, rgb);
+        eprintln!(
+            "sharp_yuv[{name}]: box={box_psnr:.2}dB ours-sharp={sharp_psnr:.2}dB \
+             cwebp-sharp={cwebp_psnr:.2}dB (gain {:+.2}, vs-cwebp {:+.2})",
+            sharp_psnr - box_psnr,
+            sharp_psnr - cwebp_psnr,
+        );
+
+        assert!(
+            sharp_psnr >= box_psnr + MIN_IMPROVEMENT_DB,
+            "{name}: sharp chroma PSNR {sharp_psnr:.2} must beat box {box_psnr:.2} by \
+             >= {MIN_IMPROVEMENT_DB} dB on a saturated edge",
+        );
+        assert!(
+            sharp_psnr >= cwebp_psnr - PARITY_BAND_DB,
+            "{name}: sharp chroma PSNR {sharp_psnr:.2} outside the parity band of \
+             cwebp -sharp_yuv {cwebp_psnr:.2} (band {PARITY_BAND_DB} dB)",
+        );
+        total_gain += sharp_psnr - box_psnr;
+    }
+    let case_count = f64::from(u8::try_from(cases.len()).unwrap());
+    assert!(
+        total_gain / case_count >= MIN_IMPROVEMENT_DB,
+        "mean chroma gain over the box path must exceed {MIN_IMPROVEMENT_DB} dB",
+    );
 }

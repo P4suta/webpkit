@@ -46,7 +46,7 @@ fn round_trip_method(
 
 /// Encode `rgba` at `quality` (default effort) and decode it back to RGBA bytes.
 fn round_trip(rgba: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u8>, Error> {
-    round_trip_method(rgba, width, height, quality, Effort::Balanced)
+    round_trip_method(rgba, width, height, quality, Effort::AUTO)
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn every_method_round_trips_with_a_fidelity_floor() {
     // reproduces the source above a conservative floor (Fast, DC-only, is loosest).
     let (w, h) = (48, 32);
     let rgba = image(w, h, |x, y| [byte(x * 5), byte(y * 7), byte((x + y) * 3)]);
-    for method in [Effort::Fast, Effort::Balanced, Effort::Best] {
+    for method in [Effort::level(0), Effort::level(4), Effort::level(9)] {
         let out = round_trip_method(&rgba, w, h, 75, method).unwrap();
         assert_eq!(
             out.len(),
@@ -156,20 +156,20 @@ fn mode_search_and_trellis_win_rate_distortion_on_a_gradient() {
     };
     let fast = psnr_rgb(
         &rgba,
-        &round_trip_method(&rgba, w, h, 75, Effort::Fast).unwrap(),
+        &round_trip_method(&rgba, w, h, 75, Effort::level(0)).unwrap(),
     );
     let balanced = psnr_rgb(
         &rgba,
-        &round_trip_method(&rgba, w, h, 75, Effort::Balanced).unwrap(),
+        &round_trip_method(&rgba, w, h, 75, Effort::level(4)).unwrap(),
     );
     let best = psnr_rgb(
         &rgba,
-        &round_trip_method(&rgba, w, h, 75, Effort::Best).unwrap(),
+        &round_trip_method(&rgba, w, h, 75, Effort::level(9)).unwrap(),
     );
     let (fast_len, balanced_len, best_len) = (
-        encode_len(Effort::Fast),
-        encode_len(Effort::Balanced),
-        encode_len(Effort::Best),
+        encode_len(Effort::level(0)),
+        encode_len(Effort::level(4)),
+        encode_len(Effort::level(9)),
     );
     // A generous fidelity guard against gross breakage; the tight bound is the size
     // win below (Best trades a little more fidelity than Balanced via its i4x4 search).
@@ -205,14 +205,14 @@ fn flat_image_skip_shrinks_balanced_below_fast() {
         let cfg = LossyConfig::new().with_quality(75).with_effort(method);
         encode_vp8(img, &cfg).unwrap().1.len()
     };
-    let fast = payload_len(Effort::Fast);
-    let balanced = payload_len(Effort::Balanced);
+    let fast = payload_len(Effort::level(0));
+    let balanced = payload_len(Effort::level(4));
     assert!(
         balanced < fast,
         "per-macroblock skip did not shrink the frame: balanced {balanced} !< fast {fast}"
     );
     // The skip-using Balanced frame must still round-trip to the right size.
-    let out = round_trip_method(&rgba, w, h, 75, Effort::Balanced).unwrap();
+    let out = round_trip_method(&rgba, w, h, 75, Effort::level(4)).unwrap();
     assert_eq!(out.len(), usize::try_from(w * h * 4).unwrap());
 }
 
@@ -235,7 +235,7 @@ fn filtered_output_streams_identically_to_one_shot() {
     let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
     let cfg = LossyConfig::new()
         .with_quality(50)
-        .with_effort(Effort::Balanced);
+        .with_effort(Effort::level(4));
     // The full container (what IncrementalDecoder consumes) and the raw payload (what
     // one-shot decode consumes) wrap the same, filtered VP8 stream.
     let webp = encode(img, &cfg).unwrap();
@@ -283,15 +283,15 @@ fn best_improves_rate_distortion_on_detailed_content() {
             .1
             .len()
     };
-    let bal_size = size(Effort::Balanced);
-    let best_size = size(Effort::Best);
+    let bal_size = size(Effort::level(4));
+    let best_size = size(Effort::level(9));
     let bal_psnr = psnr_rgb(
         &rgba,
-        &round_trip_method(&rgba, w, h, 50, Effort::Balanced).unwrap(),
+        &round_trip_method(&rgba, w, h, 50, Effort::level(4)).unwrap(),
     );
     let best_psnr = psnr_rgb(
         &rgba,
-        &round_trip_method(&rgba, w, h, 50, Effort::Best).unwrap(),
+        &round_trip_method(&rgba, w, h, 50, Effort::level(9)).unwrap(),
     );
     assert!(
         best_size < bal_size,
@@ -309,7 +309,7 @@ fn encoding_is_deterministic_per_quality_and_method() {
     let (w, h) = (40, 24);
     let rgba = image(w, h, |x, y| [byte(x * 6), byte(y * 10), byte(x ^ y)]);
     let dims = Dimensions::new(w, h).unwrap();
-    for method in [Effort::Fast, Effort::Balanced, Effort::Best] {
+    for method in [Effort::level(0), Effort::level(4), Effort::level(9)] {
         for quality in [10u8, 50, 90] {
             let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
             let cfg = LossyConfig::new().with_quality(quality).with_effort(method);
@@ -340,7 +340,7 @@ fn segmentation_holds_fidelity_on_mixed_content() {
             [byte(n & 0xff), byte((n >> 3) & 0xff), byte((x ^ y) * 3)]
         }
     });
-    let out = round_trip_method(&rgba, w, h, 60, Effort::Balanced).unwrap();
+    let out = round_trip_method(&rgba, w, h, 60, Effort::level(4)).unwrap();
     let psnr = psnr_rgb(&rgba, &out);
     assert!(
         psnr >= 12.0,
@@ -372,7 +372,7 @@ fn trellis_holds_fidelity_within_a_decibel_of_round_to_nearest() {
     let noisy_ref = [(50u8, 16.29f64), (75, 16.42), (90, 16.51)];
     for (rgba, refs, name) in [(&photo, &photo_ref, "photo"), (&noisy, &noisy_ref, "noisy")] {
         for &(q, reference) in refs {
-            let out = round_trip_method(rgba, 96, 96, q, Effort::Balanced).unwrap();
+            let out = round_trip_method(rgba, 96, 96, q, Effort::level(4)).unwrap();
             let psnr = psnr_rgb(rgba, &out);
             assert!(
                 psnr >= reference - 1.0,
@@ -393,7 +393,7 @@ fn large_frame_round_trips_without_breaking() {
     let rgba = image(w, h, |x, y| {
         [byte(x / 8), byte(y * 2), byte((x ^ y) + x / 16)]
     });
-    let out = round_trip_method(&rgba, w, h, 75, Effort::Balanced).unwrap();
+    let out = round_trip_method(&rgba, w, h, 75, Effort::level(4)).unwrap();
     assert_eq!(
         out.len(),
         usize::try_from(w * h * 4).unwrap(),

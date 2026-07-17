@@ -12,6 +12,8 @@ Commands:
   decode       Decode a WebP file to PNG (default), PPM/PAM, or raw pixels
   encode       Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
   convert      Batch-convert many images (or directories) to WebP, in parallel
+  animate      Assemble still images into an animated WebP (surpasses img2webp/gif2webp)
+  mux          Edit an animated WebP without re-encoding frames (webpmux-parity muxing)
   info         Print a summary of a WebP file (size, alpha, metadata, animation)
   meta         Read, set, or strip a WebP file's metadata (ICC/Exif/XMP), without re-encoding the image
   diff         Compare two images: report PSNR and the largest per-channel difference
@@ -64,12 +66,12 @@ Options:
           Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)
 
   -m, --method <METHOD>
-          Encoder effort [default: balanced, or from env/config]
+          Encoder effort [default: auto, or from env/config]
 
           Possible values:
-          - fast:     Fastest: literal + subtract-green only
-          - balanced: Balanced (the default): LZ77 + color cache
-          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+          - auto: Adapt the search depth to the image's content and size (the default)
+          - fast: Fastest: the shallowest fixed search
+          - best: Smallest: the deepest fixed search
 
       --metadata <METADATA>
           Metadata to embed: all,none,icc,exif,xmp (default: all)
@@ -248,12 +250,12 @@ Options:
           [default: rgba8]
 
   -m, --method <METHOD>
-          Encoder effort [default: balanced, or from env/config]
+          Encoder effort [default: auto, or from env/config]
 
           Possible values:
-          - fast:     Fastest: literal + subtract-green only
-          - balanced: Balanced (the default): LZ77 + color cache
-          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+          - auto: Adapt the search depth to the image's content and size (the default)
+          - fast: Fastest: the shallowest fixed search
+          - best: Smallest: the deepest fixed search
 
       --lossless
           Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless
@@ -291,6 +293,21 @@ Options:
           - exif: Keep Exif
           - xmp:  Keep XMP
 
+      --optimize
+          Inter-frame optimize a GIF animation: encode each frame as a minimal delta
+
+      --mixed
+          With --optimize: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed)
+
+      --min-size
+          With --optimize: exhaustively search each frame's rect/blend/dispose/codec (gif2webp `-min_size`)
+
+      --kmax <N>
+          With --optimize: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first)
+
+      --kmin <N>
+          With --optimize: never place keyframes closer than N frames apart (gif2webp -kmin)
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -311,12 +328,12 @@ Options:
           Print per-stage detail on stderr
 
   -m, --method <METHOD>
-          Encoder effort (ignored with --optimize) [default: balanced, or from env/config]
+          Encoder effort (ignored with --optimize) [default: auto, or from env/config]
 
           Possible values:
-          - fast:     Fastest: literal + subtract-green only
-          - balanced: Balanced (the default): LZ77 + color cache
-          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+          - auto: Adapt the search depth to the image's content and size (the default)
+          - fast: Fastest: the shallowest fixed search
+          - best: Smallest: the deepest fixed search
 
       --quiet
           Suppress all non-error output.
@@ -369,6 +386,392 @@ Options:
 
       --no-clobber
           Skip an input whose `.webp` output exists (still exits 0)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp animate --help
+Assemble still images into an animated WebP (surpasses img2webp/gif2webp).
+
+Each input (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM) is decoded and added as one frame. `--delay` sets the per-frame duration (one value for all, or a comma list), `--loop` the loop count, and `--lossy Q` switches from the lossless default. The canvas defaults to the largest frame, or set it with `--canvas WxH`.
+
+Usage: webp animate [OPTIONS] --output <OUTPUT> <INPUTS>...
+
+Arguments:
+  <INPUTS>...
+          Still images, one per frame, in display order (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM)
+
+Options:
+  -o, --output <OUTPUT>
+          Output `.webp` file; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --delay <MS>
+          Per-frame delay in ms: one value for every frame, or a comma list (`40,40,80`)
+          
+          [default: 100]
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never [default: auto, or from env/config].
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+
+      --loop <N>
+          Loop count; `0` (the default) loops forever
+          
+          [default: 0]
+
+      --bgcolor <RRGGBBAA>
+          Advisory background color as `RRGGBBAA` hex (e.g. `ffffffff`)
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dispose <DISPOSE>
+          Disposal method applied to every frame
+
+          Possible values:
+          - keep:       Leave the canvas as-is for the next frame (the default)
+          - background: Clear the frame's rectangle to transparent before the next frame
+          
+          [default: keep]
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+      --blend <BLEND>
+          Blend method applied to every frame
+
+          Possible values:
+          - blend:     Alpha-blend the frame over the canvas (the default)
+          - overwrite: Overwrite the frame's rectangle, ignoring what is underneath
+          
+          [default: blend]
+
+      --lossy <Q>
+          Encode frames lossily (VP8) at this quality 0-100; the default is lossless
+
+      --canvas <WxH>
+          Canvas size as `WxH`; defaults to the largest frame
+
+  -m, --method <METHOD>
+          Encoder effort [default: auto, or from env/config]
+
+          Possible values:
+          - auto: Adapt the search depth to the image's content and size (the default)
+          - fast: Fastest: the shallowest fixed search
+          - best: Smallest: the deepest fixed search
+
+      --input-format <INPUT_FORMAT>
+          Force the input format instead of sniffing each file
+
+          Possible values:
+          - png:  PNG (any color type; normalized to RGBA8)
+          - ppm:  Netpbm binary PPM (`P6`, RGB)
+          - pam:  Netpbm binary PAM (`P7`, RGBA)
+          - jpeg: JPEG (decoded to RGBA8; needs the `formats` feature)
+          - gif:  GIF (first frame as a still; whole-file animation is a separate path)
+          - tiff: TIFF (decoded to RGBA8; needs the `formats` feature)
+          - bmp:  BMP (decoded to RGBA8; needs the `formats` feature)
+          - raw:  Raw row-major pixels; requires `--width`/`--height`/`--layout`
+
+      --optimize
+          Inter-frame optimize: encode each frame as a minimal delta against the canvas.
+          
+          The optimizer derives each frame's rectangle, blend, and dispose itself so the result composites pixel-identically to the full-frame animation, only smaller; `--blend` and `--dispose` are therefore ignored under `--optimize`.
+
+      --mixed
+          With --optimize: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed)
+
+      --min-size
+          With --optimize: exhaustively search each frame's rect/blend/dispose/codec (gif2webp `-min_size`)
+
+      --kmax <N>
+          With --optimize: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first)
+
+      --kmin <N>
+          With --optimize: never place keyframes closer than N frames apart (gif2webp -kmin)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp mux --help
+Edit an animated WebP without re-encoding frames (webpmux-parity muxing).
+
+Extract a frame, edit the loop count / background, or insert / remove / replace frames — every untouched frame's encoded bytes pass through byte-for-byte, and the ICC/Exif/XMP metadata is preserved.
+
+Usage: webp mux [OPTIONS] <COMMAND>
+
+Commands:
+  get-frame  Extract one frame as a standalone still WebP (bytes copied verbatim)
+  set        Rewrite the loop count and/or background color
+  remove     Remove one frame, rebuilding the frame list
+  insert     Insert a still WebP as a new frame (its image bytes copied verbatim)
+  replace    Replace one frame's image with a still WebP, keeping its placement/timing
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never [default: auto, or from env/config].
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp mux get-frame --help
+Extract one frame as a standalone still WebP (bytes copied verbatim)
+
+Usage: webp mux get-frame [OPTIONS] --output <OUTPUT> <INPUT> <INDEX>
+
+Arguments:
+  <INPUT>
+          Input animated `.webp` file
+
+  <INDEX>
+          0-based frame index to extract
+
+Options:
+  -o, --output <OUTPUT>
+          Output `.webp` file; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never [default: auto, or from env/config].
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp mux set --help
+Rewrite the loop count and/or background color
+
+Usage: webp mux set [OPTIONS] --output <OUTPUT> <INPUT>
+
+Arguments:
+  <INPUT>
+          Input animated `.webp` file
+
+Options:
+  -o, --output <OUTPUT>
+          Output `.webp` file; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --loop <N>
+          New loop count (`0` loops forever)
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --bgcolor <RRGGBBAA>
+          New background color as `RRGGBBAA` hex
+
+      --color <WHEN>
+          auto, always, or never [default: auto, or from env/config].
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp mux remove --help
+Remove one frame, rebuilding the frame list
+
+Usage: webp mux remove [OPTIONS] --output <OUTPUT> <INPUT> <INDEX>
+
+Arguments:
+  <INPUT>
+          Input animated `.webp` file
+
+  <INDEX>
+          0-based frame index to remove
+
+Options:
+  -o, --output <OUTPUT>
+          Output `.webp` file; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never [default: auto, or from env/config].
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp mux insert --help
+Insert a still WebP as a new frame (its image bytes copied verbatim)
+
+Usage: webp mux insert [OPTIONS] --output <OUTPUT> <INPUT> <FRAME>
+
+Arguments:
+  <INPUT>
+          Input animated `.webp` file
+
+  <FRAME>
+          The still `.webp` to insert as a new frame
+
+Options:
+  -o, --output <OUTPUT>
+          Output `.webp` file; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --at <N>
+          0-based index to insert at; defaults to appending at the end
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never [default: auto, or from env/config].
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+
+      --delay <MS>
+          The new frame's display duration in ms
+          
+          [default: 100]
+
+      --blend <BLEND>
+          The new frame's blend method
+
+          Possible values:
+          - blend:     Alpha-blend the frame over the canvas (the default)
+          - overwrite: Overwrite the frame's rectangle, ignoring what is underneath
+          
+          [default: blend]
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dispose <DISPOSE>
+          The new frame's disposal method
+
+          Possible values:
+          - keep:       Leave the canvas as-is for the next frame (the default)
+          - background: Clear the frame's rectangle to transparent before the next frame
+          
+          [default: keep]
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+$ webp mux replace --help
+Replace one frame's image with a still WebP, keeping its placement/timing
+
+Usage: webp mux replace [OPTIONS] --output <OUTPUT> --at <N> <INPUT> <FRAME>
+
+Arguments:
+  <INPUT>
+          Input animated `.webp` file
+
+  <FRAME>
+          The still `.webp` whose image replaces the frame
+
+Options:
+  -o, --output <OUTPUT>
+          Output `.webp` file; `-` writes stdout
+
+  -v, --verbose...
+          Print per-stage detail on stderr
+
+      --at <N>
+          0-based index of the frame to replace
+
+      --quiet
+          Suppress all non-error output.
+          
+          Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
+
+      --color <WHEN>
+          auto, always, or never [default: auto, or from env/config].
+          
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+
+      --threads <N>
+          Worker threads for parallel work; 0 (the default) uses one per core.
+          
+          One global thread pool is built, which the encoder's parallel `best` search draws from too — so this single number bounds every layer of parallelism, batch conversion and per-image search alike.
+
+      --dry-run
+          Report what would be written, without encoding or writing anything
 
   -h, --help
           Print help (see a summary with '-h')
@@ -692,9 +1095,9 @@ Options:
           Override: encoder effort
 
           Possible values:
-          - fast:     Fastest: literal + subtract-green only
-          - balanced: Balanced (the default): LZ77 + color cache
-          - best:     Smallest: adds Tier 3 forward transforms and meta-Huffman on top of Balanced
+          - auto: Adapt the search depth to the image's content and size (the default)
+          - fast: Fastest: the shallowest fixed search
+          - best: Smallest: the deepest fixed search
 
       --codec <CODEC>
           Override: lossless or lossy

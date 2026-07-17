@@ -42,7 +42,7 @@ pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
     h
 }
 
-/// Encode raw RGBA through the public API (default `Balanced`, no metadata).
+/// Encode raw RGBA through the public API (default `AUTO` effort, no metadata).
 pub(crate) fn webpkit_encode(
     rgba: &[u8],
     width: u32,
@@ -54,42 +54,40 @@ pub(crate) fn webpkit_encode(
     webpkit::lossless::encode(image, &webpkit::lossless::EncoderConfig::default())
 }
 
-/// Every encoder method, in ledger order (cheapest first). Measured at every size.
+/// The three representative encoder efforts sampled for the ledger, cheapest first:
+/// the fastest fixed level, the adaptive default, and the deepest search.
 pub(crate) const ALL_METHODS: [webpkit::lossless::Effort; 3] = [
-    webpkit::lossless::Effort::Fast,
-    webpkit::lossless::Effort::Balanced,
-    webpkit::lossless::Effort::Best,
+    webpkit::lossless::Effort::level(0),
+    webpkit::lossless::Effort::AUTO,
+    webpkit::lossless::Effort::level(9),
 ];
 
-/// The stable ledger label for an encoder method.
-///
-/// `webpkit::lossless::Effort` is deliberately not `#[non_exhaustive]`, so this
-/// match is exhaustive: a new variant would fail to compile here until it is given
-/// a label, which is exactly the reminder this tool's method matrix wants.
-pub(crate) const fn method_name(m: webpkit::lossless::Effort) -> &'static str {
-    match m {
-        webpkit::lossless::Effort::Fast => "fast",
-        webpkit::lossless::Effort::Balanced => "balanced",
-        webpkit::lossless::Effort::Best => "best",
+/// The stable ledger label for a sampled encoder effort. `Effort` exposes no level
+/// getter, so the three sampled points are recovered by probing the constructors.
+pub(crate) fn method_name(m: webpkit::lossless::Effort) -> &'static str {
+    if m == webpkit::lossless::Effort::AUTO {
+        "auto"
+    } else if m == webpkit::lossless::Effort::level(0) {
+        "l0"
+    } else {
+        "l9"
     }
 }
 
-/// Every lossy effort method, cheapest first, in printed-table order.
+/// The three representative lossy efforts sampled for the ledger, cheapest first.
 pub(crate) const LOSSY_METHODS: [webpkit::lossy::Effort; 3] = [
-    webpkit::lossy::Effort::Fast,
-    webpkit::lossy::Effort::Balanced,
-    webpkit::lossy::Effort::Best,
+    webpkit::lossy::Effort::level(0),
+    webpkit::lossy::Effort::AUTO,
+    webpkit::lossy::Effort::level(9),
 ];
 
-/// The stable label for a lossy effort method.
-///
-/// `webpkit::lossy::Effort` is deliberately not `#[non_exhaustive]`, so this match is
-/// exhaustive: a new variant would fail to compile here until it is given a label,
-/// which is exactly the reminder this tool's method matrix wants.
-pub(crate) const fn lossy_method_name(m: webpkit::lossy::Effort) -> &'static str {
-    match m {
-        webpkit::lossy::Effort::Fast => "fast",
-        webpkit::lossy::Effort::Balanced => "balanced",
-        webpkit::lossy::Effort::Best => "best",
+/// The stable ledger label for a sampled lossy effort (see [`method_name`]).
+pub(crate) fn lossy_method_name(m: webpkit::lossy::Effort) -> &'static str {
+    if m == webpkit::lossy::Effort::AUTO {
+        "auto"
+    } else if m == webpkit::lossy::Effort::level(0) {
+        "l0"
+    } else {
+        "l9"
     }
 }

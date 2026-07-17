@@ -21,6 +21,8 @@ mis = "mis"
 numer = "numer"
 # `ba` occurs inside committed hex digests (e.g. `7ffbbd64ba73c260`), not as a word.
 ba = "ba"
+# `ded` occurs inside committed hex digests (e.g. `8ded861974c278bc`), not as a word.
+ded = "ded"
 
 # Local variables in the `select` predictor: byte arrays of a/b/c.
 [default.extend-identifiers]

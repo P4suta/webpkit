@@ -1,0 +1,34 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-mux 1  "mux " 
+.SH NAME
+mux \- Edit an animated WebP without re\-encoding frames (webpmux\-parity muxing)
+.SH SYNOPSIS
+\fBmux\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Edit an animated WebP without re\-encoding frames (webpmux\-parity muxing).
+.PP
+Extract a frame, edit the loop count / background, or insert / remove / replace frames — every untouched frame\*(Aqs encoded bytes pass through byte\-for\-byte, and the ICC/Exif/XMP metadata is preserved.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH SUBCOMMANDS
+.TP
+mux\-get\-frame(1)
+Extract one frame as a standalone still WebP (bytes copied verbatim)
+.TP
+mux\-set(1)
+Rewrite the loop count and/or background color
+.TP
+mux\-remove(1)
+Remove one frame, rebuilding the frame list
+.TP
+mux\-insert(1)
+Insert a still WebP as a new frame (its image bytes copied verbatim)
+.TP
+mux\-replace(1)
+Replace one frame\*(Aqs image with a still WebP, keeping its placement/timing
+.TP
+mux\-help(1)
+Print this message or the help of the given subcommand(s)

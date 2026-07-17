@@ -157,10 +157,10 @@ impl StillState {
 /// yields finalized rows early and [`Self::into_image`] returns the complete
 /// picture. `Read`-free, so it works on `no_std + alloc`.
 ///
-/// The pixel limit is **opt-in**: [`DecodeOptions::max_pixels`] defaults to `None`
-/// (no cap), so a hostile header is not rejected until you set it (via
-/// [`Self::with_options`]). Set it when streaming untrusted input — the limit is
-/// then enforced against the peeked dimensions before the planes are allocated.
+/// The pixel limit follows [`DecodeOptions`], the single source of truth: a
+/// default-constructed one caps at [`DEFAULT_MAX_PIXELS`](crate::DEFAULT_MAX_PIXELS)
+/// (opt out with [`DecodeOptions::unbounded`]). It is enforced against the peeked
+/// dimensions before the planes are allocated; set it via [`Self::with_options`].
 #[derive(Debug)]
 pub struct IncrementalDecoder {
     buf: Vec<u8>,
@@ -293,9 +293,9 @@ impl IncrementalDecoder {
                         return Ok(Progress::HeaderReady(info));
                     }
                 },
-                Step::Rows { first_row, count } => {
+                Step::Rows { first_row, rows } => {
                     let start = first_row as usize * row_bytes;
-                    let stop = (first_row + count) as usize * row_bytes;
+                    let stop = (first_row + rows) as usize * row_bytes;
                     let rows_rgba = &st.stream.ready()[start..stop];
                     if st.layout == PixelLayout::Rgba8 {
                         st.packed.extend_from_slice(rows_rgba);
@@ -304,11 +304,11 @@ impl IncrementalDecoder {
                         st.packed
                             .extend_from_slice(&image::pack_pixels(st.layout, &argb));
                     }
-                    st.next_row = first_row + count;
+                    st.next_row = first_row + rows;
                     if rows_first.is_none() {
                         rows_first = Some(first_row);
                     }
-                    rows_count += count;
+                    rows_count += rows;
                 },
                 Step::NeedMore => break,
                 Step::Done => {
@@ -327,7 +327,7 @@ impl IncrementalDecoder {
         if let Some(first_row) = rows_first {
             return Ok(Progress::RowsDecoded {
                 first_row,
-                count: rows_count,
+                rows: rows_count,
             });
         }
         Ok(Progress::NeedMoreInput)
@@ -602,10 +602,10 @@ mod tests {
                     assert_eq!(info.dimensions.height(), height);
                     header_seen = true;
                 },
-                Progress::RowsDecoded { first_row, count } => {
+                Progress::RowsDecoded { first_row, rows } => {
                     assert!(header_seen, "rows before HeaderReady");
                     assert_eq!(first_row, rows_seen, "row bursts not contiguous");
-                    rows_seen += count;
+                    rows_seen += rows;
                 },
                 Progress::Finished => finished = true,
                 Progress::FrameComplete(_) => panic!("a still image emits no frames"),
@@ -657,7 +657,7 @@ mod tests {
         }
         let cfg = LossyConfig::new()
             .with_quality(50)
-            .with_effort(Effort::Balanced);
+            .with_effort(Effort::level(4));
         let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
         let webp = encode(img, &cfg).unwrap();
         let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
@@ -795,10 +795,10 @@ mod tests {
         let mut dec = IncrementalDecoder::new();
         let mut rows = 0u32;
         for byte in &file[..payload_end] {
-            if let Progress::RowsDecoded { count, .. } =
+            if let Progress::RowsDecoded { rows: n, .. } =
                 dec.push(core::slice::from_ref(byte)).unwrap()
             {
-                rows += count;
+                rows += n;
             }
         }
         assert_eq!(

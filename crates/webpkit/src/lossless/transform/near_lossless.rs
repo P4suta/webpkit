@@ -168,7 +168,9 @@ mod tests {
     #[test]
     fn small_image_is_left_untouched() {
         // Both dimensions below 64 -> no pass, even at the strongest level.
-        let orig: Vec<u32> = (0..16u32).map(|i| 0xFF00_0000 | (i * 0x0011_1111)).collect();
+        let orig: Vec<u32> = (0..16u32)
+            .map(|i| 0xFF00_0000 | (i * 0x0011_1111))
+            .collect();
         let mut px = orig.clone();
         apply(&mut px, 4, 4, 0);
         assert_eq!(px, orig);
@@ -176,7 +178,9 @@ mod tests {
 
     #[test]
     fn level_100_is_a_no_op_on_a_large_image() {
-        let orig: Vec<u32> = (0..64 * 4u32).map(|i| 0xFF00_0000 | i.wrapping_mul(2_654_435_761)).collect();
+        let orig: Vec<u32> = (0..64 * 4u32)
+            .map(|i| 0xFF00_0000 | i.wrapping_mul(2_654_435_761))
+            .collect();
         let mut px = orig.clone();
         apply(&mut px, 64, 4, 100);
         assert_eq!(px, orig);

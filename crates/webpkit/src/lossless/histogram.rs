@@ -7,11 +7,83 @@
 //! platform (a codec that emits golden files must never depend on float
 //! rounding) and the crate stays `no_std`.
 
+use crate::effort::MAX_LEVEL;
 use crate::lossless::constants::{NUM_DISTANCE_CODES, NUM_LENGTH_CODES, NUM_LITERAL_CODES};
 use crate::lossless::prelude::*;
 
 /// Fractional bits carried by [`fixed_log2`] and the entropy accumulator.
 const LOG2_FRAC_BITS: u32 = 16;
+
+/// Choose the [`Effort`](crate::Effort) breadth level (`0..=9`) for `argb` under
+/// [`Effort::AUTO`](crate::Effort::AUTO).
+///
+/// A cheap fixed-point pre-analysis: spatially-compressible content (gradients,
+/// flats) reaches the deepest transform search, while the pixel count caps the
+/// breadth on large images so the transform sweep's working buffers stay bounded.
+/// This only *selects* a level — the encoder's real-byte ranking still keeps the
+/// result no larger than the transform-free floor, so a mis-estimate can never
+/// enlarge the output.
+pub(crate) fn auto_level(width: u32, argb: &[u32]) -> u8 {
+    content_level(width, argb).min(size_cap(argb.len() as u64))
+}
+
+/// Cap the breadth as the pixel count grows, bounding the transform sweep's peak
+/// allocation; small images can afford the full search.
+const fn size_cap(pixels: u64) -> u8 {
+    if pixels <= 0x4000 {
+        MAX_LEVEL // <= 128*128
+    } else if pixels <= 0x4_0000 {
+        6 // <= 512*512
+    } else if pixels <= 0x10_0000 {
+        4 // <= ~1 MP
+    } else if pixels <= 0x40_0000 {
+        3 // <= ~4 MP
+    } else {
+        2
+    }
+}
+
+/// A spatial-compressibility proxy: the per-pixel Shannon cost of the green
+/// channel's horizontal residual (each green byte minus its left neighbor, wrapping
+/// at 8 bits). Smoothly-varying images collapse the residual to a few low-entropy
+/// values and earn the deepest search; busy images spread it and settle for a
+/// shallower, cheaper breadth. Green alone is the cheapest single-channel probe and
+/// carries the luma-like structure the spatial predictor exploits.
+fn content_level(width: u32, argb: &[u32]) -> u8 {
+    let count = argb.len() as u64;
+    if count == 0 {
+        return MAX_LEVEL;
+    }
+    let width = (width.max(1)) as usize;
+    let mut residual_hist = [0u32; 256];
+    for (i, &pixel) in argb.iter().enumerate() {
+        let green = (pixel >> 8) & 0xff;
+        // Column 0 has no left neighbor: probe the raw byte there.
+        let residual = if i % width == 0 {
+            green
+        } else {
+            green.wrapping_sub((argb[i - 1] >> 8) & 0xff) & 0xff
+        };
+        residual_hist[residual as usize] += 1;
+    }
+    let (cost, _used) = channel_bits(&residual_hist);
+    // Whole-bit-per-pixel bands over the residual's [0, 8]-bit range: <=1 bpp earns
+    // the deepest search, and each further bit of residual entropy steps the breadth
+    // down, never below the level that still runs cross-color and optimal-parse.
+    if cost <= count {
+        MAX_LEVEL
+    } else if cost <= count * 2 {
+        8
+    } else if cost <= count * 3 {
+        7
+    } else if cost <= count * 4 {
+        5
+    } else if cost <= count * 5 {
+        4
+    } else {
+        3
+    }
+}
 
 /// A per-group symbol histogram: one bin per symbol of each of the five VP8L
 /// codes, plus the running total of raw length/distance extra bits.
@@ -291,9 +363,64 @@ pub(crate) fn fixed_log2(x: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Histogram, LOG2_FRAC_BITS, channel_bits, fixed_log2, header_bits, shannon_bits};
+    use super::{
+        Histogram, LOG2_FRAC_BITS, auto_level, channel_bits, fixed_log2, header_bits, shannon_bits,
+        size_cap,
+    };
+    use crate::effort::MAX_LEVEL;
     use crate::lossless::constants::{NUM_LENGTH_CODES, NUM_LITERAL_CODES};
     use proptest::prelude::*;
+
+    /// Pack a native ARGB pixel (opaque).
+    fn argb(r: u32, g: u32, b: u32) -> u32 {
+        0xff00_0000 | (r << 16) | (g << 8) | b
+    }
+
+    #[test]
+    fn auto_level_favors_a_smooth_gradient() {
+        // A smooth green ramp collapses under the horizontal residual to a single
+        // low-entropy delta, so the pre-analysis picks the deepest breadth.
+        let pixels: Vec<u32> = (0..64u32).map(|v| argb(v, v, v)).collect();
+        assert_eq!(auto_level(8, &pixels), MAX_LEVEL);
+    }
+
+    #[test]
+    fn auto_level_steps_down_for_busy_content() {
+        // A high-entropy green field spreads the residual, so the breadth drops off
+        // the maximum — but never below the floor that still runs cross-color/DP.
+        let mut state = 0x1234_5678u64 | 1;
+        let pixels: Vec<u32> = (0..1024u32)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1);
+                let g = (state >> 40) as u32 & 0xff;
+                argb(g ^ 0x5a, g, g.wrapping_mul(3) & 0xff)
+            })
+            .collect();
+        let level = auto_level(32, &pixels);
+        assert!(level < MAX_LEVEL, "busy content must not earn max breadth");
+        assert!(level >= 3, "must still run cross-color/DP, got {level}");
+    }
+
+    #[test]
+    fn size_cap_bounds_large_images() {
+        // Monotone non-increasing in pixel count, saturating at the max for small
+        // images and clamped low for very large ones (peak-alloc bound).
+        assert_eq!(size_cap(0), MAX_LEVEL);
+        assert_eq!(size_cap(0x4000), MAX_LEVEL);
+        assert!(size_cap(0x10_0000) < MAX_LEVEL);
+        assert!(size_cap(0x80_0000) <= size_cap(0x40_0000));
+        assert_eq!(size_cap(u64::MAX), 2);
+    }
+
+    #[test]
+    fn auto_level_is_never_out_of_range() {
+        // The empty input degenerates to the maximum; any input stays in 0..=9.
+        assert_eq!(auto_level(1, &[]), MAX_LEVEL);
+        let flat = vec![argb(10, 20, 30); 100];
+        assert!(auto_level(10, &flat) <= MAX_LEVEL);
+    }
 
     #[test]
     fn fixed_log2_known_values() {
