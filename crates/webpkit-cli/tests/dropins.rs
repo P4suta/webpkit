@@ -150,7 +150,11 @@ fn dwebp_rejects_rgba_transforms_on_the_yuv_path() {
     let lossy = run("cwebp", &["-", "-o", "-", "-q", "80"], ppm);
     assert!(lossy.status.success(), "cwebp -q failed: {lossy:?}");
     for flag in ["-flip", "-alpha"] {
-        let out = run("dwebp", &["-", "-o", "-", "-yuv", flag], lossy.stdout.clone());
+        let out = run(
+            "dwebp",
+            &["-", "-o", "-", "-yuv", flag],
+            lossy.stdout.clone(),
+        );
         assert_eq!(
             out.status.code(),
             Some(2),
@@ -158,7 +162,10 @@ fn dwebp_rejects_rgba_transforms_on_the_yuv_path() {
         );
         let err = stderr(&out);
         assert!(err.contains("-yuv"), "names the YUV flag: {err:?}");
-        assert!(err.contains(flag.trim_start_matches('-')), "names {flag}: {err:?}");
+        assert!(
+            err.contains(flag.trim_start_matches('-')),
+            "names {flag}: {err:?}"
+        );
     }
 }
 

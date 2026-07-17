@@ -603,7 +603,11 @@ fn public_decode_yuv_matches_libwebp_level_a() {
                 let yuv = webpkit::decode_yuv(&webp)
                     .unwrap_or_else(|_| panic!("{name} {w}x{h} q{q}: decode_yuv failed"));
                 let (lw, lh, ly, lu, lv) = libwebp_decode_yuv(&webp);
-                assert_eq!((yuv.width(), yuv.height()), (lw, lh), "{name} {w}x{h} q{q}: dims");
+                assert_eq!(
+                    (yuv.width(), yuv.height()),
+                    (lw, lh),
+                    "{name} {w}x{h} q{q}: dims"
+                );
                 assert_eq!(
                     (yuv.chroma_width(), yuv.chroma_height()),
                     (lw.div_ceil(2), lh.div_ceil(2)),

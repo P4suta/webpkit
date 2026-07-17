@@ -11,7 +11,9 @@
 use std::{fs, path::Path};
 
 use assert_cmd::Command;
-use image::{Delay, Frame, ImageFormat, Rgba, RgbaImage, codecs::gif::GifEncoder, codecs::gif::Repeat};
+use image::{
+    Delay, Frame, ImageFormat, Rgba, RgbaImage, codecs::gif::GifEncoder, codecs::gif::Repeat,
+};
 use predicates::str::contains;
 use tempfile::TempDir;
 

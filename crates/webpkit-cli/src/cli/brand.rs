@@ -1640,7 +1640,13 @@ fn meta_set(args: &MetaSetArgs, reporter: &Reporter) -> Result<(), CliError> {
 fn meta_strip(args: &MetaStripArgs, reporter: &Reporter) -> Result<(), CliError> {
     let source = Source::from_arg(&args.input);
     let bytes = source.read()?;
-    write_meta(&bytes, &webpkit::Metadata::none(), &source, &args.output, reporter)
+    write_meta(
+        &bytes,
+        &webpkit::Metadata::none(),
+        &source,
+        &args.output,
+        reporter,
+    )
 }
 
 /// Rewrite `input`'s metadata to `metadata` and write it to `output`, atomically.

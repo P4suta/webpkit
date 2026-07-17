@@ -232,8 +232,11 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
             "-lossless" => config.lossless = true,
             // Near-lossless preprocessing implies lossless output, as in libwebp.
             "-near_lossless" => {
-                config.near_lossless =
-                    Some(parse_near_lossless(&value(args, &mut index, "-near_lossless")?)?);
+                config.near_lossless = Some(parse_near_lossless(&value(
+                    args,
+                    &mut index,
+                    "-near_lossless",
+                )?)?);
                 config.lossless = true;
             },
             "-metadata" => {
