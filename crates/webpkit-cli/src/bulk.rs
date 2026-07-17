@@ -24,6 +24,10 @@ const IMAGE_EXTENSIONS: [&str; 11] = [
 
 /// Options for a bulk conversion run.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "conversion options: each bool is an independent switch, not modeled state"
+)]
 pub(crate) struct Options {
     /// The user's codec choice, resolved per file against its source format.
     pub(crate) flags: CodecFlags,
@@ -35,6 +39,10 @@ pub(crate) struct Options {
     pub(crate) recursive: bool,
     /// Output directory; when absent, each output sits beside its input.
     pub(crate) output_dir: Option<PathBuf>,
+    /// Overwrite an existing output instead of refusing.
+    pub(crate) force: bool,
+    /// Skip an input whose output exists (rather than refusing).
+    pub(crate) no_clobber: bool,
 }
 
 /// One result line and the aggregate totals from a bulk run.
@@ -48,6 +56,8 @@ pub(crate) struct Outcome {
     pub(crate) total_in: u64,
     /// Total output bytes across successful files.
     pub(crate) total_out: u64,
+    /// Files skipped because their output already existed (`--no-clobber`).
+    pub(crate) skipped: usize,
     /// Per-file report lines paired with whether that file succeeded.
     pub(crate) lines: Vec<(bool, String)>,
 }
@@ -61,7 +71,7 @@ pub(crate) struct Outcome {
 /// returned [`Outcome`].
 pub(crate) fn convert(inputs: &[PathBuf], options: &Options) -> Result<Outcome, CliError> {
     let files = io::collect_files(inputs, options.recursive, &is_image)?;
-    let results: Vec<Result<Stat, String>> = files
+    let results: Vec<Result<Conversion, String>> = files
         .par_iter()
         .map(|path| convert_one(path, options).map_err(|err| format!("{}: {err}", path.display())))
         .collect();
@@ -69,7 +79,7 @@ pub(crate) fn convert(inputs: &[PathBuf], options: &Options) -> Result<Outcome, 
     let mut outcome = Outcome::default();
     for result in results {
         match result {
-            Ok(stat) => {
+            Ok(Conversion::Written(stat)) => {
                 outcome.converted += 1;
                 outcome.total_in += stat.in_len;
                 outcome.total_out += stat.out_len;
@@ -77,6 +87,12 @@ pub(crate) fn convert(inputs: &[PathBuf], options: &Options) -> Result<Outcome, 
                     true,
                     format!("{} ({} bytes)", stat.output.display(), stat.out_len),
                 ));
+            },
+            Ok(Conversion::Skipped(output)) => {
+                outcome.skipped += 1;
+                outcome
+                    .lines
+                    .push((true, format!("skipping {} (exists)", output.display())));
             },
             Err(message) => {
                 outcome.failed += 1;
@@ -93,7 +109,20 @@ struct Stat {
     out_len: u64,
 }
 
-fn convert_one(path: &Path, options: &Options) -> Result<Stat, CliError> {
+/// One input's disposition: written, or skipped because its output exists.
+enum Conversion {
+    Written(Stat),
+    Skipped(PathBuf),
+}
+
+fn convert_one(path: &Path, options: &Options) -> Result<Conversion, CliError> {
+    let output = output_path(path, options.output_dir.as_deref());
+    if io::exists(&output) && !options.force {
+        if options.no_clobber {
+            return Ok(Conversion::Skipped(output));
+        }
+        return Err(CliError::Clobber(output.display().to_string()));
+    }
     let bytes = Source::File(path.to_path_buf()).read()?;
     let format = InputFormat::resolve(None, io::extension_of(path).as_deref(), &bytes);
     if format == InputFormat::Raw {
@@ -114,13 +143,12 @@ fn convert_one(path: &Path, options: &Options) -> Result<Stat, CliError> {
         let metadata = options.metadata.apply(image.metadata());
         strategy.run(&image, &metadata)?.bytes
     };
-    let output = output_path(path, options.output_dir.as_deref());
     Sink::File(output.clone()).write(&webp)?;
-    Ok(Stat {
+    Ok(Conversion::Written(Stat {
         output,
         in_len: bytes.len() as u64,
         out_len: webp.len() as u64,
-    })
+    }))
 }
 
 fn is_image(path: &Path) -> bool {

@@ -24,7 +24,7 @@ function __fish_webp_using_subcommand
     contains -- $cmd[1] $argv
 end
 
-complete -c webp -n "__fish_webp_needs_command" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_needs_command" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_needs_command" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
@@ -77,7 +77,7 @@ none\t'Strip everything (a bare `VP8L` output)'
 icc\t'Keep the ICC color profile'
 exif\t'Keep Exif'
 xmp\t'Keep XMP'"
-complete -c webp -n "__fish_webp_using_subcommand decode" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand decode" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand decode" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
@@ -112,7 +112,7 @@ none\t'Strip everything (a bare `VP8L` output)'
 icc\t'Keep the ICC color profile'
 exif\t'Keep Exif'
 xmp\t'Keep XMP'"
-complete -c webp -n "__fish_webp_using_subcommand encode" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand encode" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand encode" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
@@ -132,7 +132,7 @@ none\t'Strip everything (a bare `VP8L` output)'
 icc\t'Keep the ICC color profile'
 exif\t'Keep Exif'
 xmp\t'Keep XMP'"
-complete -c webp -n "__fish_webp_using_subcommand convert" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand convert" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand convert" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
@@ -140,11 +140,13 @@ complete -c webp -n "__fish_webp_using_subcommand convert" -l lossless -d 'Force
 complete -c webp -n "__fish_webp_using_subcommand convert" -l lossy -d 'Encode lossily (VP8) instead of losslessly (VP8L)'
 complete -c webp -n "__fish_webp_using_subcommand convert" -l optimize -d 'Try every lossless effort level and keep the smallest output'
 complete -c webp -n "__fish_webp_using_subcommand convert" -s r -l recursive -d 'Recurse into subdirectories'
+complete -c webp -n "__fish_webp_using_subcommand convert" -l force -d 'Overwrite an existing output'
+complete -c webp -n "__fish_webp_using_subcommand convert" -l no-clobber -d 'Skip an input whose `.webp` output exists (still exits 0)'
 complete -c webp -n "__fish_webp_using_subcommand convert" -s v -l verbose -d 'Print per-stage detail on stderr'
 complete -c webp -n "__fish_webp_using_subcommand convert" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand convert" -l dry-run -d 'Report what would be written, without encoding or writing anything'
 complete -c webp -n "__fish_webp_using_subcommand convert" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c webp -n "__fish_webp_using_subcommand info" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand info" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand info" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
@@ -154,7 +156,7 @@ complete -c webp -n "__fish_webp_using_subcommand info" -l quiet -d 'Suppress al
 complete -c webp -n "__fish_webp_using_subcommand info" -l dry-run -d 'Report what would be written, without encoding or writing anything'
 complete -c webp -n "__fish_webp_using_subcommand info" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c webp -n "__fish_webp_using_subcommand diff" -l min-psnr -d 'Fail (exit 1) if the RGB PSNR is below this many decibels' -r
-complete -c webp -n "__fish_webp_using_subcommand diff" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand diff" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand diff" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
@@ -163,7 +165,7 @@ complete -c webp -n "__fish_webp_using_subcommand diff" -s v -l verbose -d 'Prin
 complete -c webp -n "__fish_webp_using_subcommand diff" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand diff" -l dry-run -d 'Report what would be written, without encoding or writing anything'
 complete -c webp -n "__fish_webp_using_subcommand diff" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c webp -n "__fish_webp_using_subcommand doctor" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand doctor" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand doctor" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
@@ -184,7 +186,7 @@ exif\t'Keep Exif'
 xmp\t'Keep XMP'"
 complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -l threads -d 'Override: worker threads (0 = one per core)' -r
 complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -l max-pixels -d 'Override: decode pixel cap (N, 300M, 2G, or none)' -r
-complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -l json -d 'Print the resolved settings as JSON (stable key order)'
@@ -195,7 +197,7 @@ complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_su
 complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -f -a "get" -d 'Print a single setting\'s resolved value, with nothing else'
 complete -c webp -n "__fish_webp_using_subcommand config; and not __fish_seen_subcommand_from get help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c webp -n "__fish_webp_using_subcommand config; and __fish_seen_subcommand_from get" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand config; and __fish_seen_subcommand_from get" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand config; and __fish_seen_subcommand_from get" -s v -l verbose -d 'Print per-stage detail on stderr'
@@ -204,7 +206,7 @@ complete -c webp -n "__fish_webp_using_subcommand config; and __fish_seen_subcom
 complete -c webp -n "__fish_webp_using_subcommand config; and __fish_seen_subcommand_from get" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c webp -n "__fish_webp_using_subcommand config; and __fish_seen_subcommand_from help" -f -a "get" -d 'Print a single setting\'s resolved value, with nothing else'
 complete -c webp -n "__fish_webp_using_subcommand config; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c webp -n "__fish_webp_using_subcommand explain" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand explain" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand explain" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
@@ -212,7 +214,7 @@ complete -c webp -n "__fish_webp_using_subcommand explain" -s v -l verbose -d 'P
 complete -c webp -n "__fish_webp_using_subcommand explain" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand explain" -l dry-run -d 'Report what would be written, without encoding or writing anything'
 complete -c webp -n "__fish_webp_using_subcommand explain" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c webp -n "__fish_webp_using_subcommand completions" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand completions" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand completions" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r
@@ -220,7 +222,7 @@ complete -c webp -n "__fish_webp_using_subcommand completions" -s v -l verbose -
 complete -c webp -n "__fish_webp_using_subcommand completions" -l quiet -d 'Suppress all non-error output'
 complete -c webp -n "__fish_webp_using_subcommand completions" -l dry-run -d 'Report what would be written, without encoding or writing anything'
 complete -c webp -n "__fish_webp_using_subcommand completions" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c webp -n "__fish_webp_using_subcommand man" -l color -d 'auto, always, or never' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
+complete -c webp -n "__fish_webp_using_subcommand man" -l color -d 'auto, always, or never [default: auto, or from env/config]' -r -f -a "auto\t'Style only when the stream is a terminal that wants it (the default)'
 always\t'Style even when the stream is redirected'
 never\t'Never style'"
 complete -c webp -n "__fish_webp_using_subcommand man" -l threads -d 'Worker threads for parallel work; 0 (the default) uses one per core' -r

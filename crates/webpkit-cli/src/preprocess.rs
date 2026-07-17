@@ -252,15 +252,7 @@ fn apply_crop(image: &Image, crop: Crop) -> Result<Image, CliError> {
         let start = (ry * src_w + x) * 4;
         out.extend_from_slice(&src[start..start + row_bytes]);
     }
-    let alpha_off = image.layout().alpha_byte_offset();
-    let has_alpha = out.chunks_exact(4).any(|px| px[alpha_off] != 0xff);
-    Ok(Image::from_parts(
-        out_dims,
-        image.layout(),
-        out,
-        has_alpha,
-        image.metadata().clone(),
-    ))
+    Ok(Image::new(out_dims, image.layout(), out)?.with_metadata(image.metadata().clone()))
 }
 
 /// Resize `image` to the projected target with the `image` crate's Lanczos3 filter.
@@ -306,7 +298,7 @@ fn four_ints(spec: &str) -> Option<[u32; 4]> {
 
 #[cfg(test)]
 mod tests {
-    use webpkit::{Dimensions, Image, Metadata, PixelLayout};
+    use webpkit::{Dimensions, Image, PixelLayout};
 
     use super::{Crop, Pipeline, Resize};
 
@@ -317,14 +309,7 @@ mod tests {
     /// A solid-color image so crop/resize outputs are easy to reason about.
     fn solid(w: u32, h: u32, px: [u8; 4]) -> Image {
         let pixels = px.repeat((w * h) as usize);
-        let has_alpha = px[3] != 0xff;
-        Image::from_parts(
-            dims(w, h),
-            PixelLayout::Rgba8,
-            pixels,
-            has_alpha,
-            Metadata::none(),
-        )
+        Image::new(dims(w, h), PixelLayout::Rgba8, pixels).unwrap()
     }
 
     #[test]

@@ -19,7 +19,8 @@ fn stderr_of(bin: &str, args: &[&str], env: &[(&str, &str)]) -> String {
     cmd.env_remove("NO_COLOR")
         .env_remove("CLICOLOR_FORCE")
         .env_remove("CLICOLOR")
-        .env_remove("TERM");
+        .env_remove("TERM")
+        .env_remove("WEBP_COLOR");
     for (key, value) in env {
         cmd.env(key, value);
     }
@@ -35,6 +36,25 @@ const FAILING: [&str; 2] = ["info", "no-such-file.webp"];
 #[test]
 fn a_redirected_stream_is_plain_by_default() {
     assert!(!stderr_of("webp", &FAILING, &[]).contains(ESC));
+}
+
+/// `WEBP_COLOR` now reaches the installed color: over a pipe (plain by default),
+/// setting it to `always` styles the error. Before the fix the env was ignored.
+#[test]
+fn an_env_var_reaches_the_installed_color() {
+    let err = stderr_of("webp", &FAILING, &[("WEBP_COLOR", "always")]);
+    assert!(err.contains(ESC), "WEBP_COLOR=always should style: {err:?}");
+}
+
+/// An explicit `--color` still outranks `WEBP_COLOR`.
+#[test]
+fn a_flag_beats_the_env_color() {
+    let err = stderr_of(
+        "webp",
+        &["info", "no-such-file.webp", "--color", "never"],
+        &[("WEBP_COLOR", "always")],
+    );
+    assert!(!err.contains(ESC), "the flag should win: {err:?}");
 }
 
 #[test]

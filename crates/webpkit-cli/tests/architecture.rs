@@ -74,14 +74,7 @@ const HIDDEN_MODULES: &[&str] = &[
 ///
 /// Every entry is a standing signal that `webpkit`'s facade should grow: the CLI
 /// needs something the public API does not offer. Keep this list empty if you can.
-const FACADE_GAPS: &[(&str, &str)] = &[
-    // `webp info -v` prints the RIFF chunk table (the `webpinfo` half), and reads
-    // an animation's per-frame codecs, which `probe` cannot answer for the file as
-    // a whole. Neither has a facade equivalent: the container walk is not exposed.
-    // The facade should grow a chunk iterator; until it does, this line is the
-    // record of why.
-    ("inspect.rs", "container"),
-];
+const FACADE_GAPS: &[(&str, &str)] = &[];
 
 /// Modules permitted to touch the filesystem and the standard streams.
 ///

@@ -524,3 +524,64 @@ fn incremental_decodes_lossy_anim_like_one_shot() {
         "streamed lossy-animation frames differ from the one-shot composite"
     );
 }
+
+#[test]
+fn encode_lossy_anim_matches_libwebp_demux() {
+    // The encoder direction: our AnimationEncoder's lossy output must be
+    // libwebp-readable and composite bit-for-bit identically. Both sides consume
+    // the identical VP8/ALPH bitstreams we wrote, and each half is independently
+    // proven byte-exact (lossy RGBA vs WebPDecodeRGBA; our compositor vs
+    // WebPAnimDecoder), so the two composites must agree exactly.
+    let mut checked = 0u32;
+    for &(w, h) in &[(16u32, 16u32), (15, 9), (24, 20)] {
+        for &opaque in &[true, false] {
+            let canvas = webpkit::Dimensions::new(w, h).unwrap();
+            let frames: Vec<Vec<u8>> = (0..3).map(|i| anim_frame(w, h, i, opaque)).collect();
+            let frame_meta = webpkit::FrameMeta::new(
+                0,
+                0,
+                canvas,
+                40,
+                webpkit::BlendMode::Blend,
+                webpkit::DisposalMode::Keep,
+            );
+
+            let img0 =
+                webpkit::ImageRef::new(canvas, webpkit::PixelLayout::Rgba8, &frames[0]).unwrap();
+            let mut enc = webpkit::AnimationEncoder::new(canvas)
+                .lossy(90)
+                .with_loop_count(0)
+                .add_frame(img0, frame_meta)
+                .unwrap();
+            for f in &frames[1..] {
+                let img = webpkit::ImageRef::new(canvas, webpkit::PixelLayout::Rgba8, f).unwrap();
+                enc = enc.add_frame(img, frame_meta).unwrap();
+            }
+            let file = enc.finish();
+
+            assert!(
+                webpkit::is_animated(&file).unwrap(),
+                "our encoder did not produce an animation for {w}x{h}"
+            );
+            let (lw, lh, golden) = libwebp_anim_composite(&file);
+            let (ow, oh, ours) = webp_anim_composite(&file);
+            assert_eq!((ow, oh), (lw, lh), "canvas {w}x{h}");
+            assert_eq!(
+                ours.len(),
+                golden.len(),
+                "frame count {w}x{h} opaque={opaque}"
+            );
+            for (i, (a, b)) in ours.iter().zip(&golden).enumerate() {
+                assert_eq!(
+                    a, b,
+                    "our lossy-anim frame {i} diverges from libwebp demux at {w}x{h} opaque={opaque}"
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 6,
+        "expected the full encode-anim matrix, ran {checked}"
+    );
+}

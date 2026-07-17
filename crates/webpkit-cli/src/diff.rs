@@ -66,7 +66,7 @@ pub(crate) fn compare(a: &Path, b: &Path) -> Result<Comparison, CliError> {
 fn load_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>), CliError> {
     let bytes = Source::File(path.to_path_buf()).read()?;
     let image = if codec::is_webp(&bytes) {
-        codec::decode_still_or_first_frame(&bytes)?
+        codec::decode_still_or_first_frame(&bytes, Some(webpkit::DEFAULT_MAX_PIXELS))?
     } else {
         let format = InputFormat::resolve(None, io::extension_of(path).as_deref(), &bytes);
         format::read_image(&bytes, format, None)?

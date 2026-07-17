@@ -233,6 +233,71 @@ fn env_settings_reach_the_encode_not_just_the_config_report() {
     assert_ne!(cli, lossy, "an explicit -q must override WEBP_QUALITY");
 }
 
+/// A 2x2 (4-pixel) lossless WebP built through the real binary, for the decode-cap
+/// tests.
+fn webp_2x2() -> Vec<u8> {
+    let out = Command::cargo_bin("webp")
+        .expect("binary")
+        .args([
+            "encode",
+            "-",
+            "-o",
+            "-",
+            "--input-format",
+            "raw",
+            "--width",
+            "2",
+            "--height",
+            "2",
+        ])
+        .write_stdin((0..16u8).collect::<Vec<_>>())
+        .output()
+        .expect("encode");
+    assert!(out.status.success(), "fixture encode failed");
+    out.stdout
+}
+
+/// The `max_pixels` setting must bound a real decode, not merely show in `webp
+/// config`: a 4-pixel image with `WEBP_MAX_PIXELS=1` exceeds the cap and exits 7.
+/// Before the fix the setting was never applied, so the decode succeeded at `=1`.
+#[test]
+fn max_pixels_setting_limits_a_real_decode() {
+    let cwd = TempDir::new().expect("cwd");
+    let home = TempDir::new().expect("home");
+    fs::write(cwd.path().join("in.webp"), webp_2x2()).expect("write webp");
+
+    // Capped below the pixel count: exit 7 (Codec / LimitExceeded).
+    isolated(&cwd, &home)
+        .env("WEBP_MAX_PIXELS", "1")
+        .args(["decode", "in.webp", "-o", "out.png"])
+        .assert()
+        .code(7);
+    // Explicitly unbounded: succeeds.
+    isolated(&cwd, &home)
+        .env("WEBP_MAX_PIXELS", "none")
+        .args(["decode", "in.webp", "-o", "out-none.png"])
+        .assert()
+        .success();
+    // No env, built-in default cap: succeeds.
+    isolated(&cwd, &home)
+        .args(["decode", "in.webp", "-o", "out-default.png"])
+        .assert()
+        .success();
+}
+
+/// The bare direction-detected form honors the cap too (the `auto_decode` path).
+#[test]
+fn max_pixels_setting_limits_the_bare_form_decode() {
+    let cwd = TempDir::new().expect("cwd");
+    let home = TempDir::new().expect("home");
+    fs::write(cwd.path().join("in.webp"), webp_2x2()).expect("write webp");
+    isolated(&cwd, &home)
+        .env("WEBP_MAX_PIXELS", "1")
+        .args(["in.webp", "-o", "out.png"])
+        .assert()
+        .code(7);
+}
+
 fn encode_with_args(
     dir: &std::path::Path,
     input: &std::path::Path,

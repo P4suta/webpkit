@@ -273,7 +273,7 @@ impl<'a> Searcher<'a> {
         if self.source_rgba.is_none() {
             self.source_rgba = Some(format::to_rgba8(self.image));
         }
-        let decoded = codec::decode(&bytes, PixelLayout::Rgba8)?;
+        let decoded = codec::decode(&bytes, PixelLayout::Rgba8, None)?;
         let candidate = format::to_rgba8(&decoded);
         let source = self.source_rgba.as_deref().unwrap_or(&candidate);
         Ok(diff::psnr_rgb(source, &candidate).unwrap_or(f64::INFINITY))

@@ -245,9 +245,51 @@ pub struct Image {
 }
 
 impl Image {
-    /// Assemble an image from already-validated parts (internal constructor).
+    /// Assemble a validated owned image from pixel bytes in `layout` order.
+    ///
+    /// The single public owned-[`Image`] constructor: it enforces the
+    /// `pixels.len() == width * height * 4` invariant (mirroring [`ImageRef::new`])
+    /// and derives [`has_alpha`](Self::has_alpha) by scanning the alpha lane at
+    /// [`PixelLayout::alpha_byte_offset`], so a caller cannot build an `Image` whose
+    /// pixel buffer disagrees with its dimensions. Metadata starts empty; attach any
+    /// with [`Image::with_metadata`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::PixelBufferMismatch`] if `pixels.len() != width * height * 4`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use webpkit::{Dimensions, Image, PixelLayout};
+    ///
+    /// let dims = Dimensions::new(2, 2)?;
+    /// let pixels = vec![0u8; 2 * 2 * 4]; // RGBA8, alpha lane 0x00 -> non-opaque
+    /// let img = Image::new(dims, PixelLayout::Rgba8, pixels)?;
+    /// assert_eq!((img.width(), img.height()), (2, 2));
+    /// assert!(img.has_alpha());
+    /// # Ok::<(), webpkit::Error>(())
+    /// ```
+    pub fn new(dims: Dimensions, layout: PixelLayout, pixels: Vec<u8>) -> Result<Self> {
+        if pixels.len() as u64 != dims.pixel_count() * 4 {
+            return Err(Error::PixelBufferMismatch);
+        }
+        let off = layout.alpha_byte_offset();
+        let has_alpha = pixels.chunks_exact(4).any(|px| px[off] != 0xff);
+        Ok(Self {
+            dims,
+            layout,
+            pixels,
+            has_alpha,
+            metadata: Metadata::none(),
+        })
+    }
+
+    /// Assemble an image from already-validated parts with an explicit `has_alpha`
+    /// and `metadata` — the crate-internal constructor for decode paths that already
+    /// know the alpha state (public callers use the validating [`Image::new`]).
     #[must_use]
-    pub const fn from_parts(
+    pub(crate) const fn from_parts(
         dims: Dimensions,
         layout: PixelLayout,
         pixels: Vec<u8>,
@@ -419,6 +461,47 @@ mod tests {
         }
     }
     use crate::error::Error;
+
+    #[test]
+    fn image_new_rejects_wrong_length() {
+        let dims = Dimensions::new(2, 2).unwrap();
+        assert!(matches!(
+            Image::new(dims, PixelLayout::Rgba8, vec![0u8; 15]),
+            Err(Error::PixelBufferMismatch)
+        ));
+        assert!(Image::new(dims, PixelLayout::Rgba8, vec![0u8; 16]).is_ok());
+    }
+
+    #[test]
+    fn image_new_derives_has_alpha_per_layout() {
+        for layout in [PixelLayout::Rgba8, PixelLayout::Argb8, PixelLayout::Bgra8] {
+            let off = layout.alpha_byte_offset();
+            let dims = Dimensions::new(1, 1).unwrap();
+
+            let mut opaque = vec![0u8; 4];
+            opaque[off] = 0xff;
+            assert!(
+                !Image::new(dims, layout, opaque).unwrap().has_alpha(),
+                "{layout:?}: opaque alpha lane must read has_alpha=false"
+            );
+
+            let mut translucent = vec![0xffu8; 4];
+            translucent[off] = 0x00;
+            assert!(
+                Image::new(dims, layout, translucent).unwrap().has_alpha(),
+                "{layout:?}: non-opaque alpha lane must read has_alpha=true"
+            );
+        }
+    }
+
+    #[test]
+    fn image_new_starts_with_empty_metadata() {
+        let dims = Dimensions::new(1, 1).unwrap();
+        let img = Image::new(dims, PixelLayout::Rgba8, vec![0xffu8; 4]).unwrap();
+        assert!(img.metadata().is_empty());
+        let with = img.with_metadata(Metadata::none().with_exif(vec![1]));
+        assert!(!with.metadata().is_empty());
+    }
 
     #[test]
     fn dimensions_validate_range() {

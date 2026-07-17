@@ -12,14 +12,7 @@
 //! which is exactly when someone runs `info`.
 
 use serde::Serialize;
-use webpkit::{
-    Codec, ImageInfo,
-    container::{
-        anim::ANMF_HEADER_LEN,
-        fourcc::FourCc,
-        reader::{chunks, read_chunk_at},
-    },
-};
+use webpkit::{Codec, ImageInfo, chunks};
 
 use crate::error::CliError;
 
@@ -150,16 +143,17 @@ fn chunk_list(bytes: &[u8]) -> Vec<ChunkInfo> {
     };
     walk.map_while(Result::ok)
         .map(|chunk| ChunkInfo {
-            fourcc: fourcc_str(chunk.id),
-            bytes: chunk.data.len(),
+            fourcc: fourcc_str(chunk.fourcc()),
+            bytes: chunk.payload().len(),
         })
         .collect()
 }
 
-/// A `FourCc` as text, with the trailing space `VP8 ` and `XMP ` carry preserved
-/// — it is part of the tag, and a chunk dump that trims it is lying about bytes.
-fn fourcc_str(id: FourCc) -> String {
-    String::from_utf8_lossy(&id.0).into_owned()
+/// A `FourCC` tag as text, with the trailing space `VP8 ` and `XMP ` carry
+/// preserved — it is part of the tag, and a chunk dump that trims it is lying
+/// about bytes.
+fn fourcc_str(id: [u8; 4]) -> String {
+    String::from_utf8_lossy(&id).into_owned()
 }
 
 /// `lossless`, `lossy`, or — for an animation — whatever its frames say.
@@ -187,19 +181,18 @@ fn animation_codec(bytes: &[u8]) -> &'static str {
         return "unknown";
     };
     for chunk in walk.map_while(Result::ok) {
-        if fourcc_str(chunk.id) != "ANMF" {
+        // An ANMF frame carries its own chunks — an optional ALPH, then the image;
+        // `frame_chunks` skips the fixed frame header and is `None` for any other
+        // chunk.
+        let Some(frame) = chunk.frame_chunks() else {
             continue;
-        }
-        // An ANMF payload is a fixed frame header followed by that frame's own
-        // chunks: an optional ALPH, then the image.
-        let mut offset = ANMF_HEADER_LEN;
-        while let Ok(Some((sub, next))) = read_chunk_at(chunk.data, offset) {
-            match fourcc_str(sub.id).as_str() {
-                "VP8L" => lossless = true,
-                "VP8 " => lossy = true,
+        };
+        for sub in frame.map_while(Result::ok) {
+            match &sub.fourcc() {
+                b"VP8L" => lossless = true,
+                b"VP8 " => lossy = true,
                 _ => {},
             }
-            offset = next;
         }
     }
     match (lossless, lossy) {

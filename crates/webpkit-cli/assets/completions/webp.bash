@@ -286,7 +286,7 @@ _webp() {
             return 0
             ;;
         webp__subcmd__convert)
-            opts="-o -m -q -r -v -h --output --method --lossless --lossy --quality --optimize --recursive --metadata --verbose --quiet --color --threads --dry-run --help"
+            opts="-o -m -q -r -v -h --output --method --lossless --lossy --quality --optimize --recursive --metadata --force --no-clobber --verbose --quiet --color --threads --dry-run --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

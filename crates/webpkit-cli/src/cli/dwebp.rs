@@ -89,12 +89,16 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
     let source = Source::from_arg(&input);
     let sink = Sink::from_arg(&output);
     let bytes = source.read()?;
-    let mut image = codec::decode(&bytes, PixelLayout::Rgba8)?;
+    let mut image = codec::decode(
+        &bytes,
+        PixelLayout::Rgba8,
+        Some(webpkit::DEFAULT_MAX_PIXELS),
+    )?;
     if config.alpha {
-        image = alpha_as_gray(&image);
+        image = alpha_as_gray(&image)?;
     }
     if config.flip {
-        image = flip_vertically(&image);
+        image = flip_vertically(&image)?;
     }
     let format = OutputFormat::resolve(config.format, sink.extension().as_deref());
     let out = format::write_image(&image, format, image.metadata())?;
@@ -153,10 +157,7 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
             // Accepted for compatibility; no-ops for a lossless RGBA decoder.
             "-nofancy" | "-nofilter" | "-nodither" | "-alpha_dither" | "-mt" | "-incremental"
             | "-noasm" => {},
-            "-dither" => {
-                index += 1; // consume and ignore the strength value
-            },
-            "-yuv" | "-pgm" | "-bmp" | "-tiff" | "-crop" | "-resize" | "-scale" => {
+            "-yuv" | "-pgm" | "-bmp" | "-tiff" | "-crop" | "-resize" | "-scale" | "-dither" => {
                 return Err(reject(&rendered, index, &token));
             },
             "--" => {
@@ -198,6 +199,12 @@ fn rejection_of(flag: &str) -> Rejection {
             cause: "this output format is not implemented.",
             help: &["choose an available format:", "  -png | -ppm | -pam"],
         },
+        "-dither" => Rejection {
+            cause: "this decoder reconstructs the exact pixels; libwebp's -dither \
+                    perturbs its lossy output to hide banding, which has nothing to \
+                    act on here.",
+            help: &["decode without -dither; the result is already exact."],
+        },
         _ => Rejection {
             cause: "cropping, resizing, and scaling are pixel preprocessing this decoder does \
                     not perform.",
@@ -221,7 +228,7 @@ fn reject(args: &[String], index: usize, flag: &str) -> CliError {
 
 /// Replace each pixel's RGB with its alpha value (opaque), visualizing the
 /// alpha plane as grayscale — mirroring `dwebp -alpha`.
-fn alpha_as_gray(image: &Image) -> Image {
+fn alpha_as_gray(image: &Image) -> Result<Image, CliError> {
     let mut pixels = image.as_bytes().to_vec();
     for px in pixels.chunks_exact_mut(4) {
         let a = px[3];
@@ -230,30 +237,20 @@ fn alpha_as_gray(image: &Image) -> Image {
         px[2] = a;
         px[3] = 0xff;
     }
-    Image::from_parts(
-        image.dimensions(),
-        PixelLayout::Rgba8,
-        pixels,
-        false,
-        image.metadata().clone(),
-    )
+    Ok(Image::new(image.dimensions(), PixelLayout::Rgba8, pixels)?
+        .with_metadata(image.metadata().clone()))
 }
 
 /// Flip an RGBA8 image vertically (top-to-bottom row reversal).
-fn flip_vertically(image: &Image) -> Image {
+fn flip_vertically(image: &Image) -> Result<Image, CliError> {
     let width = image.width() as usize;
     let row = width * 4;
     let mut pixels = Vec::with_capacity(image.as_bytes().len());
     for chunk in image.as_bytes().chunks_exact(row).rev() {
         pixels.extend_from_slice(chunk);
     }
-    Image::from_parts(
-        image.dimensions(),
-        PixelLayout::Rgba8,
-        pixels,
-        image.has_alpha(),
-        image.metadata().clone(),
-    )
+    Ok(Image::new(image.dimensions(), PixelLayout::Rgba8, pixels)?
+        .with_metadata(image.metadata().clone()))
 }
 
 fn print_help() {

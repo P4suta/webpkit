@@ -55,3 +55,80 @@ fn convert_optimize_produces_a_valid_webp() {
     let webp = fs::read(out.path().join("x.webp")).expect("read webp");
     assert!(webp.starts_with(b"RIFF"), "output must be a WebP");
 }
+
+/// Convert refuses to overwrite an existing output by default; the file is left
+/// untouched (the guard runs before any read or encode). Before the fix it was
+/// silently overwritten.
+#[test]
+fn convert_refuses_to_overwrite_by_default() {
+    let dir = tempfile::tempdir().expect("in dir");
+    let out = tempfile::tempdir().expect("out dir");
+    fs::write(dir.path().join("a.ppm"), ppm_1x1([255, 0, 0])).expect("write a");
+    let sentinel = b"SENTINEL".to_vec();
+    fs::write(out.path().join("a.webp"), &sentinel).expect("pre-create webp");
+
+    Command::cargo_bin("webp")
+        .expect("binary builds")
+        .args(["convert"])
+        .arg(dir.path())
+        .arg("-o")
+        .arg(out.path())
+        .assert()
+        .failure();
+
+    assert_eq!(
+        fs::read(out.path().join("a.webp")).expect("read"),
+        sentinel,
+        "the existing output must be left untouched"
+    );
+}
+
+/// `--force` overwrites the existing output.
+#[test]
+fn convert_force_overwrites() {
+    let dir = tempfile::tempdir().expect("in dir");
+    let out = tempfile::tempdir().expect("out dir");
+    fs::write(dir.path().join("a.ppm"), ppm_1x1([255, 0, 0])).expect("write a");
+    let sentinel = b"SENTINEL".to_vec();
+    fs::write(out.path().join("a.webp"), &sentinel).expect("pre-create webp");
+
+    Command::cargo_bin("webp")
+        .expect("binary builds")
+        .args(["convert", "--force"])
+        .arg(dir.path())
+        .arg("-o")
+        .arg(out.path())
+        .assert()
+        .success();
+
+    assert_ne!(
+        fs::read(out.path().join("a.webp")).expect("read"),
+        sentinel,
+        "--force must overwrite the existing output"
+    );
+}
+
+/// `--no-clobber` skips an existing output and still exits 0.
+#[test]
+fn convert_no_clobber_skips_and_exits_zero() {
+    let dir = tempfile::tempdir().expect("in dir");
+    let out = tempfile::tempdir().expect("out dir");
+    fs::write(dir.path().join("a.ppm"), ppm_1x1([255, 0, 0])).expect("write a");
+    let sentinel = b"SENTINEL".to_vec();
+    fs::write(out.path().join("a.webp"), &sentinel).expect("pre-create webp");
+
+    Command::cargo_bin("webp")
+        .expect("binary builds")
+        .args(["convert", "--no-clobber"])
+        .arg(dir.path())
+        .arg("-o")
+        .arg(out.path())
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(out.path().join("a.webp")).expect("read"),
+        sentinel,
+        "--no-clobber must leave the existing output intact"
+    );
+}

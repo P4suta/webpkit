@@ -35,11 +35,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --threads <N>
           Worker threads for parallel work; 0 (the default) uses one per core.
@@ -133,11 +131,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --layout <LAYOUT>
           Byte order for raw output only
@@ -217,11 +213,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --width <WIDTH>
           Raw-input width in pixels (required for raw input)
@@ -321,11 +315,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --lossless
           Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless
@@ -360,6 +352,12 @@ Options:
           - exif: Keep Exif
           - xmp:  Keep XMP
 
+      --force
+          Overwrite an existing output
+
+      --no-clobber
+          Skip an input whose `.webp` output exists (still exits 0)
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -389,11 +387,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --threads <N>
           Worker threads for parallel work; 0 (the default) uses one per core.
@@ -436,11 +432,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --threads <N>
           Worker threads for parallel work; 0 (the default) uses one per core.
@@ -470,11 +464,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --threads <N>
           Worker threads for parallel work; 0 (the default) uses one per core.
@@ -511,11 +503,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --template
           Print a commented `webp.toml` template to stdout
@@ -579,11 +569,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --dry-run
           Report what would be written, without encoding or writing anything
@@ -610,11 +598,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --threads <N>
           Worker threads for parallel work; 0 (the default) uses one per core.
@@ -654,11 +640,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --threads <N>
           Worker threads for parallel work; 0 (the default) uses one per core.
@@ -690,11 +674,9 @@ Options:
           Long-only: `-q` is `--quality`. A bare `webp -q photo.png` therefore reads `photo.png` as a quality value and fails; use `--quiet` to silence output.
 
       --color <WHEN>
-          auto, always, or never
+          auto, always, or never [default: auto, or from env/config].
           
-          `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
-          
-          [default: auto]
+          `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 
       --threads <N>
           Worker threads for parallel work; 0 (the default) uses one per core.

@@ -115,34 +115,58 @@ pub(crate) fn is_webp(bytes: &[u8]) -> bool {
     bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP"
 }
 
+/// Build [`DecodeOptions`] for `layout` with the decode pixel cap.
+///
+/// `None` opts out of the cap ([`DecodeOptions::unbounded`]); `Some(n)` caps the
+/// canvas at `n` pixels. The single place the CLI's `max_pixels` setting becomes
+/// codec options, so the two decode paths cannot disagree.
+pub(crate) fn decode_options(layout: PixelLayout, max_pixels: Option<u64>) -> DecodeOptions {
+    let options = DecodeOptions::new().layout(layout);
+    match max_pixels {
+        Some(max) => options.max_pixels(max),
+        None => options.unbounded(),
+    }
+}
+
 /// Decode a still WebP, or the first composited frame of an animation, to an
-/// [`Image`] in RGBA8.
+/// [`Image`] in RGBA8. The decode is bounded by `max_pixels` (`None` opts out).
 ///
 /// # Errors
 ///
 /// [`CliError::Codec`] if the bytes are not a decodable WebP, or
 /// [`CliError::Format`] if an animation carries no frames.
-pub(crate) fn decode_still_or_first_frame(bytes: &[u8]) -> Result<Image, CliError> {
+pub(crate) fn decode_still_or_first_frame(
+    bytes: &[u8],
+    max_pixels: Option<u64>,
+) -> Result<Image, CliError> {
+    let options = decode_options(PixelLayout::Rgba8, max_pixels);
     if webpkit::is_animated(bytes)? {
-        let frames = webpkit::decode_frames(bytes)?;
+        let frames = webpkit::decode_frames_with(bytes, &options)?;
         let first = frames
             .composited()
             .next()
             .ok_or_else(|| CliError::Format("animation has no frames".to_owned()))??;
         return Ok(first.into_image());
     }
-    decode(bytes, PixelLayout::Rgba8)
+    Ok(webpkit::decode_with(bytes, &options)?)
 }
 
 /// Decode any still WebP file — lossless (`VP8L`) or lossy (`VP8 `) — into an
-/// [`Image`] with the requested output `layout`, dispatching on the container.
+/// [`Image`] with the requested output `layout`, dispatching on the container. The
+/// decode is bounded by `max_pixels` (`None` opts out).
 ///
 /// # Errors
 ///
 /// [`CliError::Codec`] if the input is not a decodable still WebP image.
-pub(crate) fn decode(bytes: &[u8], layout: PixelLayout) -> Result<Image, CliError> {
-    let options = DecodeOptions::default().layout(layout);
-    Ok(webpkit::decode_with(bytes, &options)?)
+pub(crate) fn decode(
+    bytes: &[u8],
+    layout: PixelLayout,
+    max_pixels: Option<u64>,
+) -> Result<Image, CliError> {
+    Ok(webpkit::decode_with(
+        bytes,
+        &decode_options(layout, max_pixels),
+    )?)
 }
 
 /// Encode an [`Image`] into a complete WebP file — lossless or lossy per `mode` —

@@ -32,7 +32,10 @@ clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
-webpkit = { path = "../crates/webpkit" }
+# Reaches the codec module-first (`webpkit::lossless::…`, `::lossy::…`) for
+# fixture/ledger generation, so it needs the `__internals` tooling feature; the
+# `work-count` feature (work-cost ledger) additionally implies it.
+webpkit = { path = "../crates/webpkit", features = ["__internals"] }
 webpkit-alloc-count = { path = "../crates/webpkit-alloc-count" }
 webpkit-lossless-conformance = { path = "../crates/webpkit-lossless-conformance" }
 webpkit-samples = { path = "../crates/webpkit-samples" }

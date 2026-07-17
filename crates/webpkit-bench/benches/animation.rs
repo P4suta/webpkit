@@ -28,9 +28,8 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use webpkit::lossless::{
-    AnimationEncoder, BlendMode, Dimensions, DisposalMode, FrameMeta, ImageRef, PixelLayout,
-};
+use webpkit::AnimationEncoder;
+use webpkit::lossless::{BlendMode, Dimensions, DisposalMode, FrameMeta, ImageRef, PixelLayout};
 use webpkit_samples::{Content, Sample, render_frame};
 
 /// Frames per animation.

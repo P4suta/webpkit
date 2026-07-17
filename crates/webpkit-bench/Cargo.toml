@@ -20,7 +20,10 @@ bench = ["webpkit/bench"]
 
 [dev-dependencies]
 criterion = { workspace = true }
-webpkit = { path = "../webpkit" }
+# `__internals` exposes the codec internals the benches time module-first
+# (`webpkit::lossless::decode`, `::encode_vp8`, …); the `bench` feature (kernels
+# microbench) implies it.
+webpkit = { path = "../webpkit", features = ["__internals"] }
 webpkit-samples = { path = "../webpkit-samples" }
 
 [[bench]]

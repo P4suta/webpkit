@@ -60,6 +60,20 @@ pub(crate) fn compress_alpha(plane: &[u8], width: u32, height: u32) -> Vec<u8> {
     best.unwrap_or_else(|| assemble(AlphaCompression::None, AlphaFilter::None, plane))
 }
 
+/// Materialize a frame's `ALPH` chunk payload (1-byte header + stored plane) from
+/// native-ARGB `argb` (`dims.pixel_count()` pixels), or `None` when every pixel is
+/// opaque (top byte `0xff`) — in which case no `ALPH` chunk is written.
+///
+/// The alpha lane is the top byte of each pixel; `>> 24` narrows a `u32` to its
+/// high 8 bits, so `as u8` cannot truncate.
+#[must_use]
+pub(crate) fn alph_chunk(argb: &[u32], dims: crate::Dimensions) -> Option<Vec<u8>> {
+    crate::image::argb_has_alpha(argb).then(|| {
+        let alpha: Vec<u8> = argb.iter().map(|&p| (p >> 24) as u8).collect();
+        compress_alpha(&alpha, dims.width(), dims.height())
+    })
+}
+
 /// Build one `ALPH` payload: the 1-byte header (`compression`, `filter`,
 /// pre-processing = 0) followed by the stored `data`.
 fn assemble(compression: AlphaCompression, filter: AlphaFilter, data: &[u8]) -> Vec<u8> {
@@ -197,5 +211,27 @@ mod tests {
     fn compress_alpha_is_deterministic() {
         let plane: Vec<u8> = (0..48u32).map(|v| byte(v.wrapping_mul(29))).collect();
         assert_eq!(compress_alpha(&plane, 8, 6), compress_alpha(&plane, 8, 6));
+    }
+
+    #[test]
+    fn alph_chunk_none_for_opaque() {
+        use super::alph_chunk;
+        use crate::Dimensions;
+        // Every pixel's top byte is 0xff -> no ALPH chunk.
+        let argb: Vec<u32> = vec![0xff10_2030; 12];
+        assert!(alph_chunk(&argb, Dimensions::new(4, 3).unwrap()).is_none());
+    }
+
+    #[test]
+    fn alph_chunk_some_for_translucent_round_trips() {
+        use super::alph_chunk;
+        use crate::Dimensions;
+        // A per-pixel alpha ramp in the top byte; the recovered plane must be
+        // byte-exact (alpha is lossless).
+        let argb: Vec<u32> = (0..16u32).map(|i| (i * 15) << 24 | 0x0011_2233).collect();
+        let dims = Dimensions::new(4, 4).unwrap();
+        let alph = alph_chunk(&argb, dims).expect("translucent -> Some");
+        let expected: Vec<u8> = argb.iter().map(|&p| (p >> 24) as u8).collect();
+        assert_eq!(decompress(&alph, 4, 4), expected);
     }
 }

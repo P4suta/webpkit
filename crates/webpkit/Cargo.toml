@@ -20,12 +20,14 @@ readme = "README.md"
 # and therefore inert in a default build.
 exclude = ["tests/"]
 
-# Render every feature's items on docs.rs (the `rayon`/`oracle` gated code included).
-# No `--cfg docsrs` / `doc_cfg`: no optional feature changes a *public* signature
-# (`rayon` only swaps in parallelism, `oracle` is dev-only, `std`/`alloc` are the
-# baseline), so a feature-badge pass would annotate internal items for no reader gain.
+# docs.rs builds the *published* surface only: std baseline + the two optional
+# public-facing features (`rayon` swaps in parallelism, `image` adds the TryFrom
+# interop impls). Deliberately excludes `oracle`/`bench`/`work-count`/`__internals`
+# — these are dev/test-only, gate no public item, and `oracle` would compile the
+# libwebp C reference. No `--cfg docsrs`/`doc_cfg`: no listed feature changes a
+# public signature, so a feature-badge pass would annotate internal items for no gain.
 [package.metadata.docs.rs]
-all-features = true
+features = ["std", "rayon", "image"]
 
 [features]
 default = ["std"]
@@ -38,17 +40,24 @@ rayon = ["dep:rayon", "std"]
 # `image::DynamicImage`/`RgbaImage` and `Image` (see `interop.rs`). Off by default,
 # so a plain build keeps the zero-dependency baseline; needs an allocator.
 image = ["dep:image", "alloc"]
+# Exposes the internal module tree (`lossless`, `lossy`, `container`, `image`,
+# `anim`, `stream`, …) as `#[doc(hidden)] pub` so this workspace's own test &
+# tooling crates can reach codec internals module-first. OFF by default and never
+# enabled on crates.io / docs.rs: a published build keeps these `pub(crate)`, so
+# the curated facade re-exports are the entire public (and semver-committed) API.
+# The dev-only `oracle`/`bench`/`work-count` reach-ins imply it.
+__internals = []
 # Differential oracle: links the libwebp C reference in-process for the
 # `tests/oracle*.rs` cross-checks. Dev/test only; never part of a normal build.
-oracle = ["dep:libwebp-sys"]
+oracle = ["dep:libwebp-sys", "__internals"]
 # Deterministic algorithmic-work counters (the work-cost measurement plane).
 # Off by default: production builds link no counter code and behave identically.
-work-count = []
+work-count = ["__internals"]
 # Dev-only: re-exports internal numeric kernels (and their pre-optimization
 # `*_reference` twins) through `crate::{lossless,lossy}::bench` so `webpkit-bench`'s
 # `kernels` microbench can time them in isolation. Adds no dependency and no
 # production code; never enabled in a real build.
-bench = []
+bench = ["__internals"]
 
 [dependencies]
 # Optional `image`-crate interop (the `image` feature). `default-features = false`
@@ -61,6 +70,11 @@ rayon = { version = "1", optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+# Self dev-dependency: turns on `__internals` for this crate's own integration
+# tests, examples and benches (which reach codec internals module-first) WITHOUT
+# adding it to the published lib — dev-dependencies never enter a normal build or a
+# downstream consumer's graph, so crates.io / docs.rs keep the facade-only surface.
+webpkit = { path = ".", features = ["__internals"] }
 webpkit-archtest = { path = "../webpkit-archtest" }
 webpkit-lossy-proptest = { path = "../webpkit-lossy-proptest" }
 # The shared synthetic corpus, for the in-process comparison report against the

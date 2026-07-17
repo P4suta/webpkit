@@ -18,7 +18,7 @@ set edit:completion:arg-completer[webp] = {|@words|
     }
     var completions = [
         &'webp'= {
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand -o 'Output file, or a directory for many inputs; default: beside each input'
             cand --output 'Output file, or a directory for many inputs; default: beside each input'
@@ -63,7 +63,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --frames 'For animations: which frames to emit'
             cand --frame 'For animations: emit only this 0-based frame'
             cand --metadata 'Metadata to carry into the output: all,none,icc,exif,xmp (default: all)'
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand -v 'Print per-stage detail on stderr'
             cand --verbose 'Print per-stage detail on stderr'
@@ -88,7 +88,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --target-size 'Target output size, e.g. `200k` or `2M`, found by searching lossy quality'
             cand --min-psnr 'Target reconstruction PSNR floor in dB (lossy only; pairs with --target-size)'
             cand --metadata 'Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)'
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand --lossless 'Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless'
             cand --lossy 'Encode lossily (VP8) instead of losslessly (VP8L)'
@@ -107,13 +107,15 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand -q 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy'
             cand --quality 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy'
             cand --metadata 'Metadata to embed: all,none,icc,exif,xmp (default: all)'
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand --lossless 'Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless'
             cand --lossy 'Encode lossily (VP8) instead of losslessly (VP8L)'
             cand --optimize 'Try every lossless effort level and keep the smallest output'
             cand -r 'Recurse into subdirectories'
             cand --recursive 'Recurse into subdirectories'
+            cand --force 'Overwrite an existing output'
+            cand --no-clobber 'Skip an input whose `.webp` output exists (still exits 0)'
             cand -v 'Print per-stage detail on stderr'
             cand --verbose 'Print per-stage detail on stderr'
             cand --quiet 'Suppress all non-error output'
@@ -122,7 +124,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --help 'Print help (see more with ''--help'')'
         }
         &'webp;info'= {
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand --json 'Print the report as JSON instead of text'
             cand -v 'Print per-stage detail on stderr'
@@ -134,7 +136,7 @@ set edit:completion:arg-completer[webp] = {|@words|
         }
         &'webp;diff'= {
             cand --min-psnr 'Fail (exit 1) if the RGB PSNR is below this many decibels'
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand --json 'Print the comparison as JSON instead of text'
             cand -v 'Print per-stage detail on stderr'
@@ -145,7 +147,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --help 'Print help (see more with ''--help'')'
         }
         &'webp;doctor'= {
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand -v 'Print per-stage detail on stderr'
             cand --verbose 'Print per-stage detail on stderr'
@@ -161,7 +163,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --metadata 'Override: metadata to carry (all,none,icc,exif,xmp)'
             cand --threads 'Override: worker threads (0 = one per core)'
             cand --max-pixels 'Override: decode pixel cap (N, 300M, 2G, or none)'
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --json 'Print the resolved settings as JSON (stable key order)'
             cand --template 'Print a commented `webp.toml` template to stdout'
             cand -v 'Print per-stage detail on stderr'
@@ -174,7 +176,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand help 'Print this message or the help of the given subcommand(s)'
         }
         &'webp;config;get'= {
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand -v 'Print per-stage detail on stderr'
             cand --verbose 'Print per-stage detail on stderr'
             cand --quiet 'Suppress all non-error output'
@@ -191,7 +193,7 @@ set edit:completion:arg-completer[webp] = {|@words|
         &'webp;config;help;help'= {
         }
         &'webp;explain'= {
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand -v 'Print per-stage detail on stderr'
             cand --verbose 'Print per-stage detail on stderr'
@@ -201,7 +203,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --help 'Print help (see more with ''--help'')'
         }
         &'webp;completions'= {
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand -v 'Print per-stage detail on stderr'
             cand --verbose 'Print per-stage detail on stderr'
@@ -211,7 +213,7 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --help 'Print help (see more with ''--help'')'
         }
         &'webp;man'= {
-            cand --color 'auto, always, or never'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand -v 'Print per-stage detail on stderr'
             cand --verbose 'Print per-stage detail on stderr'

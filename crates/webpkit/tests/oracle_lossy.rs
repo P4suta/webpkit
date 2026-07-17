@@ -1086,16 +1086,14 @@ fn encode_image_metadata_survives_libwebp_demux() {
     let icc = b"icc-lossy".to_vec(); // 9 bytes: odd -> RIFF pad
     let exif = b"exif-lossy".to_vec();
     let xmp = b"<x:xmpmeta/>".to_vec();
-    let img = webpkit::lossy::Image::from_parts(
-        dims,
-        webpkit::lossy::PixelLayout::Rgba8,
-        rgba,
-        false,
-        webpkit::lossy::Metadata::none()
-            .with_icc_profile(icc.clone())
-            .with_exif(exif.clone())
-            .with_xmp(xmp.clone()),
-    );
+    let img = webpkit::lossy::Image::new(dims, webpkit::lossy::PixelLayout::Rgba8, rgba)
+        .unwrap()
+        .with_metadata(
+            webpkit::lossy::Metadata::none()
+                .with_icc_profile(icc.clone())
+                .with_exif(exif.clone())
+                .with_xmp(xmp.clone()),
+        );
 
     // Preserve (default): the reference demuxer reproduces the canvas and every
     // metadata chunk survives byte-exact; libwebp decodes the pixels at the right

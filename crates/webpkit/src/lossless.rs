@@ -21,7 +21,7 @@
 //! - Animation: [`decode_frames`] returns a lazy [`Frames`] iterator; each
 //!   [`Frame`] carries [`FrameMeta`], and [`Frames::composited`] paints frames
 //!   onto the canvas honoring [`BlendMode`]/[`DisposalMode`]. Build animations
-//!   with the type-state [`AnimationEncoder`].
+//!   with the type-state [`crate::AnimationEncoder`].
 //! - Encode: [`encode`] / [`encode_to`] take an [`ImageRef`] plus an
 //!   [`EncoderConfig`] (effort [`Effort`] and [`Metadata`] to embed);
 //!   [`encode_image`] takes a full [`Image`] and preserves its [`Metadata`] by
@@ -135,7 +135,7 @@ pub use decoder::{
     DecodeOptions, DecodedFrame, FrameDecoder, FramePayload, ImageInfo, IncrementalDecoder,
     Progress, RowDrain, decode_vp8l,
 };
-pub use encoder::{AnimationEncoder, Empty, EncoderConfig, HasFrames, MetadataPolicy};
+pub use encoder::{EncoderConfig, MetadataPolicy};
 
 /// Decode a WebP lossless (VP8L) file into an [`Image`] (RGBA8 by default).
 ///
@@ -271,8 +271,6 @@ pub fn encode(image: ImageRef<'_>, config: &EncoderConfig) -> Result<Vec<u8>> {
 ///
 /// ICC can be *replaced* by `config` but never silently dropped, so a decode →
 /// `encode_image` round trip never loses color-correctness.
-///
-/// Note: [`AnimationEncoder`] does not yet carry metadata (a known gap).
 ///
 /// # Errors
 ///

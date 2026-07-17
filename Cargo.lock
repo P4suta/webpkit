@@ -1483,6 +1483,7 @@ dependencies = [
  "libwebp-sys",
  "proptest",
  "rayon",
+ "webpkit",
  "webpkit-archtest",
  "webpkit-lossy-proptest",
  "webpkit-samples",

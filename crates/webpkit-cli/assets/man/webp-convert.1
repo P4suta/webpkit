@@ -4,7 +4,7 @@
 .SH NAME
 convert \- Batch\-convert many images (or directories) to WebP, in parallel
 .SH SYNOPSIS
-\fBconvert\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-optimize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIINPUTS\fR> 
+\fBconvert\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-optimize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-metadata\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIINPUTS\fR> 
 .SH DESCRIPTION
 Batch\-convert many images (or directories) to WebP, in parallel
 .SH OPTIONS
@@ -60,6 +60,12 @@ exif: Keep Exif
 .IP \(bu 2
 xmp: Keep XMP
 .RE
+.TP
+\fB\-\-force\fR
+Overwrite an existing output
+.TP
+\fB\-\-no\-clobber\fR
+Skip an input whose `.webp` output exists (still exits 0)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)

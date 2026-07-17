@@ -21,7 +21,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
 
     $completions = @(switch ($command) {
         'webp' {
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output file, or a directory for many inputs; default: beside each input')
             [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output file, or a directory for many inputs; default: beside each input')
@@ -67,7 +67,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--frames', '--frames', [CompletionResultType]::ParameterName, 'For animations: which frames to emit')
             [CompletionResult]::new('--frame', '--frame', [CompletionResultType]::ParameterName, 'For animations: emit only this 0-based frame')
             [CompletionResult]::new('--metadata', '--metadata', [CompletionResultType]::ParameterName, 'Metadata to carry into the output: all,none,icc,exif,xmp (default: all)')
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
@@ -93,7 +93,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--target-size', '--target-size', [CompletionResultType]::ParameterName, 'Target output size, e.g. `200k` or `2M`, found by searching lossy quality')
             [CompletionResult]::new('--min-psnr', '--min-psnr', [CompletionResultType]::ParameterName, 'Target reconstruction PSNR floor in dB (lossy only; pairs with --target-size)')
             [CompletionResult]::new('--metadata', '--metadata', [CompletionResultType]::ParameterName, 'Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)')
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('--lossless', '--lossless', [CompletionResultType]::ParameterName, 'Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless')
             [CompletionResult]::new('--lossy', '--lossy', [CompletionResultType]::ParameterName, 'Encode lossily (VP8) instead of losslessly (VP8L)')
@@ -113,13 +113,15 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
             [CompletionResult]::new('--quality', '--quality', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
             [CompletionResult]::new('--metadata', '--metadata', [CompletionResultType]::ParameterName, 'Metadata to embed: all,none,icc,exif,xmp (default: all)')
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('--lossless', '--lossless', [CompletionResultType]::ParameterName, 'Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless')
             [CompletionResult]::new('--lossy', '--lossy', [CompletionResultType]::ParameterName, 'Encode lossily (VP8) instead of losslessly (VP8L)')
             [CompletionResult]::new('--optimize', '--optimize', [CompletionResultType]::ParameterName, 'Try every lossless effort level and keep the smallest output')
             [CompletionResult]::new('-r', '-r', [CompletionResultType]::ParameterName, 'Recurse into subdirectories')
             [CompletionResult]::new('--recursive', '--recursive', [CompletionResultType]::ParameterName, 'Recurse into subdirectories')
+            [CompletionResult]::new('--force', '--force', [CompletionResultType]::ParameterName, 'Overwrite an existing output')
+            [CompletionResult]::new('--no-clobber', '--no-clobber', [CompletionResultType]::ParameterName, 'Skip an input whose `.webp` output exists (still exits 0)')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
@@ -129,7 +131,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             break
         }
         'webp;info' {
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Print the report as JSON instead of text')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
@@ -142,7 +144,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
         }
         'webp;diff' {
             [CompletionResult]::new('--min-psnr', '--min-psnr', [CompletionResultType]::ParameterName, 'Fail (exit 1) if the RGB PSNR is below this many decibels')
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Print the comparison as JSON instead of text')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
@@ -154,7 +156,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             break
         }
         'webp;doctor' {
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
@@ -171,7 +173,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--metadata', '--metadata', [CompletionResultType]::ParameterName, 'Override: metadata to carry (all,none,icc,exif,xmp)')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Override: worker threads (0 = one per core)')
             [CompletionResult]::new('--max-pixels', '--max-pixels', [CompletionResultType]::ParameterName, 'Override: decode pixel cap (N, 300M, 2G, or none)')
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Print the resolved settings as JSON (stable key order)')
             [CompletionResult]::new('--template', '--template', [CompletionResultType]::ParameterName, 'Print a commented `webp.toml` template to stdout')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
@@ -185,7 +187,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             break
         }
         'webp;config;get' {
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
@@ -206,7 +208,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             break
         }
         'webp;explain' {
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
@@ -217,7 +219,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             break
         }
         'webp;completions' {
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
@@ -228,7 +230,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             break
         }
         'webp;man' {
-            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')

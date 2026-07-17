@@ -15,7 +15,7 @@ _webp() {
 
     local context curcontext="$curcontext" state line
     _arguments "${_arguments_options[@]}" : \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
@@ -79,7 +79,7 @@ none\:"Strip everything (a bare \`VP8L\` output)"
 icc\:"Keep the ICC color profile"
 exif\:"Keep Exif"
 xmp\:"Keep XMP"))' \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
@@ -126,7 +126,7 @@ none\:"Strip everything (a bare \`VP8L\` output)"
 icc\:"Keep the ICC color profile"
 exif\:"Keep Exif"
 xmp\:"Keep XMP"))' \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
@@ -158,7 +158,7 @@ none\:"Strip everything (a bare \`VP8L\` output)"
 icc\:"Keep the ICC color profile"
 exif\:"Keep Exif"
 xmp\:"Keep XMP"))' \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
@@ -167,6 +167,8 @@ never\:"Never style"))' \
 '--optimize[Try every lossless effort level and keep the smallest output]' \
 '-r[Recurse into subdirectories]' \
 '--recursive[Recurse into subdirectories]' \
+'--force[Overwrite an existing output]' \
+'(--force)--no-clobber[Skip an input whose \`.webp\` output exists (still exits 0)]' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
@@ -178,7 +180,7 @@ never\:"Never style"))' \
 ;;
 (info)
 _arguments "${_arguments_options[@]}" : \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
@@ -195,7 +197,7 @@ never\:"Never style"))' \
 (diff)
 _arguments "${_arguments_options[@]}" : \
 '--min-psnr=[Fail (exit 1) if the RGB PSNR is below this many decibels]:DB:_default' \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
@@ -212,7 +214,7 @@ never\:"Never style"))' \
 ;;
 (doctor)
 _arguments "${_arguments_options[@]}" : \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
@@ -239,7 +241,7 @@ exif\:"Keep Exif"
 xmp\:"Keep XMP"))' \
 '--threads=[Override\: worker threads (0 = one per core)]:THREADS:_default' \
 '--max-pixels=[Override\: decode pixel cap (N, 300M, 2G, or none)]:N|none:_default' \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--json[Print the resolved settings as JSON (stable key order)]' \
@@ -262,7 +264,7 @@ never\:"Never style"))' \
         case $line[1] in
             (get)
 _arguments "${_arguments_options[@]}" : \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '*-v[Print per-stage detail on stderr]' \
@@ -304,7 +306,7 @@ esac
 ;;
 (explain)
 _arguments "${_arguments_options[@]}" : \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
@@ -319,7 +321,7 @@ never\:"Never style"))' \
 ;;
 (completions)
 _arguments "${_arguments_options[@]}" : \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
@@ -334,7 +336,7 @@ never\:"Never style"))' \
 ;;
 (man)
 _arguments "${_arguments_options[@]}" : \
-'--color=[auto, always, or never]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \

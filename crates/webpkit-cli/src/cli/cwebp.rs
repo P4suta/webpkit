@@ -9,6 +9,8 @@
 
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
+use webpkit::Image;
+
 use crate::{
     codec::EncodeMode,
     diag::{self, ArgvSpan, Diagnostic},
@@ -100,6 +102,8 @@ struct Config {
     target_size: Option<u64>,
     /// `-psnr N`: target reconstruction PSNR floor in dB.
     target_psnr: Option<f64>,
+    /// `-noalpha`: drop the alpha channel (encode the image opaque).
+    noalpha: bool,
     verbose: u8,
     quiet: bool,
 }
@@ -157,6 +161,11 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
         pipeline.project(dims)?;
     }
     let image = pipeline.apply(format::read_image(&bytes, format, None)?)?;
+    let image = if config.noalpha {
+        strip_alpha(&image)?
+    } else {
+        image
+    };
     let metadata = Selection::from_fields(&config.metadata).apply(image.metadata());
 
     // A `-size`/`-psnr` target makes this a quality search; otherwise a single encode.
@@ -249,15 +258,11 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                 term::parse_choice(&value(args, &mut index, &token)?)?;
             },
             "-v" => config.verbose = config.verbose.saturating_add(1),
-            // Accepted for compatibility, but a no-op here. `-exact` preserves the
-            // RGB of fully-transparent pixels — already this encoder's behavior, as
-            // it never rewrites hidden RGB — so it is accepted rather than rejected.
-            "-short" | "-progress" | "-exact" | "-noalpha" | "-low_memory" | "-noasm" | "-mt" => {},
-            // Accepted-and-ignored options that consume one value. Alpha is always
-            // lossless here, so its tuning knobs have no effect.
-            "-alpha_q" | "-alpha_method" | "-alpha_filter" | "-blend_alpha" => {
-                let _ = value(args, &mut index, &token)?;
-            },
+            // Accepted for compatibility, a no-op here. `-exact` preserves the RGB of
+            // fully-transparent pixels — already this encoder's behavior.
+            "-short" | "-progress" | "-exact" | "-low_memory" | "-noasm" | "-mt" => {},
+            // Drop the alpha channel: make the image opaque before encoding.
+            "-noalpha" => config.noalpha = true,
             "--" => {
                 index += 1;
                 if index < args.len() {
@@ -303,6 +308,10 @@ fn is_rejected(flag: &str) -> bool {
             | "-pre"
             | "-map"
             | "-preset"
+            | "-alpha_q"
+            | "-alpha_method"
+            | "-alpha_filter"
+            | "-blend_alpha"
     )
 }
 
@@ -332,6 +341,22 @@ fn rejection_of(flag: &str) -> Rejection {
                 "  cwebp -m <0-6> -q <0-100> <in> -o <out.webp>",
             ],
         },
+        "-alpha_q" | "-alpha_method" | "-alpha_filter" => Rejection {
+            cause: "webpkit always stores alpha losslessly; there is no lossy-alpha \
+                    compression to tune, so this knob has nothing to change.",
+            help: &[
+                "alpha is preserved exactly; drop the flag.",
+                "to discard alpha entirely, use -noalpha.",
+            ],
+        },
+        "-blend_alpha" => Rejection {
+            cause: "compositing the image onto a background color is a preprocessing \
+                    step this encoder does not model.",
+            help: &[
+                "flatten first with an image tool, or drop alpha entirely:",
+                "  cwebp -noalpha <in> -o <out.webp>",
+            ],
+        },
         _ => Rejection {
             cause: "this is an internal encoder-tuning knob webpkit does not expose.",
             help: &[
@@ -354,6 +379,18 @@ fn reject(args: &[String], index: usize, flag: &str) -> CliError {
         diag = diag.with_span(span);
     }
     CliError::Rejected(Box::new(diag))
+}
+
+/// Drop the alpha channel: force every pixel opaque so the encoder omits alpha
+/// (`argb_has_alpha` then sees no transparency), mirroring `cwebp -noalpha`.
+fn strip_alpha(image: &Image) -> Result<Image, CliError> {
+    let off = image.layout().alpha_byte_offset();
+    let mut pixels = image.as_bytes().to_vec();
+    for px in pixels.chunks_exact_mut(4) {
+        px[off] = 0xff;
+    }
+    Ok(Image::new(image.dimensions(), image.layout(), pixels)?
+        .with_metadata(image.metadata().clone()))
 }
 
 /// Reject raw pixel input, which `cwebp` has no way to give dimensions to.
