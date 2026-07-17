@@ -4,6 +4,7 @@
 //! decoders), and never its `webp` feature — that would pull a competing WebP
 //! codec into our own tool. A decoded frame becomes a [`webpkit::Image`] through
 //! the `TryFrom<&DynamicImage>` conversion the `webpkit/image` feature provides.
+//! GIF loop count comes from the `gif` crate directly — `image` does not surface it.
 
 use image::{AnimationDecoder as _, ImageFormat, codecs::gif::GifDecoder};
 use webpkit::Image;
@@ -58,6 +59,32 @@ pub(crate) fn read_gif_frames(bytes: &[u8]) -> Result<Vec<AnimFrame>, CliError> 
             })
         })
         .collect()
+}
+
+/// A GIF's Netscape loop count, in WebP `ANIM` convention: `0` loops forever,
+/// `n` plays `n` times. The `image` crate decodes GIF frames but never surfaces
+/// this, so it is read from the `gif` crate directly. A GIF with no loop extension
+/// (the crate's `Finite(0)` default) maps to forever, as it always has.
+///
+/// # Errors
+///
+/// [`CliError::Format`] if the bytes are not a decodable GIF.
+pub(crate) fn read_gif_loop_count(bytes: &[u8]) -> Result<u16, CliError> {
+    let mut options = gif::DecodeOptions::new();
+    // Only the Netscape loop extension is wanted, not pixels; the GIF spec places it
+    // before the first frame, so decoding frame data is skipped.
+    options.skip_frame_decoding(true);
+    let mut reader = options
+        .read_info(std::io::Cursor::new(bytes))
+        .map_err(|err| CliError::Format(format!("reading GIF: {err}")))?;
+    // Advance to the first frame so the loop extension preceding it is parsed.
+    reader
+        .next_frame_info()
+        .map_err(|err| CliError::Format(format!("reading GIF: {err}")))?;
+    Ok(match reader.repeat() {
+        gif::Repeat::Infinite => 0,
+        gif::Repeat::Finite(count) => count,
+    })
 }
 
 /// The `image` crate's format tag for one of our decodable input formats.

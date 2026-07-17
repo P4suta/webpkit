@@ -23,6 +23,7 @@ never\:"Never style"))' \
 '--output=[Output file, or a directory for many inputs; default\: beside each input]:OUTPUT:_files' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects lossy]:QUALITY:_default' \
+'(--lossy)--near-lossless=[Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)]:N:_default' \
 '-m+[Encoder effort \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
 balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
@@ -67,6 +68,8 @@ _arguments "${_arguments_options[@]}" : \
 '--format=[Output format; defaults to the \`-o\` extension, else PNG]:FORMAT:((png\:"PNG, RGBA8"
 ppm\:"Netpbm binary PPM (\`P6\`, RGB; alpha dropped)"
 pam\:"Netpbm binary PAM (\`P7\`, RGBA)"
+bmp\:"BMP (RGBA8; needs the \`formats\` feature)"
+tiff\:"TIFF (RGBA8; needs the \`formats\` feature)"
 raw\:"Raw row-major pixels in the requested \`--layout\`"))' \
 '--layout=[Byte order for raw output only]:LAYOUT:((rgba8\:"\`R, G, B, A\`"
 argb8\:"\`A, R, G, B\`"
@@ -117,6 +120,7 @@ balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
+'(--lossy)--near-lossless=[Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)]:N:_default' \
 '--crop=[Crop before encoding\: \`x,y,width,height\` in pixels (applied before --resize)]:X,Y,W,H:_default' \
 '--resize=[Resize before encoding\: \`WxH\` (use 0 on one axis to keep aspect)]:WxH:_default' \
 '--target-size=[Target output size, e.g. \`200k\` or \`2M\`, found by searching lossy quality]:SIZE:_default' \
@@ -153,6 +157,7 @@ balanced\:"Balanced (the default)\: LZ77 + color cache"
 best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
+'(--lossy)--near-lossless=[Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)]:N:_default' \
 '*--metadata=[Metadata to embed\: all,none,icc,exif,xmp (default\: all)]:METADATA:((all\:"Keep ICC, Exif, and XMP"
 none\:"Strip everything (a bare \`VP8L\` output)"
 icc\:"Keep the ICC color profile"
@@ -193,6 +198,117 @@ never\:"Never style"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 '::input -- Input `.webp` file; `-` (the default) reads stdin:_files' \
 && ret=0
+;;
+(meta)
+_arguments "${_arguments_options[@]}" : \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_webp__subcmd__meta_commands" \
+"*::: :->meta" \
+&& ret=0
+
+    case $state in
+    (meta)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:webp-meta-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'--json[Print the metadata as JSON instead of text]' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'::input -- Input `.webp` file; `-` (the default) reads stdin:_files' \
+&& ret=0
+;;
+(set)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--output=[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--icc=[Set the ICC color profile from this file]:FILE:_files' \
+'--exif=[Set the Exif metadata from this file]:FILE:_files' \
+'--xmp=[Set the XMP metadata from this file]:FILE:_files' \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':input -- Input `.webp` file; `-` reads stdin:_files' \
+&& ret=0
+;;
+(strip)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--output=[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':input -- Input `.webp` file; `-` reads stdin:_files' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_webp__subcmd__meta__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:webp-meta-help-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(strip)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
 ;;
 (diff)
 _arguments "${_arguments_options[@]}" : \
@@ -377,6 +493,34 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(meta)
+_arguments "${_arguments_options[@]}" : \
+":: :_webp__subcmd__help__subcmd__meta_commands" \
+"*::: :->meta" \
+&& ret=0
+
+    case $state in
+    (meta)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:webp-help-meta-command-$line[1]:"
+        case $line[1] in
+            (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(strip)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (diff)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -437,6 +581,7 @@ _webp_commands() {
 'encode:Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
+'meta:Read, set, or strip a WebP file'\''s metadata (ICC/Exif/XMP), without re-encoding the image' \
 'diff:Compare two images\: report PSNR and the largest per-channel difference' \
 'doctor:Diagnose the environment\: PATH drop-in shadows, config, terminal, threads' \
 'config:Show resolved settings and where each came from (args, env, file, default)' \
@@ -520,6 +665,7 @@ _webp__subcmd__help_commands() {
 'encode:Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
+'meta:Read, set, or strip a WebP file'\''s metadata (ICC/Exif/XMP), without re-encoding the image' \
 'diff:Compare two images\: report PSNR and the largest per-channel difference' \
 'doctor:Diagnose the environment\: PATH drop-in shadows, config, terminal, threads' \
 'config:Show resolved settings and where each came from (args, env, file, default)' \
@@ -592,6 +738,30 @@ _webp__subcmd__help__subcmd__man_commands() {
     local commands; commands=()
     _describe -t commands 'webp help man commands' commands "$@"
 }
+(( $+functions[_webp__subcmd__help__subcmd__meta_commands] )) ||
+_webp__subcmd__help__subcmd__meta_commands() {
+    local commands; commands=(
+'show:Show the ICC/Exif/XMP a WebP carries (kinds and byte sizes)' \
+'set:Write a copy with ICC/Exif/XMP set from files (unspecified kinds are kept)' \
+'strip:Write a copy with all sidecar metadata removed' \
+    )
+    _describe -t commands 'webp help meta commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__meta__subcmd__set_commands] )) ||
+_webp__subcmd__help__subcmd__meta__subcmd__set_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help meta set commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__meta__subcmd__show_commands] )) ||
+_webp__subcmd__help__subcmd__meta__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help meta show commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__meta__subcmd__strip_commands] )) ||
+_webp__subcmd__help__subcmd__meta__subcmd__strip_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help meta strip commands' commands "$@"
+}
 (( $+functions[_webp__subcmd__info_commands] )) ||
 _webp__subcmd__info_commands() {
     local commands; commands=()
@@ -601,6 +771,61 @@ _webp__subcmd__info_commands() {
 _webp__subcmd__man_commands() {
     local commands; commands=()
     _describe -t commands 'webp man commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__meta_commands] )) ||
+_webp__subcmd__meta_commands() {
+    local commands; commands=(
+'show:Show the ICC/Exif/XMP a WebP carries (kinds and byte sizes)' \
+'set:Write a copy with ICC/Exif/XMP set from files (unspecified kinds are kept)' \
+'strip:Write a copy with all sidecar metadata removed' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'webp meta commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__meta__subcmd__help_commands] )) ||
+_webp__subcmd__meta__subcmd__help_commands() {
+    local commands; commands=(
+'show:Show the ICC/Exif/XMP a WebP carries (kinds and byte sizes)' \
+'set:Write a copy with ICC/Exif/XMP set from files (unspecified kinds are kept)' \
+'strip:Write a copy with all sidecar metadata removed' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'webp meta help commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__meta__subcmd__help__subcmd__help_commands] )) ||
+_webp__subcmd__meta__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp meta help help commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__meta__subcmd__help__subcmd__set_commands] )) ||
+_webp__subcmd__meta__subcmd__help__subcmd__set_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp meta help set commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__meta__subcmd__help__subcmd__show_commands] )) ||
+_webp__subcmd__meta__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp meta help show commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__meta__subcmd__help__subcmd__strip_commands] )) ||
+_webp__subcmd__meta__subcmd__help__subcmd__strip_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp meta help strip commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__meta__subcmd__set_commands] )) ||
+_webp__subcmd__meta__subcmd__set_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp meta set commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__meta__subcmd__show_commands] )) ||
+_webp__subcmd__meta__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp meta show commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__meta__subcmd__strip_commands] )) ||
+_webp__subcmd__meta__subcmd__strip_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp meta strip commands' commands "$@"
 }
 
 if [ "$funcstack[1]" = "_webp" ]; then

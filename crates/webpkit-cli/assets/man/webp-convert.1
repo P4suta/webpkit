@@ -4,7 +4,7 @@
 .SH NAME
 convert \- Batch\-convert many images (or directories) to WebP, in parallel
 .SH SYNOPSIS
-\fBconvert\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-optimize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-metadata\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIINPUTS\fR> 
+\fBconvert\fR [\fB\-o\fR|\fB\-\-output\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-near\-lossless\fR] [\fB\-\-optimize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-metadata\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIINPUTS\fR> 
 .SH DESCRIPTION
 Batch\-convert many images (or directories) to WebP, in parallel
 .SH OPTIONS
@@ -35,6 +35,9 @@ Encode lossily (VP8) instead of losslessly (VP8L)
 .TP
 \fB\-q\fR, \fB\-\-quality\fR \fI<QUALITY>\fR
 Lossy quality 0\-100 (higher = larger, closer to source); selects \-\-lossy
+.TP
+\fB\-\-near\-lossless\fR \fI<N>\fR
+Near\-lossless preprocessing 0\-100 (lower = stronger; implies lossless)
 .TP
 \fB\-\-optimize\fR
 Try every lossless effort level and keep the smallest output

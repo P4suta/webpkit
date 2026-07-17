@@ -23,7 +23,11 @@
 //! **encoding** ([`Encoder::lossy`]) writes a baseline `VP8 ` key frame, carrying a
 //! lossless `ALPH` alpha plane for non-opaque images and ICC/Exif/XMP [`Metadata`]
 //! via the extended `VP8X` container ([`Encoder::encode`] preserves a source
-//! [`Image`]'s metadata by default).
+//! [`Image`]'s metadata by default). [`read_metadata`]/[`write_metadata`] inspect and
+//! rewrite that sidecar metadata without touching the image bitstream (the
+//! `webpmux` half), [`decode_yuv`] recovers a lossy still's native YUV 4:2:0 planes,
+//! and [`Encoder::lossless`]'s `near_lossless` preprocessing trades a bounded
+//! per-channel error for a smaller VP8L payload.
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -103,6 +107,7 @@ internal_modules! {
     lossless,
     lossy,
     stream,
+    yuv,
     #[cfg(feature = "work-count")]
     work_count,
 }
@@ -110,7 +115,10 @@ internal_modules! {
 // Public RIFF chunk-inspection facade (thin wrappers over `container::reader`).
 // The module stays private; its public items are re-exported at the crate root.
 mod chunk;
-mod encoder;
+// The encode surface is public so the type-state markers keep a namespaced home
+// (`webpkit::encoder::Lossless` etc.) instead of crowding the crate root, where
+// `webpkit::Lossless` would collide with `webpkit::Codec::Lossless`.
+pub mod encoder;
 // Optional `image`-crate interop (TryFrom conversions on `Image`). The impls attach
 // to the public types, so the module itself stays private.
 #[cfg(feature = "image")]
@@ -118,10 +126,7 @@ mod interop;
 mod prelude;
 
 // ---- public facade re-exports ----------------------------------------------
-pub use crate::anim::{
-    AnimInfo, BlendMode, CompositedFrame, DisposalMode, Frame, FrameMeta,
-    decode_frames_with_decoder,
-};
+pub use crate::anim::{AnimInfo, BlendMode, CompositedFrame, DisposalMode, Frame, FrameMeta};
 pub use crate::chunk::{Chunk, Chunks, chunks};
 pub use crate::effort::Effort;
 #[cfg(feature = "std")]
@@ -130,11 +135,12 @@ pub use crate::error::{Codec, Error, Result};
 pub use crate::image::{
     Dimensions, Image, ImageRef, MAX_DIMENSION, Metadata, MetadataPolicy, PixelLayout,
 };
-pub use crate::stream::{
-    DEFAULT_MAX_PIXELS, DecodeOptions, DecodedFrame, FrameDecoder, FramePayload, ImageInfo,
-    Progress, RowDrain,
-};
-pub use encoder::{AnimCodec, AnimationEncoder, Empty, Encoder, HasFrames, Lossless, Lossy};
+pub use crate::stream::{DEFAULT_MAX_PIXELS, DecodeOptions, ImageInfo, Progress, RowDrain};
+pub use crate::yuv::YuvImage;
+// Only the entry points and the codec selector reach the crate root; the type-state
+// markers (`Empty`/`HasFrames`/`Lossless`/`Lossy`) stay in `webpkit::encoder`, named
+// only in the rare code that spells out an encoder's type argument.
+pub use encoder::{AnimCodec, AnimationEncoder, Encoder};
 
 // ---- imports used by the facade functions below -----------------------------
 use crate::alpha::{AlphaCompression, parse_header, unfilter};
@@ -144,7 +150,7 @@ use crate::container::scan::{declared_len, is_complete, scan_chunks};
 use crate::container::vp8x::{VP8X_PAYLOAD_LEN, Vp8xInfo};
 
 /// A lazy per-frame iterator over a WebP animation — each frame decoded by the
-/// both-codecs [`WebpFrameDecoder`] (lossless `VP8L` or lossy `VP8 `).
+/// crate's internal both-codecs frame decoder (lossless `VP8L` or lossy `VP8 `).
 #[cfg(feature = "alloc")]
 pub type Frames<'a> = crate::anim::Frames<'a, WebpFrameDecoder>;
 /// A compositing iterator that paints each animation frame onto the persistent
@@ -243,6 +249,54 @@ pub fn decode_rgba(input: &[u8]) -> Result<(Dimensions, Vec<u8>)> {
     Ok((image.dimensions(), image.into_pixels()))
 }
 
+/// Decode a **lossy** still WebP straight to its native **YUV 4:2:0** planes.
+///
+/// A lossy (`VP8 `) image is reconstructed in YUV before the YUV→RGB conversion
+/// [`decode`] performs; this hands back those planes — byte-identical to libwebp's
+/// `WebPDecodeYUV` — without that final step, for callers that consume YUV
+/// directly (video pipelines, `dwebp -yuv`/`-pgm`). See [`YuvImage`] for the plane
+/// shapes.
+///
+/// This is lossy-still only: lossless (`VP8L`) has no YUV form, and an animation is
+/// not a single still — both return [`Error::UnsupportedFeature`]. Any sibling
+/// `ALPH` alpha is ignored (YUV carries only luma and chroma).
+///
+/// # Untrusted input
+///
+/// Safe by default: like [`decode`], the canvas is capped at [`DEFAULT_MAX_PIXELS`]
+/// before the reconstruction planes are allocated.
+///
+/// # Examples
+///
+/// ```
+/// let rgba = vec![128u8; 4 * 4 * 4]; // a 4x4 mid-gray image
+/// let webp = webpkit::encode_lossy_rgba(4, 4, &rgba, 90)?;
+/// let yuv = webpkit::decode_yuv(&webp)?;
+/// assert_eq!((yuv.width(), yuv.height()), (4, 4));
+/// assert_eq!(yuv.y().len(), 4 * 4); // luma is full resolution
+/// assert_eq!(yuv.u().len(), 2 * 2); // chroma is 4:2:0 subsampled
+/// # Ok::<(), webpkit::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// [`Error::UnsupportedFeature`] for a lossless or animated input, the same
+/// container errors as [`decode`], or a lossy bitstream error.
+#[cfg(feature = "alloc")]
+pub fn decode_yuv(input: &[u8]) -> Result<YuvImage> {
+    let options = DecodeOptions::default();
+    let c = read_container(input, false)?;
+    // Only a lossy still has a native YUV reconstruction; an animation is not a
+    // single still and a lossless image never leaves RGBA.
+    if c.animated {
+        return Err(Error::UnsupportedFeature);
+    }
+    match c.image.ok_or(Error::MissingImage)? {
+        ImageChunk::Lossy(payload) => crate::lossy::decode_yuv_with(payload, &options),
+        ImageChunk::Lossless(_) => Err(Error::UnsupportedFeature),
+    }
+}
+
 /// Decode a still WebP read from any [`std::io::Read`] source into an [`Image`].
 ///
 /// The reader-based companion to [`decode`] (RGBA8 by default). The whole stream
@@ -327,7 +381,9 @@ fn alpha_plane_with(
     options: &DecodeOptions,
 ) -> Result<Vec<u8>> {
     let (w, h) = (width as usize, height as usize);
-    let count = w.checked_mul(h).ok_or(Error::Truncated)?;
+    // A `width * height` that overflows `usize` is an out-of-range size, not a short
+    // input — the already-validated image dimensions keep this unreachable in practice.
+    let count = w.checked_mul(h).ok_or(Error::InvalidDimensions)?;
     let (header, data) = parse_header(alph)?;
     let mut plane = match header.compression {
         AlphaCompression::None => data.get(..count).ok_or(Error::Truncated)?.to_vec(),
@@ -362,7 +418,7 @@ pub fn decode_frames(input: &[u8]) -> Result<Frames<'_>> {
 }
 
 /// Like [`decode_frames`] with explicit [`DecodeOptions`] (output layout,
-/// per-frame pixel limit); the both-codecs [`WebpFrameDecoder`] is always wired in.
+/// per-frame pixel limit); the crate's both-codecs frame decoder is always wired in.
 ///
 /// # Errors
 ///
@@ -370,7 +426,7 @@ pub fn decode_frames(input: &[u8]) -> Result<Frames<'_>> {
 /// exceeds `options.max_pixels`.
 #[cfg(feature = "alloc")]
 pub fn decode_frames_with<'a>(input: &'a [u8], options: &DecodeOptions) -> Result<Frames<'a>> {
-    crate::decode_frames_with_decoder(input, options, WebpFrameDecoder)
+    crate::anim::decode_frames_with_decoder(input, options, WebpFrameDecoder)
 }
 
 /// A push-based [`IncrementalDecoder`] for still images and animations, with the
@@ -644,24 +700,29 @@ fn first_composited_frame(input: &[u8], options: &DecodeOptions) -> Result<Image
         .map(CompositedFrame::into_image)
 }
 
-/// The umbrella's [`FrameDecoder`]: the seam that
+/// The umbrella's [`FrameDecoder`](crate::stream::FrameDecoder): the seam that
 /// drives **both** codecs.
 ///
 /// It lets the lossless codec's codec-agnostic animation walker decode frames of
 /// either codec. A `VP8L` frame is decoded by the lossless codec (delegating to its
 /// own VP8L frame decoder); a lossy `VP8 ` (+ optional sibling `ALPH`) frame is
 /// decoded by the lossy codec, compositing the alpha plane into the pixels' top byte.
+///
+/// Not part of the public API: it is `#[doc(hidden)] pub` only because the fixed
+/// [`Frames`]/[`CompositedFrames`] aliases name it as their type argument. Callers
+/// never spell it — [`decode_frames`] wires it in.
 #[cfg(feature = "alloc")]
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WebpFrameDecoder;
 
 #[cfg(feature = "alloc")]
-impl crate::FrameDecoder for WebpFrameDecoder {
+impl crate::stream::FrameDecoder for WebpFrameDecoder {
     fn decode_frame(
         &self,
-        frame: crate::FramePayload<'_>,
+        frame: crate::stream::FramePayload<'_>,
         options: &DecodeOptions,
-    ) -> Result<crate::DecodedFrame> {
+    ) -> Result<crate::stream::DecodedFrame> {
         if frame.vp8l.is_some() {
             // The VP8L path is codec-internal to `crate::lossless` — reuse it verbatim.
             return crate::lossless::Vp8lFrameDecoder.decode_frame(frame, options);
@@ -686,7 +747,7 @@ impl crate::FrameDecoder for WebpFrameDecoder {
             }
         }
         // libwebp keys the compositor on whether an `ALPH` chunk is present.
-        Ok(crate::DecodedFrame {
+        Ok(crate::stream::DecodedFrame {
             argb,
             alpha_used: frame.alph.is_some(),
         })
@@ -820,6 +881,97 @@ const fn vp8x_has_metadata(info: Vp8xInfo) -> bool {
     info.flags.has_icc() || info.flags.has_exif() || info.flags.has_xmp()
 }
 
+/// Read a WebP file's sidecar [`Metadata`] — ICC profile, Exif, XMP — without
+/// decoding a single pixel.
+///
+/// A chunk-level walk that collects the `ICCP`/`EXIF`/`XMP ` chunks wherever they
+/// sit (still or animation): the read half of [`write_metadata`], and the metadata
+/// companion to [`probe`]. It interprets no bitstream, so the cost is independent
+/// of the image size, and it answers for a file whose pixel data would not decode
+/// as long as the container framing is intact.
+///
+/// # Examples
+///
+/// ```
+/// use webpkit::{Dimensions, Encoder, ImageRef, Metadata, PixelLayout};
+///
+/// let rgba = vec![0u8; 4 * 4 * 4];
+/// let image = ImageRef::new(Dimensions::new(4, 4)?, PixelLayout::Rgba8, &rgba)?;
+/// let webp = Encoder::lossless()
+///     .metadata(Metadata::none().with_exif(vec![1, 2, 3]))
+///     .encode_ref(image)?;
+///
+/// let meta = webpkit::read_metadata(&webp)?;
+/// assert_eq!(meta.exif.as_deref(), Some(&[1, 2, 3][..]));
+/// # Ok::<(), webpkit::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// [`Error::NotWebp`] for a bad `RIFF`/`WEBP` magic, or [`Error::Truncated`] for a
+/// short or malformed container.
+#[cfg(feature = "alloc")]
+pub fn read_metadata(input: &[u8]) -> Result<Metadata> {
+    let mut metadata = Metadata::none();
+    for chunk in crate::container::reader::chunks(input)? {
+        let chunk = chunk?;
+        match chunk.id {
+            FourCc::ICCP => metadata.icc_profile = Some(chunk.data.to_vec()),
+            FourCc::EXIF => metadata.exif = Some(chunk.data.to_vec()),
+            FourCc::XMP => metadata.xmp = Some(chunk.data.to_vec()),
+            _ => {},
+        }
+    }
+    Ok(metadata)
+}
+
+/// Rewrite a WebP file's sidecar metadata — set, replace, or strip ICC/Exif/XMP —
+/// without re-encoding or even decoding the image bitstream.
+///
+/// The webpmux-style companion to [`read_metadata`]: the `VP8 `/`VP8L`/`ALPH`/
+/// `ANIM`/`ANMF` image chunks are copied through byte-for-byte, the old
+/// `ICCP`/`EXIF`/`XMP `/`VP8X` are dropped, and a fresh `VP8X` plus the new
+/// metadata chunks are emitted in the spec's order. Stills and animations alike are
+/// handled. An empty `metadata` on a file that was already the simple form yields a
+/// bare (`VP8X`-free) file again.
+///
+/// # Examples
+///
+/// ```
+/// let rgba = vec![0u8; 4 * 4 * 4];
+/// let webp = webpkit::encode_lossless_rgba(4, 4, &rgba)?;
+///
+/// let tagged = webpkit::write_metadata(
+///     &webp,
+///     &webpkit::Metadata::none().with_xmp(b"<x:xmpmeta/>".to_vec()),
+/// )?;
+/// assert_eq!(
+///     webpkit::read_metadata(&tagged)?.xmp.as_deref(),
+///     Some(&b"<x:xmpmeta/>"[..]),
+/// );
+/// // The pixels are untouched by the metadata rewrite.
+/// assert_eq!(webpkit::decode_rgba(&tagged)?, webpkit::decode_rgba(&webp)?);
+/// # Ok::<(), webpkit::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// [`Error::NotWebp`]/[`Error::Truncated`] for a non-WebP or short input, or the
+/// errors of [`probe`] when the container header cannot be read.
+#[cfg(feature = "alloc")]
+pub fn write_metadata(input: &[u8], metadata: &Metadata) -> Result<Vec<u8>> {
+    // `probe` supplies the canvas, alpha, and animation facts from the header
+    // alone, so the container rewrite interprets no bitstream itself.
+    let info = probe(input)?;
+    crate::container::mux::rewrite_metadata(
+        input,
+        metadata,
+        info.dimensions,
+        info.has_alpha,
+        info.is_animated,
+    )
+}
+
 /// Read an animation's canvas, loop count, frame count and total duration —
 /// without decoding a single frame.
 ///
@@ -870,7 +1022,7 @@ mod tests {
     use super::{
         BlendMode, Codec, DecodeOptions, Dimensions, DisposalMode, Effort, Encoder, Error,
         FrameMeta, Image, ImageRef, IncrementalDecoder, Metadata, MetadataPolicy, PixelLayout,
-        Progress, decode, decode_with, probe, probe_animation,
+        Progress, decode, decode_with, decode_yuv, probe, probe_animation,
     };
 
     /// A 32x32 image of busy pixels, encoded with `make`.
@@ -1122,6 +1274,46 @@ mod tests {
         let info = probe_animation(&bytes).unwrap();
         assert_eq!(info.frame_count, 3);
         assert_eq!(info.total_duration_ms, 450);
+    }
+
+    /// `decode_yuv` recovers a lossy still's native 4:2:0 planes; odd sides pin the
+    /// ceil-halved chroma dimensions and the `y = w*h`, `u = v = cw*ch` plane sizes.
+    #[test]
+    fn decode_yuv_recovers_4_2_0_plane_shapes_for_a_lossy_still() {
+        let (w, h) = (7u32, 5u32);
+        let rgba: Vec<u8> = (0..w * h * 4).map(|i| (i * 7 % 251) as u8).collect();
+        let webp = crate::encode_lossy_rgba(w, h, &rgba, 80).unwrap();
+        let yuv = decode_yuv(&webp).unwrap();
+        assert_eq!((yuv.width(), yuv.height()), (w, h));
+        assert_eq!((yuv.chroma_width(), yuv.chroma_height()), (4, 3));
+        assert_eq!(yuv.y().len(), (w * h) as usize);
+        assert_eq!(yuv.u().len(), yuv.v().len());
+        assert_eq!(
+            yuv.u().len(),
+            (yuv.chroma_width() * yuv.chroma_height()) as usize
+        );
+    }
+
+    /// A lossless still has no YUV form; `decode_yuv` says so rather than guessing.
+    #[test]
+    fn decode_yuv_rejects_a_lossless_still() {
+        assert_eq!(
+            decode_yuv(&lossless_bytes()),
+            Err(Error::UnsupportedFeature)
+        );
+    }
+
+    /// An animation is not a single still, so `decode_yuv` rejects it too.
+    #[test]
+    fn decode_yuv_rejects_an_animation() {
+        let canvas = Dimensions::new(8, 6).unwrap();
+        let rgba = vec![0x30u8; 8 * 6 * 4];
+        let frame = ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap();
+        let bytes = crate::AnimationEncoder::new(canvas)
+            .add_frame(frame, frame_meta(canvas, 100))
+            .unwrap()
+            .finish();
+        assert_eq!(decode_yuv(&bytes), Err(Error::UnsupportedFeature));
     }
 
     /// Metadata announced only by a sidecar chunk, with no `VP8X` at all: `probe`
@@ -1756,5 +1948,89 @@ mod tests {
         }
         assert_eq!(frames, 2, "both frames composited");
         assert_eq!(dec.into_image().unwrap().as_bytes(), expected.as_bytes());
+    }
+
+    /// `write_metadata` then `read_metadata` round-trips an arbitrary metadata set
+    /// on a still of either codec, and the decoded pixels are unchanged — the
+    /// facade's promise that the image bitstream is never touched.
+    #[test]
+    fn write_then_read_metadata_round_trips_on_a_still() {
+        for bytes in [lossless_bytes(), lossy_bytes()] {
+            let meta = Metadata {
+                icc_profile: Some(vec![1, 2, 3]),
+                exif: Some(vec![4, 5]),
+                xmp: Some(vec![6]),
+            };
+            let out = super::write_metadata(&bytes, &meta).unwrap();
+            assert_eq!(super::read_metadata(&out).unwrap(), meta);
+            assert_eq!(
+                decode(&out).unwrap().into_pixels(),
+                decode(&bytes).unwrap().into_pixels(),
+                "the metadata rewrite must not alter the pixels"
+            );
+        }
+    }
+
+    /// Stripping metadata (an empty `Metadata`) leaves the pixels intact and the
+    /// output carrying nothing — even when the source was the extended form.
+    #[test]
+    fn write_metadata_strips_and_preserves_pixels() {
+        let tagged = lossless_with_trailing_metadata();
+        assert!(!super::read_metadata(&tagged).unwrap().is_empty());
+        let stripped = super::write_metadata(&tagged, &Metadata::none()).unwrap();
+        assert!(super::read_metadata(&stripped).unwrap().is_empty());
+        assert_eq!(
+            decode(&stripped).unwrap().into_pixels(),
+            decode(&tagged).unwrap().into_pixels()
+        );
+    }
+
+    /// An animation survives a metadata rewrite: it stays animated, its metadata
+    /// round-trips, and its first composited frame is unchanged.
+    #[test]
+    fn write_metadata_preserves_an_animation() {
+        let canvas = Dimensions::new(16, 8).unwrap();
+        let rgba = vec![0x40u8; 16 * 8 * 4];
+        let frame = ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap();
+        let bytes = crate::AnimationEncoder::new(canvas)
+            .add_frame(
+                frame,
+                FrameMeta {
+                    x: 0,
+                    y: 0,
+                    dimensions: canvas,
+                    duration_ms: 100,
+                    blend: BlendMode::Blend,
+                    dispose: DisposalMode::Keep,
+                },
+            )
+            .unwrap()
+            .finish();
+        let meta = Metadata {
+            xmp: Some(vec![7, 7]),
+            ..Metadata::none()
+        };
+        let out = super::write_metadata(&bytes, &meta).unwrap();
+        assert_eq!(super::read_metadata(&out).unwrap(), meta);
+        assert!(super::is_animated(&out).unwrap());
+        assert_eq!(
+            decode(&out).unwrap().into_pixels(),
+            decode(&bytes).unwrap().into_pixels()
+        );
+    }
+
+    /// `read_metadata` reports a non-WebP input rather than inventing empty
+    /// metadata, and reads a sidecar that sits after the image chunk.
+    #[test]
+    fn read_metadata_validates_and_finds_trailing_sidecars() {
+        assert!(matches!(
+            super::read_metadata(b"not a webp file"),
+            Err(Error::NotWebp)
+        ));
+        let tagged = lossless_with_trailing_metadata();
+        assert_eq!(
+            super::read_metadata(&tagged).unwrap().exif.as_deref(),
+            Some(&[9, 9, 9, 9][..])
+        );
     }
 }

@@ -27,6 +27,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output file, or a directory for many inputs; default: beside each input')
             [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects lossy')
             [CompletionResult]::new('--quality', '--quality', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects lossy')
+            [CompletionResult]::new('--near-lossless', '--near-lossless', [CompletionResultType]::ParameterName, 'Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)')
             [CompletionResult]::new('-m', '-m', [CompletionResultType]::ParameterName, 'Encoder effort [default: balanced, or from env/config]')
             [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort [default: balanced, or from env/config]')
             [CompletionResult]::new('--metadata', '--metadata', [CompletionResultType]::ParameterName, 'Metadata to embed: all,none,icc,exif,xmp (default: all)')
@@ -50,6 +51,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('encode', 'encode', [CompletionResultType]::ParameterValue, 'Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file')
             [CompletionResult]::new('convert', 'convert', [CompletionResultType]::ParameterValue, 'Batch-convert many images (or directories) to WebP, in parallel')
             [CompletionResult]::new('info', 'info', [CompletionResultType]::ParameterValue, 'Print a summary of a WebP file (size, alpha, metadata, animation)')
+            [CompletionResult]::new('meta', 'meta', [CompletionResultType]::ParameterValue, 'Read, set, or strip a WebP file''s metadata (ICC/Exif/XMP), without re-encoding the image')
             [CompletionResult]::new('diff', 'diff', [CompletionResultType]::ParameterValue, 'Compare two images: report PSNR and the largest per-channel difference')
             [CompletionResult]::new('doctor', 'doctor', [CompletionResultType]::ParameterValue, 'Diagnose the environment: PATH drop-in shadows, config, terminal, threads')
             [CompletionResult]::new('config', 'config', [CompletionResultType]::ParameterValue, 'Show resolved settings and where each came from (args, env, file, default)')
@@ -88,6 +90,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort [default: balanced, or from env/config]')
             [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
             [CompletionResult]::new('--quality', '--quality', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
+            [CompletionResult]::new('--near-lossless', '--near-lossless', [CompletionResultType]::ParameterName, 'Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)')
             [CompletionResult]::new('--crop', '--crop', [CompletionResultType]::ParameterName, 'Crop before encoding: `x,y,width,height` in pixels (applied before --resize)')
             [CompletionResult]::new('--resize', '--resize', [CompletionResultType]::ParameterName, 'Resize before encoding: `WxH` (use 0 on one axis to keep aspect)')
             [CompletionResult]::new('--target-size', '--target-size', [CompletionResultType]::ParameterName, 'Target output size, e.g. `200k` or `2M`, found by searching lossy quality')
@@ -112,6 +115,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort (ignored with --optimize) [default: balanced, or from env/config]')
             [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
             [CompletionResult]::new('--quality', '--quality', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
+            [CompletionResult]::new('--near-lossless', '--near-lossless', [CompletionResultType]::ParameterName, 'Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)')
             [CompletionResult]::new('--metadata', '--metadata', [CompletionResultType]::ParameterName, 'Metadata to embed: all,none,icc,exif,xmp (default: all)')
             [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
@@ -140,6 +144,81 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;meta' {
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('show', 'show', [CompletionResultType]::ParameterValue, 'Show the ICC/Exif/XMP a WebP carries (kinds and byte sizes)')
+            [CompletionResult]::new('set', 'set', [CompletionResultType]::ParameterValue, 'Write a copy with ICC/Exif/XMP set from files (unspecified kinds are kept)')
+            [CompletionResult]::new('strip', 'strip', [CompletionResultType]::ParameterValue, 'Write a copy with all sidecar metadata removed')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'webp;meta;show' {
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Print the metadata as JSON instead of text')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;meta;set' {
+            [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--icc', '--icc', [CompletionResultType]::ParameterName, 'Set the ICC color profile from this file')
+            [CompletionResult]::new('--exif', '--exif', [CompletionResultType]::ParameterName, 'Set the Exif metadata from this file')
+            [CompletionResult]::new('--xmp', '--xmp', [CompletionResultType]::ParameterName, 'Set the XMP metadata from this file')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;meta;strip' {
+            [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;meta;help' {
+            [CompletionResult]::new('show', 'show', [CompletionResultType]::ParameterValue, 'Show the ICC/Exif/XMP a WebP carries (kinds and byte sizes)')
+            [CompletionResult]::new('set', 'set', [CompletionResultType]::ParameterValue, 'Write a copy with ICC/Exif/XMP set from files (unspecified kinds are kept)')
+            [CompletionResult]::new('strip', 'strip', [CompletionResultType]::ParameterValue, 'Write a copy with all sidecar metadata removed')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'webp;meta;help;show' {
+            break
+        }
+        'webp;meta;help;set' {
+            break
+        }
+        'webp;meta;help;strip' {
+            break
+        }
+        'webp;meta;help;help' {
             break
         }
         'webp;diff' {
@@ -245,6 +324,7 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('encode', 'encode', [CompletionResultType]::ParameterValue, 'Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file')
             [CompletionResult]::new('convert', 'convert', [CompletionResultType]::ParameterValue, 'Batch-convert many images (or directories) to WebP, in parallel')
             [CompletionResult]::new('info', 'info', [CompletionResultType]::ParameterValue, 'Print a summary of a WebP file (size, alpha, metadata, animation)')
+            [CompletionResult]::new('meta', 'meta', [CompletionResultType]::ParameterValue, 'Read, set, or strip a WebP file''s metadata (ICC/Exif/XMP), without re-encoding the image')
             [CompletionResult]::new('diff', 'diff', [CompletionResultType]::ParameterValue, 'Compare two images: report PSNR and the largest per-channel difference')
             [CompletionResult]::new('doctor', 'doctor', [CompletionResultType]::ParameterValue, 'Diagnose the environment: PATH drop-in shadows, config, terminal, threads')
             [CompletionResult]::new('config', 'config', [CompletionResultType]::ParameterValue, 'Show resolved settings and where each came from (args, env, file, default)')
@@ -264,6 +344,21 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             break
         }
         'webp;help;info' {
+            break
+        }
+        'webp;help;meta' {
+            [CompletionResult]::new('show', 'show', [CompletionResultType]::ParameterValue, 'Show the ICC/Exif/XMP a WebP carries (kinds and byte sizes)')
+            [CompletionResult]::new('set', 'set', [CompletionResultType]::ParameterValue, 'Write a copy with ICC/Exif/XMP set from files (unspecified kinds are kept)')
+            [CompletionResult]::new('strip', 'strip', [CompletionResultType]::ParameterValue, 'Write a copy with all sidecar metadata removed')
+            break
+        }
+        'webp;help;meta;show' {
+            break
+        }
+        'webp;help;meta;set' {
+            break
+        }
+        'webp;help;meta;strip' {
             break
         }
         'webp;help;diff' {

@@ -32,6 +32,7 @@ pub struct EncoderConfig {
     pub(crate) effort: Effort,
     pub(crate) metadata: Metadata,
     pub(crate) policy: MetadataPolicy,
+    pub(crate) near_lossless: Option<u8>,
 }
 
 impl EncoderConfig {
@@ -69,6 +70,17 @@ impl EncoderConfig {
     #[must_use]
     pub const fn with_metadata_policy(mut self, policy: MetadataPolicy) -> Self {
         self.policy = policy;
+        self
+    }
+
+    /// Enable near-lossless preprocessing at `level` (`0..=100`, lower = stronger
+    /// quantization; `100` is a no-op). A lossy encode-side filter that snaps the low
+    /// bits of pixels in busy regions to a coarser grid — trading a bounded
+    /// per-channel error for a smaller VP8L payload — while leaving the bitstream
+    /// exact, so the file still decodes without any special support.
+    #[must_use]
+    pub const fn with_near_lossless(mut self, level: u8) -> Self {
+        self.near_lossless = Some(level);
         self
     }
 

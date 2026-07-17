@@ -54,6 +54,9 @@ pub struct Encoder<C> {
     /// Only consulted by the lossy terminal; the type-state hides its setter on the
     /// lossless builder.
     quality: Quality,
+    /// Only consulted by the lossless terminal; the type-state hides its setter on
+    /// the lossy builder (near-lossless is a VP8L-only preprocessing step).
+    near_lossless: Option<u8>,
     _codec: PhantomData<C>,
 }
 
@@ -66,6 +69,7 @@ impl<C: sealed::Codec> Encoder<C> {
             metadata: Metadata::none(),
             policy: MetadataPolicy::default(),
             quality: Quality::default(),
+            near_lossless: None,
             _codec: PhantomData,
         }
     }
@@ -103,6 +107,26 @@ impl Encoder<Lossless> {
         Self::new()
     }
 
+    /// Enable near-lossless preprocessing at `level` (`0..=100`, lower = stronger
+    /// quantization; `100` is a no-op). **Lossless only** — this method does not
+    /// exist on the lossy builder, so a near-lossless request on a lossy encode is a
+    /// compile error.
+    ///
+    /// A lossy encode-side filter that snaps the low bits of pixels in busy regions
+    /// to a coarser grid, trading a bounded per-channel error for a smaller VP8L
+    /// payload; the bitstream stays exact, so the file decodes with no special
+    /// support.
+    ///
+    /// ```compile_fail
+    /// // near_lossless() is not available on a lossy encoder:
+    /// let _ = webpkit::Encoder::lossy().near_lossless(60);
+    /// ```
+    #[must_use]
+    pub const fn near_lossless(mut self, level: u8) -> Self {
+        self.near_lossless = Some(level);
+        self
+    }
+
     /// Encode `image` into a complete lossless WebP file, **preserving its
     /// ICC/Exif/XMP metadata by default** (kinder than `cwebp`, which strips it).
     ///
@@ -134,7 +158,7 @@ impl Encoder<Lossless> {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`](crate::Error::Io) on a write failure, or any
+    /// [`Error::Io`] on a write failure, or any
     /// [`encode`](Self::encode) error.
     #[cfg(feature = "std")]
     pub fn encode_to<W: std::io::Write>(&self, image: &Image, mut writer: W) -> Result<()> {
@@ -144,10 +168,14 @@ impl Encoder<Lossless> {
 
     /// The internal lossless config this builder folds into.
     fn config(&self) -> EncoderConfig {
-        EncoderConfig::new()
+        let config = EncoderConfig::new()
             .with_effort(self.effort)
             .with_metadata(self.metadata.clone())
-            .with_metadata_policy(self.policy)
+            .with_metadata_policy(self.policy);
+        match self.near_lossless {
+            Some(level) => config.with_near_lossless(level),
+            None => config,
+        }
     }
 }
 
@@ -200,7 +228,7 @@ impl Encoder<Lossy> {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`](crate::Error::Io) on a write failure, or any
+    /// [`Error::Io`] on a write failure, or any
     /// [`encode`](Self::encode) error.
     #[cfg(feature = "std")]
     pub fn encode_to<W: std::io::Write>(&self, image: &Image, mut writer: W) -> Result<()> {
@@ -245,11 +273,11 @@ pub enum HasFrames {}
 /// has been added, so an empty animation is a compile error. Frames are buffered
 /// and the whole file is produced by `finish`, so no [`std::io::Seek`] is needed.
 /// Each frame is encoded eagerly with the encoder's current [`AnimCodec`] — the
-/// default is lossless `VP8L`; [`lossy`](AnimationEncoder::lossy) switches to lossy
+/// default is lossless `VP8L`; [`codec`](AnimationEncoder::codec) switches to lossy
 /// `VP8 ` (non-opaque frames carry a lossless `ALPH` chunk) and
 /// [`add_frame_with`](AnimationEncoder::add_frame_with) overrides it per frame.
 /// ICC/Exif/XMP [`Metadata`] set via
-/// [`with_metadata`](AnimationEncoder::with_metadata) is embedded by `finish`.
+/// [`metadata`](AnimationEncoder::metadata) is embedded by `finish`.
 ///
 /// ```
 /// use webpkit::{AnimationEncoder, BlendMode, DisposalMode, Dimensions, FrameMeta, ImageRef, PixelLayout};
@@ -257,7 +285,7 @@ pub enum HasFrames {}
 /// let rgba = [10u8, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255];
 /// let meta = FrameMeta::new(0, 0, canvas, 100, BlendMode::Blend, DisposalMode::Keep);
 /// let bytes = AnimationEncoder::new(canvas)
-///     .with_loop_count(0)
+///     .loop_count(0)
 ///     .add_frame(ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap(), meta)
 ///     .unwrap()
 ///     .finish();
@@ -267,12 +295,12 @@ pub enum HasFrames {}
 /// The same builder encodes lossy frames — `webpkit::decode_frames` reads both:
 ///
 /// ```
-/// use webpkit::{AnimationEncoder, BlendMode, DisposalMode, Dimensions, FrameMeta, ImageRef, PixelLayout};
+/// use webpkit::{AnimCodec, AnimationEncoder, BlendMode, DisposalMode, Dimensions, FrameMeta, ImageRef, PixelLayout};
 /// let canvas = Dimensions::new(2, 2).unwrap();
 /// let rgba = [10u8, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255];
 /// let meta = FrameMeta::new(0, 0, canvas, 100, BlendMode::Blend, DisposalMode::Keep);
 /// let bytes = AnimationEncoder::new(canvas)
-///     .lossy(80)
+///     .codec(AnimCodec::Lossy(80))
 ///     .add_frame(ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap(), meta)
 ///     .unwrap()
 ///     .finish();
@@ -337,7 +365,7 @@ impl AnimationEncoder<Empty> {
 impl<S> AnimationEncoder<S> {
     /// Set the loop count (`0` = loop forever).
     #[must_use]
-    pub const fn with_loop_count(mut self, loop_count: u16) -> Self {
+    pub const fn loop_count(mut self, loop_count: u16) -> Self {
         self.loop_count = loop_count;
         self
     }
@@ -345,37 +373,32 @@ impl<S> AnimationEncoder<S> {
     /// Set the advisory background color (RGBA). Note libwebp's decoder — and
     /// ours — ignores it when compositing; it is written for completeness.
     #[must_use]
-    pub const fn with_background(mut self, rgba: [u8; 4]) -> Self {
+    pub const fn background(mut self, rgba: [u8; 4]) -> Self {
         self.background = PixelLayout::Rgba8.unpack(rgba);
         self
     }
 
     /// Set the effort [`Effort`] used to encode each frame.
     #[must_use]
-    pub const fn with_effort(mut self, effort: Effort) -> Self {
+    pub const fn effort(mut self, effort: Effort) -> Self {
         self.effort = effort;
         self
     }
 
-    /// Use lossless `VP8L` for subsequently added frames (the default).
+    /// Set the default [`AnimCodec`] for subsequently added frames — lossless
+    /// `VP8L` (the default) or lossy `VP8 ` at a quality, matching the
+    /// [`add_frame_with`](Self::add_frame_with) per-frame override. A non-opaque
+    /// lossy frame carries a lossless `ALPH` alpha chunk.
     #[must_use]
-    pub const fn lossless(mut self) -> Self {
-        self.codec = AnimCodec::Lossless;
-        self
-    }
-
-    /// Use lossy `VP8 ` at `quality` (`0..=100`, clamped) for subsequently added
-    /// frames; non-opaque frames carry a lossless `ALPH` alpha chunk.
-    #[must_use]
-    pub const fn lossy(mut self, quality: u8) -> Self {
-        self.codec = AnimCodec::Lossy(quality);
+    pub const fn codec(mut self, codec: AnimCodec) -> Self {
+        self.codec = codec;
         self
     }
 
     /// Embed ICC/Exif/XMP [`Metadata`] in the finished file (upgrades the `VP8X`
     /// flags and emits `ICCP`/`EXIF`/`XMP ` chunks).
     #[must_use]
-    pub fn with_metadata(mut self, metadata: Metadata) -> Self {
+    pub fn metadata(mut self, metadata: Metadata) -> Self {
         self.metadata = metadata;
         self
     }
@@ -392,9 +415,9 @@ impl<S> AnimationEncoder<S> {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidDimensions`] if the image size disagrees with
-    /// `meta.dimensions`, the offset is odd, the frame does not fit inside the
-    /// canvas, or the duration exceeds `2^24 - 1` ms.
+    /// [`Error::InvalidFrame`] if the image size disagrees with `meta.dimensions`,
+    /// the offset is odd, the frame does not fit inside the canvas, or the duration
+    /// exceeds `2^24 - 1` ms.
     pub fn add_frame(
         self,
         image: ImageRef<'_>,
@@ -409,7 +432,7 @@ impl<S> AnimationEncoder<S> {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidDimensions`] under the same conditions as
+    /// [`Error::InvalidFrame`] under the same conditions as
     /// [`add_frame`](Self::add_frame).
     pub fn add_frame_with(
         self,
@@ -425,7 +448,7 @@ impl<S> AnimationEncoder<S> {
             && u64::from(meta.x) + u64::from(dims.width()) <= u64::from(self.canvas.width())
             && u64::from(meta.y) + u64::from(dims.height()) <= u64::from(self.canvas.height());
         if !fits {
-            return Err(Error::InvalidDimensions);
+            return Err(Error::InvalidFrame);
         }
 
         let argb = image::unpack_pixels(image.layout(), image.as_bytes());
@@ -519,7 +542,7 @@ impl AnimationEncoder<HasFrames> {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`](crate::Error::Io) on a write failure.
+    /// [`Error::Io`] on a write failure.
     #[cfg(feature = "std")]
     pub fn finish_to<W: std::io::Write>(self, mut writer: W) -> Result<()> {
         writer.write_all(&self.finish())?;
@@ -588,7 +611,7 @@ mod anim_tests {
         let rgba0 = frame_bytes(canvas, 0xFF00_00FF);
         let rgba1 = frame_bytes(canvas, 0xFF00_FF00);
         let file = AnimationEncoder::new(canvas)
-            .with_loop_count(0)
+            .loop_count(0)
             .add_frame(image_ref(canvas, &rgba0), meta(canvas, 0, 0, 100))
             .unwrap()
             .add_frame(image_ref(canvas, &rgba1), meta(canvas, 0, 0, 50))
@@ -611,8 +634,8 @@ mod anim_tests {
         let rgba0 = frame_bytes(canvas, 0xFF00_00FF);
         let rgba1 = frame_bytes(canvas, 0xFF00_FF00);
         let file = AnimationEncoder::new(canvas)
-            .with_loop_count(3)
-            .with_background([1, 2, 3, 255])
+            .loop_count(3)
+            .background([1, 2, 3, 255])
             .add_frame(image_ref(canvas, &rgba0), meta(canvas, 0, 0, 100))
             .unwrap()
             .add_frame(image_ref(canvas, &rgba1), meta(canvas, 0, 0, 50))
@@ -638,7 +661,7 @@ mod anim_tests {
         let rgba0 = frame_bytes(canvas, 0xFF20_4060);
         let rgba1 = frame_bytes(canvas, 0xFF80_A0C0);
         let file = AnimationEncoder::new(canvas)
-            .lossy(90)
+            .codec(AnimCodec::Lossy(90))
             .add_frame(image_ref(canvas, &rgba0), meta(canvas, 0, 0, 40))
             .unwrap()
             .add_frame(image_ref(canvas, &rgba1), meta(canvas, 0, 0, 60))
@@ -683,7 +706,7 @@ mod anim_tests {
         let argb: Vec<u32> = (0..16u32).map(|i| ((i * 15) << 24) | 0x0011_2233).collect();
         let rgba = image::pack_pixels(PixelLayout::Rgba8, &argb);
         let file = AnimationEncoder::new(canvas)
-            .lossy(90)
+            .codec(AnimCodec::Lossy(90))
             .add_frame(image_ref(canvas, &rgba), meta(canvas, 0, 0, 40))
             .unwrap()
             .finish();
@@ -722,7 +745,7 @@ mod anim_tests {
             xmp: Some(xmp.clone()),
         };
         let file = AnimationEncoder::new(canvas)
-            .with_metadata(metadata)
+            .metadata(metadata)
             .add_frame(image_ref(canvas, &rgba), meta(canvas, 0, 0, 40))
             .unwrap()
             .finish();
@@ -760,9 +783,9 @@ mod anim_tests {
             xmp: Some(vec![6, 7, 8]),
         };
         let file = AnimationEncoder::new(canvas)
-            .lossy(80)
-            .with_loop_count(2)
-            .with_metadata(metadata)
+            .codec(AnimCodec::Lossy(80))
+            .loop_count(2)
+            .metadata(metadata)
             .add_frame(image_ref(canvas, &rgba0), meta(canvas, 0, 0, 30))
             .unwrap()
             .add_frame(image_ref(canvas, &rgba1), meta(canvas, 0, 0, 30))
@@ -781,7 +804,7 @@ mod anim_tests {
         let rgba0 = frame_bytes(canvas, 0xFF10_2030);
         let rgba1 = frame_bytes(canvas, 0xFF40_5060);
         let file = AnimationEncoder::new(canvas)
-            .lossless()
+            .codec(AnimCodec::Lossless)
             .add_frame(image_ref(canvas, &rgba0), meta(canvas, 0, 0, 40))
             .unwrap()
             .add_frame_with(
@@ -805,12 +828,12 @@ mod anim_tests {
 
     #[test]
     fn lossy_default_via_encoder_level_lossy() {
-        // `.lossy(75)` then plain `add_frame` calls (no override) must both be lossy;
-        // kills a mutant that ignores `self.codec` in `add_frame`.
+        // `.codec(Lossy(75))` then plain `add_frame` calls (no override) must both be
+        // lossy; kills a mutant that ignores `self.codec` in `add_frame`.
         let canvas = Dimensions::new(8, 8).unwrap();
         let rgba = frame_bytes(canvas, 0xFF30_6090);
         let file = AnimationEncoder::new(canvas)
-            .lossy(75)
+            .codec(AnimCodec::Lossy(75))
             .add_frame(image_ref(canvas, &rgba), meta(canvas, 0, 0, 40))
             .unwrap()
             .add_frame(image_ref(canvas, &rgba), meta(canvas, 0, 0, 40))
@@ -844,7 +867,7 @@ mod anim_tests {
         let err = AnimationEncoder::new(canvas)
             .add_frame(image_ref(tile, &rgba), meta(tile, 1, 0, 40))
             .unwrap_err();
-        assert_eq!(err, Error::InvalidDimensions);
+        assert_eq!(err, Error::InvalidFrame);
     }
 
     #[test]
@@ -855,7 +878,7 @@ mod anim_tests {
         let err = AnimationEncoder::new(canvas)
             .add_frame(image_ref(tile, &rgba), meta(tile, 2, 2, 40))
             .unwrap_err();
-        assert_eq!(err, Error::InvalidDimensions);
+        assert_eq!(err, Error::InvalidFrame);
     }
 
     #[test]
@@ -867,12 +890,12 @@ mod anim_tests {
         let err = AnimationEncoder::new(canvas)
             .add_frame(image_ref(two, &rgba), meta(canvas, 0, 0, 40))
             .unwrap_err();
-        assert_eq!(err, Error::InvalidDimensions);
+        assert_eq!(err, Error::InvalidFrame);
         // duration beyond 24 bits.
         let err = AnimationEncoder::new(canvas)
             .add_frame(image_ref(two, &rgba), meta(two, 0, 0, 1 << 24))
             .unwrap_err();
-        assert_eq!(err, Error::InvalidDimensions);
+        assert_eq!(err, Error::InvalidFrame);
     }
 
     #[test]
@@ -928,9 +951,9 @@ mod anim_tests {
     fn debug_impl_renders_the_struct_fields() {
         let canvas = Dimensions::new(4, 4).unwrap();
         let enc = AnimationEncoder::new(canvas)
-            .with_loop_count(7)
-            .with_effort(Effort::Fast)
-            .lossy(80);
+            .loop_count(7)
+            .effort(Effort::Fast)
+            .codec(AnimCodec::Lossy(80));
         let rendered = format!("{enc:?}");
         assert!(rendered.contains("AnimationEncoder"), "got: {rendered}");
         assert!(rendered.contains("canvas"), "got: {rendered}");

@@ -11,6 +11,8 @@ Options:
   -o <file>      output file (`-` for stdout)
   -png           PNG output (default)
   -ppm / -pam    netpbm output
+  -bmp / -tiff   BMP / TIFF output
+  -yuv / -pgm    raw YUV 4:2:0 planes / their PGM arrangement (lossy input)
   -flip          flip vertically
   -alpha         output the alpha plane as grayscale
   -quiet / -v    quieter / more verbose

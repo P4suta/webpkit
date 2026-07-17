@@ -38,7 +38,7 @@ pub use crate::container::anim::{BlendMode, DisposalMode, FrameMeta};
 ///
 /// `#[non_exhaustive]`: further header facts can be added without a breaking
 /// change (the fields stay `pub` to read).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[non_exhaustive]
 pub struct AnimInfo {
     /// The canvas size that every frame composites onto.

@@ -50,6 +50,11 @@ dependencies, and `no_std`-friendly (with `alloc`).
   (`ANIM`/`ANMF`) is read and written (`decode_frames` / `AnimationEncoder`;
   `decode` returns the first composited frame). One shared `Effort` /
   `MetadataPolicy` / `Error` is defined once in the crate-root shell modules.
+- **Beyond the pixel path.** `read_metadata` / `write_metadata` inspect and rewrite
+  a file's ICC/Exif/XMP sidecar chunks without touching the image bitstream (the
+  `webpmux` half), `decode_yuv` recovers a lossy still's native YUV 4:2:0 planes,
+  and `Encoder::lossless().near_lossless(level)` trades a bounded per-channel error
+  for a smaller VP8L payload.
 
 Still to come: encoder size/speed tuning and broader real-image benchmarking.
 
@@ -134,7 +139,8 @@ The `webpkit-cli` crate builds three binaries:
   content**: `webp photo.png` writes `photo.webp`, `webp photo.webp` writes
   `photo.png`, and the output name is derived (use `encode`/`decode` to force a
   direction). It reads PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw, turns a **GIF into an
-  animated WebP**, and its `decode`/`info` handle lossless, lossy, and animated
+  animated WebP** (loop count and per-frame codec preserved; `--lossy` for VP8
+  frames), and its `decode`/`info`/`meta` handle lossless, lossy, and animated
   input alike.
 
 Input for JPEG/GIF/TIFF/BMP comes from the [`image`](https://crates.io/crates/image)
@@ -154,21 +160,27 @@ cargo install --path crates/webpkit-cli --locked   # installs cwebp, dwebp, webp
 cwebp in.png -o out.webp -q 80           # lossy by default (-q = quality)
 cwebp in.jpg -o out.webp -lossless       # reads JPEG now (was rejected); -lossless keeps it exact
 cwebp in.png -o out.webp -lossless -m 6  # -lossless (or -z) -> VP8L; -m/-z/-q = effort
+cwebp in.png -o out.webp -near_lossless 60  # near-lossless preprocessing (implies -lossless)
 dwebp out.webp -o back.png               # decodes VP8L or VP8; default output is PNG
+dwebp out.webp -o planes.yuv -yuv        # native YUV 4:2:0 planes (also -pgm, -bmp, -tiff)
 cat in.png | cwebp - -o - | dwebp - -o - > roundtrip.png   # `-` reads stdin
 
 # the webp brand tool — direction is auto-detected, output implicit:
 webp photo.png                           # -> photo.webp (lossless, from PNG)
 webp photo.jpg                           # -> photo.webp (lossy q75, from JPEG source)
 webp photo.webp                          # -> photo.png  (refuses to clobber; --force to overwrite)
-webp loop.gif                            # -> loop.webp  (animated, lossless)
+webp loop.gif                            # -> loop.webp  (animated; --lossy 80 for VP8 frames)
 webp *.jpg -o ./out                      # batch into a directory
 webp photo.png -q 80                     # -q is QUALITY now (selects lossy)
+webp photo.png --near-lossless 60        # near-lossless preprocessing (implies lossless)
 webp info out.webp                       # codec, dimensions, alpha, metadata, animation
 webp encode in.png -o out.webp           # force the encode direction
 webp encode photo.jpg -o small.webp --target-size 200k -v   # bisect quality to a byte budget
 webp photo.png --crop 0,0,512,512 --resize 256x256   # crop then resize before encoding
 webp decode anim.webp -o f.png --frames all   # f-000.png, f-001.png, ...
+webp meta show tagged.webp               # print ICC/Exif/XMP without decoding a pixel
+webp meta set in.webp -o out.webp --icc profile.icc   # rewrite metadata (webpmux-style)
+webp meta strip in.webp -o clean.webp    # drop all sidecar metadata
 ```
 
 Metadata (ICC/Exif/XMP) is **preserved by default** — kinder than cwebp, which
@@ -203,15 +215,19 @@ our own resampler, not libwebp's rescaler. `--target-size` bisects lossy quality
 | `cwebp in.png -o out.webp -resize w h` | same | supported; dimensions match libwebp, pixels differ (own resampler, not libwebp's); `0` on one axis keeps aspect |
 | `cwebp in.png -o out.webp -size 200000` | same | supported; CLI-side bisection over lossy quality to hit the byte budget (`-v` shows the search) |
 | `cwebp in.png -o out.webp -psnr 40` | same | supported; a PSNR floor for the quality search |
-| `cwebp in.png -o out.webp -sns ...` / `-f` / `-sharpness` / `-segments` / `-pass` / `-jpeg_like` / `-near_lossless` | *(error)* | internal encoder-tuning knobs webpkit does not expose (rejected, not ignored) |
+| `cwebp in.png -o out.webp -near_lossless 60` | same | near-lossless preprocessing (`0..=100`, lower = stronger; implies lossless) |
+| `cwebp in.png -o out.webp -sns ...` / `-f` / `-sharpness` / `-segments` / `-pass` / `-jpeg_like` | *(error)* | internal encoder-tuning knobs webpkit does not expose (rejected, not ignored) |
 | `dwebp in.webp -o out.png` | same | decodes VP8L or VP8; default PNG |
-| `dwebp in.webp -o out.ppm -ppm` | same | netpbm output |
-| `dwebp in.webp -yuv ...` | *(error)* | YUV output not implemented |
+| `dwebp in.webp -o out.ppm -ppm` | same | netpbm output (also `-pam`) |
+| `dwebp in.webp -o out.bmp -bmp` / `-tiff` | same | via the `image` crate (`formats` feature; rejected under `--no-default-features`) |
+| `dwebp in.webp -o out.yuv -yuv` / `-pgm` | same | native YUV 4:2:0 planes; lossy input only (lossless is a clear error) |
+| `webpmux -set icc profile.icc in.webp -o out.webp` | `webp meta set` | rewrite ICC/Exif/XMP without touching pixels |
+| `webpmux -strip all in.webp -o out.webp` | `webp meta strip` | drop all sidecar metadata |
 
-The `webp` brand tool has **no `mux`/`webpmux` equivalent**: rewriting an existing
-file's metadata needs container surgery the library does not offer, and a
-decode+re-encode would destroy a lossy file. This is the one honest gap versus
-libwebp, documented rather than shipped as a trap.
+The `webp` brand tool has a **`webpmux`-style `meta` subcommand**: `webp meta
+show`/`set`/`strip` reads and rewrites a file's ICC/Exif/XMP sidecar chunks without
+decoding or re-encoding the image bitstream, so a lossy file's pixels are never
+disturbed. In the library this is `read_metadata` / `write_metadata`.
 
 ## Verification (external / conformance)
 

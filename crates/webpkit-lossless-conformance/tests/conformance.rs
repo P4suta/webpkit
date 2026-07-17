@@ -24,5 +24,5 @@ fn results_serialize_to_json() {
 
 #[test]
 fn webpkit_links_and_reports_a_version() {
-    assert!(!webpkit::lossless::version().is_empty());
+    assert!(!webpkit::version().is_empty());
 }

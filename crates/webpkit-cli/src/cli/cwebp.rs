@@ -91,8 +91,11 @@ struct Config {
     method: Option<i64>,
     level: Option<i64>,
     quality: Option<f64>,
-    /// Lossless (`VP8L`) output; set by `-lossless` or `-z`. Default is lossy.
+    /// Lossless (`VP8L`) output; set by `-lossless`, `-z`, or `-near_lossless`.
+    /// Default is lossy.
     lossless: bool,
+    /// `-near_lossless N` (`0..=100`, lower = stronger); implies lossless.
+    near_lossless: Option<u8>,
     metadata: Vec<MetadataField>,
     /// `-crop x y w h` pixel preprocessing (applied before `-resize`).
     crop: Option<Crop>,
@@ -115,7 +118,10 @@ impl Config {
     /// quality from `-q` (default 75) and effort from `-m` (default Balanced).
     fn encode_mode(&self) -> EncodeMode {
         if self.lossless {
-            EncodeMode::Lossless(effort::resolve(self.method, self.level, self.quality))
+            EncodeMode::Lossless {
+                effort: effort::resolve(self.method, self.level, self.quality),
+                near_lossless: self.near_lossless,
+            }
         } else {
             EncodeMode::Lossy {
                 quality: effort::lossy_quality(self.quality.unwrap_or(75.0)),
@@ -224,6 +230,15 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                 config.lossless = true;
             },
             "-lossless" => config.lossless = true,
+            // Near-lossless preprocessing implies lossless output, as in libwebp.
+            "-near_lossless" => {
+                config.near_lossless = Some(parse_near_lossless(&value(
+                    args,
+                    &mut index,
+                    "-near_lossless",
+                )?)?);
+                config.lossless = true;
+            },
             "-metadata" => {
                 config
                     .metadata
@@ -294,8 +309,7 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
 fn is_rejected(flag: &str) -> bool {
     matches!(
         flag,
-        "-near_lossless"
-            | "-pass"
+        "-pass"
             | "-sns"
             | "-f"
             | "-sharpness"
@@ -324,15 +338,6 @@ struct Rejection {
 
 fn rejection_of(flag: &str) -> Rejection {
     match flag {
-        "-near_lossless" => Rejection {
-            cause: "webpkit has no near-lossless mode. libwebp's cwebp accepts this flag; \
-                    this cwebp refuses it rather than handing you a file you did not ask for.",
-            help: &[
-                "near-lossless trades exactness for size. Pick the end you want:",
-                "  cwebp -lossless <in> -o <out.webp>    # exact, larger",
-                "  cwebp -q 90     <in> -o <out.webp>    # lossy, smaller",
-            ],
-        },
         "-preset" => Rejection {
             cause: "a preset bundles the internal tuning knobs below, none of which webpkit \
                     exposes.",
@@ -419,6 +424,15 @@ fn parse_i64(text: &str) -> Result<i64, CliError> {
         .map_err(|_| CliError::Usage(format!("expected an integer, got `{text}`")))
 }
 
+/// Parse a `-near_lossless` level: an integer in `0..=100` (libwebp's range; lower
+/// = stronger quantization, `100` disables the pass).
+fn parse_near_lossless(text: &str) -> Result<u8, CliError> {
+    u8::try_from(parse_i64(text)?)
+        .ok()
+        .filter(|&level| level <= 100)
+        .ok_or_else(|| CliError::Usage(format!("`-near_lossless` expects 0-100, got `{text}`")))
+}
+
 /// The next argument parsed as a `u32` (a crop/resize coordinate).
 fn value_u32(args: &[OsString], index: &mut usize, flag: &str) -> Result<u32, CliError> {
     let text = value(args, index, flag)?;
@@ -466,6 +480,7 @@ fn print_help() {
          \x20 -m <int>         method 0-6 (effort)\n\
          \x20 -lossless        encode losslessly (VP8L) instead of lossy (VP8)\n\
          \x20 -z <int>         lossless level 0-9 (implies -lossless)\n\
+         \x20 -near_lossless <int>  near-lossless preprocessing 0-100, lower = stronger (implies -lossless)\n\
          \x20 -metadata <list> all,none,icc,exif,xmp (default: all)\n\
          \x20 -crop x y w h    crop before encoding (dimensions match libwebp; pixels differ)\n\
          \x20 -resize w h      resize before encoding (0 on one axis keeps aspect)\n\

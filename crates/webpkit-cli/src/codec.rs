@@ -18,8 +18,14 @@ use crate::{
 /// it to [`encode`], so the lossless/lossy fork lives in exactly one place.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum EncodeMode {
-    /// Lossless VP8L at the given effort [`Effort`].
-    Lossless(Effort),
+    /// Lossless VP8L at the given effort [`Effort`], with optional near-lossless
+    /// preprocessing (`0..=100`, lower = stronger; `None` is plain lossless).
+    Lossless {
+        /// Encoder effort tier.
+        effort: Effort,
+        /// Near-lossless level, or `None` for exact lossless.
+        near_lossless: Option<u8>,
+    },
     /// Lossy VP8 at the given quality (`0..=100`) and effort [`Effort`].
     Lossy {
         /// Encode quality, higher = larger and closer to the source.
@@ -31,10 +37,17 @@ pub(crate) enum EncodeMode {
 
 impl EncodeMode {
     /// The encoder effort this mode selects, either codec.
+    #[cfg_attr(
+        not(feature = "formats"),
+        expect(
+            dead_code,
+            reason = "only the formats-gated GIF animation path reads the effort tier"
+        )
+    )]
     #[must_use]
     pub(crate) const fn effort(self) -> Effort {
         match self {
-            Self::Lossless(effort) | Self::Lossy { method: effort, .. } => effort,
+            Self::Lossless { effort, .. } | Self::Lossy { method: effort, .. } => effort,
         }
     }
 }
@@ -50,29 +63,42 @@ pub(crate) struct CodecFlags {
     pub(crate) quality: Option<u8>,
     /// Encoder effort.
     pub(crate) effort: Effort,
+    /// `--near-lossless N` was passed (implies lossless).
+    pub(crate) near_lossless: Option<u8>,
 }
 
 /// Resolve an [`EncodeMode`], returning whether the codec was source-derived.
 ///
-/// `--lossless`/`--lossy`/`--quality` force the codec. Absent all three, the codec
-/// is derived from the source: a JPEG (already lossy) re-encodes lossy at q75, and
-/// everything else stays lossless. The returned `bool` is true when derived, so a
-/// caller can report the reason.
+/// `--lossless`/`--near-lossless`/`--lossy`/`--quality` force the codec. Absent all
+/// of them, the codec is derived from the source: a JPEG (already lossy) re-encodes
+/// lossy at q75, and everything else stays lossless. The returned `bool` is true
+/// when derived, so a caller can report the reason.
 ///
 /// # Errors
 ///
-/// [`CliError::Usage`] if `--lossless` is combined with `--lossy`/`--quality`.
+/// [`CliError::Usage`] if `--lossless`/`--near-lossless` is combined with
+/// `--lossy`/`--quality`.
 pub(crate) fn resolve_mode(
     format: InputFormat,
     flags: CodecFlags,
 ) -> Result<(EncodeMode, bool), CliError> {
-    if flags.lossless && (flags.lossy || flags.quality.is_some()) {
+    // Near-lossless is a lossless-only preprocessing step, so it forces the lossless
+    // codec just as `--lossless` does.
+    let force_lossless = flags.lossless || flags.near_lossless.is_some();
+    if force_lossless && (flags.lossy || flags.quality.is_some()) {
         return Err(CliError::Usage(
-            "`--lossless` cannot be combined with `--lossy`/`--quality`".to_owned(),
+            "`--lossless`/`--near-lossless` cannot be combined with `--lossy`/`--quality`"
+                .to_owned(),
         ));
     }
-    if flags.lossless {
-        return Ok((EncodeMode::Lossless(flags.effort), false));
+    if force_lossless {
+        return Ok((
+            EncodeMode::Lossless {
+                effort: flags.effort,
+                near_lossless: flags.near_lossless,
+            },
+            false,
+        ));
     }
     if flags.lossy || flags.quality.is_some() {
         return Ok((
@@ -89,7 +115,10 @@ pub(crate) fn resolve_mode(
             method: flags.effort,
         }
     } else {
-        EncodeMode::Lossless(flags.effort)
+        EncodeMode::Lossless {
+            effort: flags.effort,
+            near_lossless: flags.near_lossless,
+        }
     };
     Ok((mode, true))
 }
@@ -187,10 +216,17 @@ pub(crate) fn encode(
     metadata: Metadata,
 ) -> Result<Vec<u8>, CliError> {
     let bytes = match mode {
-        EncodeMode::Lossless(effort) => Encoder::lossless()
-            .effort(effort)
-            .metadata(metadata)
-            .encode_ref(image.as_image_ref())?,
+        EncodeMode::Lossless {
+            effort,
+            near_lossless,
+        } => {
+            let encoder = Encoder::lossless().effort(effort).metadata(metadata);
+            let encoder = match near_lossless {
+                Some(level) => encoder.near_lossless(level),
+                None => encoder,
+            };
+            encoder.encode_ref(image.as_image_ref())?
+        },
         EncodeMode::Lossy { quality, method } => Encoder::lossy()
             .quality(quality)
             .effort(method)
@@ -216,10 +252,11 @@ pub(crate) struct Encoded {
 /// Encode an already-read input into a WebP file, choosing the still or the GIF
 /// animation path from `format`.
 ///
-/// A GIF becomes an animated WebP (lossless, one `VP8L` frame each) when
-/// `gif_as_animation` is set — the `webp` tool's behavior. `cwebp`, a still
-/// encoder, passes `false` and gets the GIF's first frame as a still. Animation
-/// carries no metadata (the encoder does not model it); a still honors `selection`.
+/// A GIF becomes an animated WebP — lossless or lossy per `mode`, honoring the
+/// GIF's own loop count — when `gif_as_animation` is set (the `webp` tool's
+/// behavior). `cwebp`, a still encoder, passes `false` and gets the GIF's first
+/// frame as a still. The GIF animation path passes no metadata; a still honors
+/// `selection`.
 ///
 /// # Errors
 ///
@@ -234,7 +271,7 @@ pub(crate) fn encode_input(
 ) -> Result<Encoded, CliError> {
     #[cfg(feature = "formats")]
     if gif_as_animation && format == InputFormat::Gif {
-        let (bytes, width, height) = encode_gif_animation(bytes, mode.effort())?;
+        let (bytes, width, height) = encode_gif_animation(bytes, mode)?;
         return Ok(Encoded {
             bytes,
             width,
@@ -255,16 +292,26 @@ pub(crate) fn encode_input(
     })
 }
 
-/// Encode every GIF frame as a lossless `VP8L` frame of an animated WebP that
-/// loops forever. Metadata is not carried — the animation encoder does not model
-/// sidecar chunks.
+/// Encode every GIF frame as a frame of an animated WebP, honoring the GIF's own
+/// loop count and encoding each frame with `mode`'s codec — lossless `VP8L`, or
+/// lossy `VP8 ` when `--lossy`/`--quality` selected it. The GIF path embeds no
+/// metadata (though [`AnimationEncoder`] itself supports it via
+/// [`AnimationEncoder::metadata`](webpkit::AnimationEncoder::metadata)).
 #[cfg(feature = "formats")]
-fn encode_gif_animation(bytes: &[u8], effort: Effort) -> Result<(Vec<u8>, u32, u32), CliError> {
+fn encode_gif_animation(bytes: &[u8], mode: EncodeMode) -> Result<(Vec<u8>, u32, u32), CliError> {
     use webpkit::{
-        AnimationEncoder, BlendMode, Dimensions, DisposalMode, FrameMeta, ImageRef, PixelLayout,
+        AnimCodec, AnimationEncoder, BlendMode, Dimensions, DisposalMode, FrameMeta, ImageRef,
+        PixelLayout,
     };
 
+    // Near-lossless has no per-frame animation analog, so a lossless mode yields
+    // lossless (`VP8L`) frames regardless of its still-only preprocessing knob.
+    let codec = match mode {
+        EncodeMode::Lossless { .. } => AnimCodec::Lossless,
+        EncodeMode::Lossy { quality, .. } => AnimCodec::Lossy(quality),
+    };
     let frames = format::image_input::read_gif_frames(bytes)?;
+    let loop_count = format::image_input::read_gif_loop_count(bytes)?;
     let first = frames
         .first()
         .ok_or_else(|| CliError::Format("GIF has no frames".to_owned()))?;
@@ -284,8 +331,9 @@ fn encode_gif_animation(bytes: &[u8], effort: Effort) -> Result<(Vec<u8>, u32, u
 
     let first_ref = ImageRef::new(canvas, PixelLayout::Rgba8, first.image.as_bytes())?;
     let mut encoder = AnimationEncoder::new(canvas)
-        .with_loop_count(0)
-        .with_effort(effort)
+        .loop_count(loop_count)
+        .codec(codec)
+        .effort(mode.effort())
         .add_frame(first_ref, meta_for(first))?;
     for frame in &frames[1..] {
         let frame_ref = ImageRef::new(canvas, PixelLayout::Rgba8, frame.image.as_bytes())?;

@@ -200,22 +200,17 @@ fn committed_anim_ledger_is_up_to_date() {
 #[cfg(feature = "oracle")]
 #[expect(
     clippy::unwrap_used,
-    clippy::panic,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::cast_possible_wrap,
-    reason = "fixture generator: unwrap/panic are the accepted style for provably-infallible \
+    reason = "fixture generator: unwrap is the accepted style for provably-infallible \
               conversions and reference-library successes, and the synthetic-pixel generator \
               truncates to u8 on purpose"
 )]
 mod generate {
     use std::path::Path;
 
-    use webpkit_conformance::{
-        AlphaCompression, AnimMeta, Meta, anim_results_to_json, results_to_json,
-    };
-
-    use super::{compute_anim_results, compute_results};
+    use webpkit_conformance::{AlphaCompression, AnimMeta, Meta};
 
     /// Encode `rgba` (`width * height * 4` bytes) as a lossy VP8 WebP that carries
     /// its alpha in an `ALPH` chunk, via the libwebp ADVANCED encoder so the alpha

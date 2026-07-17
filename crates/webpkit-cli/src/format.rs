@@ -8,9 +8,12 @@
 
 #[cfg(feature = "formats")]
 pub(crate) mod image_input;
+#[cfg(feature = "formats")]
+pub(crate) mod image_output;
 pub(crate) mod png;
 pub(crate) mod ppm;
 pub(crate) mod raw;
+pub(crate) mod yuv;
 
 use clap::ValueEnum;
 use webpkit::{Dimensions, Image, Metadata, PixelLayout};
@@ -47,6 +50,10 @@ pub(crate) enum OutputFormat {
     Ppm,
     /// Netpbm binary PAM (`P7`, RGBA).
     Pam,
+    /// BMP (RGBA8; needs the `formats` feature).
+    Bmp,
+    /// TIFF (RGBA8; needs the `formats` feature).
+    Tiff,
     /// Raw row-major pixels in the requested `--layout`.
     Raw,
 }
@@ -120,6 +127,8 @@ impl OutputFormat {
             "png" => Some(Self::Png),
             "ppm" => Some(Self::Ppm),
             "pam" => Some(Self::Pam),
+            "bmp" => Some(Self::Bmp),
+            "tif" | "tiff" => Some(Self::Tiff),
             "raw" | "rgba" | "argb" | "bgra" => Some(Self::Raw),
             _ => None,
         }
@@ -222,12 +231,13 @@ fn read_via_image(_bytes: &[u8], format: InputFormat) -> Result<Image, CliError>
 
 /// Encode an [`Image`] into the given output `format`, returning file bytes.
 ///
-/// `metadata` is embedded only by formats that support it (PNG); netpbm and raw
-/// ignore it.
+/// `metadata` is embedded only by formats that support it (PNG); netpbm, raw,
+/// BMP, and TIFF ignore it.
 ///
 /// # Errors
 ///
-/// [`CliError::Format`] if PNG encoding fails.
+/// [`CliError::Format`] if PNG/BMP/TIFF encoding fails, or if BMP/TIFF is asked of
+/// a `--no-default-features` build compiled without the `formats` feature.
 pub(crate) fn write_image(
     image: &Image,
     format: OutputFormat,
@@ -237,8 +247,24 @@ pub(crate) fn write_image(
         OutputFormat::Png => png::write(image, metadata),
         OutputFormat::Ppm => Ok(ppm::write_ppm(image)),
         OutputFormat::Pam => Ok(ppm::write_pam(image)),
+        OutputFormat::Bmp | OutputFormat::Tiff => write_via_image(image, format),
         OutputFormat::Raw => Ok(image.as_bytes().to_vec()),
     }
+}
+
+/// Encode a BMP/TIFF still via the `image` crate.
+#[cfg(feature = "formats")]
+fn write_via_image(image: &Image, format: OutputFormat) -> Result<Vec<u8>, CliError> {
+    image_output::write(image, format)
+}
+
+/// Without the `formats` feature the `image`-crate encoders are absent, so BMP/TIFF
+/// output names the missing capability rather than silently producing nothing.
+#[cfg(not(feature = "formats"))]
+fn write_via_image(_image: &Image, format: OutputFormat) -> Result<Vec<u8>, CliError> {
+    Err(CliError::Format(format!(
+        "{format:?} output needs the `formats` feature, which this build was compiled without"
+    )))
 }
 
 /// Return an image's pixels as RGBA8, reordering from its stored layout.
@@ -246,9 +272,11 @@ pub(crate) fn write_image(
 pub(crate) fn to_rgba8(image: &Image) -> Vec<u8> {
     let src = image.as_bytes();
     match image.layout() {
-        PixelLayout::Rgba8 => src.to_vec(),
         PixelLayout::Argb8 => reorder(src, [1, 2, 3, 0]),
         PixelLayout::Bgra8 => reorder(src, [2, 1, 0, 3]),
+        // `Rgba8` needs no reorder; `PixelLayout` is `#[non_exhaustive]`, and the
+        // CLI decodes as `Rgba8`, so a future ordering also falls back to the bytes.
+        _ => src.to_vec(),
     }
 }
 

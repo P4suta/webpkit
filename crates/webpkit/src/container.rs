@@ -7,6 +7,7 @@
 //! (`ANIM`/`ANMF`) chunks.
 pub mod anim;
 pub mod fourcc;
+pub mod mux;
 pub mod reader;
 pub mod scan;
 pub mod vp8x;

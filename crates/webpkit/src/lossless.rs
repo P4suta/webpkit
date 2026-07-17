@@ -31,7 +31,7 @@
 //!
 //! A lossy `VP8` *still* image is rejected with [`Error::UnsupportedFeature`]. An
 //! animation's frames may themselves be lossy when a both-codecs [`FrameDecoder`]
-//! is supplied via [`crate::decode_frames_with_decoder`] (the umbrella
+//! is supplied via [`crate::anim::decode_frames_with_decoder`] (the umbrella
 //! `webpkit` crate does this); the default [`Vp8lFrameDecoder`] rejects a lossy
 //! frame the same way.
 //! Passing an animation to [`decode`] returns its first composited frame.
@@ -245,9 +245,15 @@ pub fn decode_reader<R: std::io::Read>(reader: R) -> Result<Image> {
               encoder options can fail without a breaking signature change"
 )]
 pub fn encode(image: ImageRef<'_>, config: &EncoderConfig) -> Result<Vec<u8>> {
-    let argb = image::unpack_pixels(image.layout(), image.as_bytes());
-    let has_alpha = image::argb_has_alpha(&argb);
+    let mut argb = image::unpack_pixels(image.layout(), image.as_bytes());
     let dims = image.dimensions();
+    // Near-lossless is an encode-side ARGB filter applied before the transform
+    // search; the resulting pixels are still coded exactly, so alpha-used is read
+    // from the (possibly quantized) pixels the encoder actually emits.
+    if let Some(level) = config.near_lossless {
+        transform::near_lossless::apply(&mut argb, dims.width(), dims.height(), level);
+    }
+    let has_alpha = image::argb_has_alpha(&argb);
     let payload = encoder::encode_payload(config.effort, dims.width(), dims.height(), &argb);
     Ok(container::writer::wrap(
         &payload,
@@ -280,6 +286,7 @@ pub fn encode_image(image: &Image, config: &EncoderConfig) -> Result<Vec<u8>> {
         effort: config.effort,
         metadata: config.resolve_metadata(image.metadata()),
         policy: config.policy,
+        near_lossless: config.near_lossless,
     };
     encode(image.as_image_ref(), &effective)
 }
@@ -298,12 +305,6 @@ pub fn encode_to<W: std::io::Write>(
     let bytes = encode(image, config)?;
     writer.write_all(&bytes)?;
     Ok(())
-}
-
-/// The crate version, as reported by Cargo.
-#[must_use]
-pub const fn version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
 }
 
 /// Differential hook for the `oracle` integration test (dev-only, hidden): assert
@@ -343,7 +344,7 @@ mod tests {
     use super::{
         DecodeOptions, Dimensions, Effort, EncoderConfig, Error, Image, ImageRef, Metadata,
         MetadataPolicy, PixelLayout, decode, decode_alpha, decode_alpha_with, decode_rgba,
-        decode_with, encode, encode_alpha, encode_image, version,
+        decode_with, encode, encode_alpha, encode_image,
     };
 
     /// Encode RGBA bytes and assert an exact RGBA round-trip.
@@ -352,11 +353,6 @@ mod tests {
         let img = ImageRef::new(dims, PixelLayout::Rgba8, rgba).unwrap();
         let file = encode(img, &EncoderConfig::default()).unwrap();
         assert_eq!(decode_rgba(&file).unwrap(), (dims, rgba.to_vec()));
-    }
-
-    #[test]
-    fn version_is_reported() {
-        assert!(!version().is_empty());
     }
 
     #[test]
@@ -538,6 +534,58 @@ mod tests {
     }
 
     #[test]
+    fn near_lossless_shrinks_a_photo_and_stays_within_bound() {
+        // A photographic sample (box-blurred noise) has busy detail near-lossless can
+        // quantize; a plain gradient is already smooth and would not shrink. At 64px
+        // the small-image guard is cleared, so the pass actually runs.
+        use crate::lossless::transform::near_lossless;
+        let sample = webpkit_samples::render(webpkit_samples::Content::Photo, 64);
+        let dims = Dimensions::new(sample.edge, sample.edge).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &sample.rgba).unwrap();
+
+        let plain = encode(img, &EncoderConfig::default()).unwrap();
+        let level = 20;
+        let near = encode(
+            img,
+            &EncoderConfig::default().with_near_lossless(level),
+        )
+        .unwrap();
+        assert!(
+            near.len() < plain.len(),
+            "near-lossless ({}) must beat plain lossless ({})",
+            near.len(),
+            plain.len()
+        );
+
+        // The decoded pixels must stay within the theoretical per-channel bound of
+        // the original — near-lossless is bounded-error, not arbitrary.
+        let decoded = decode_rgba(&near).unwrap().1;
+        let bound = near_lossless::error_bound(level);
+        for (src, dec) in sample.rgba.chunks_exact(4).zip(decoded.chunks_exact(4)) {
+            for k in 0..4 {
+                assert!(
+                    u32::from(src[k].abs_diff(dec[k])) <= bound,
+                    "channel {k}: |{} - {}| exceeds bound {bound}",
+                    src[k],
+                    dec[k]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn near_lossless_disabled_is_byte_identical_to_plain() {
+        // A None near-lossless config (and level 100, the disabled sentinel) must
+        // produce exactly the plain-lossless bytes: the pass is opt-in and inert off.
+        let sample = webpkit_samples::render(webpkit_samples::Content::Photo, 64);
+        let dims = Dimensions::new(sample.edge, sample.edge).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &sample.rgba).unwrap();
+        let plain = encode(img, &EncoderConfig::default()).unwrap();
+        let off = encode(img, &EncoderConfig::default().with_near_lossless(100)).unwrap();
+        assert_eq!(plain, off);
+    }
+
+    #[test]
     fn fast_effort_still_round_trips() {
         let rgba: Vec<u8> = (0..16u8)
             .flat_map(|v| [v, v.wrapping_mul(3), v.wrapping_mul(7), 255])
@@ -546,14 +594,6 @@ mod tests {
         let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
         let file = encode(img, &EncoderConfig::new().with_effort(Effort::Fast)).unwrap();
         assert_eq!(decode_rgba(&file).unwrap(), (dims, rgba));
-    }
-
-    #[test]
-    fn version_matches_cargo_pkg_version() {
-        // Pin the exact string: a non-empty check (see `version_is_reported`) would
-        // still pass for any bogus constant, so assert byte-equality with the
-        // compile-time Cargo version.
-        assert_eq!(version(), env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

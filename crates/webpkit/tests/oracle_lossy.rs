@@ -583,6 +583,45 @@ fn reconstructed_yuv_matches_libwebp_level_a() {
 }
 
 #[test]
+fn public_decode_yuv_matches_libwebp_level_a() {
+    // The same Level-A cross-check as above, but through the crate facade
+    // `webpkit::decode_yuv` on the whole WebP file (not the raw payload via the
+    // hidden `__reconstruct_yuv` hook): the public `YuvImage` planes must equal
+    // libwebp's `WebPDecodeYUV` byte-for-byte, so the exposed API carries the same
+    // bit-exact reconstruction. Odd sides exercise the ceil-halved chroma shape.
+    let sizes = [(1u32, 1u32), (5, 9), (17, 13), (48, 33), (64, 64)];
+    let qualities = [8.0f32, 55.0, 100.0];
+    let contents: [(&str, ContentGen); 3] = [
+        ("gradient", gradient_rgb),
+        ("noise", noise_rgb),
+        ("checker", checker_rgb),
+    ];
+    for &(w, h) in &sizes {
+        for &q in &qualities {
+            for (name, generate) in contents {
+                let webp = libwebp_encode_lossy(&generate(w, h), w, h, q);
+                let yuv = webpkit::decode_yuv(&webp)
+                    .unwrap_or_else(|_| panic!("{name} {w}x{h} q{q}: decode_yuv failed"));
+                let (lw, lh, ly, lu, lv) = libwebp_decode_yuv(&webp);
+                assert_eq!(
+                    (yuv.width(), yuv.height()),
+                    (lw, lh),
+                    "{name} {w}x{h} q{q}: dims"
+                );
+                assert_eq!(
+                    (yuv.chroma_width(), yuv.chroma_height()),
+                    (lw.div_ceil(2), lh.div_ceil(2)),
+                    "{name} {w}x{h} q{q}: chroma dims"
+                );
+                assert_eq!(yuv.y(), ly, "{name} {w}x{h} q{q}: Y plane differs");
+                assert_eq!(yuv.u(), lu, "{name} {w}x{h} q{q}: U plane differs");
+                assert_eq!(yuv.v(), lv, "{name} {w}x{h} q{q}: V plane differs");
+            }
+        }
+    }
+}
+
+#[test]
 fn harness_encodes_classifies_and_round_trips_a_lossy_stream() {
     let (width, height) = (32u32, 24u32);
     let rgb = gradient_rgb(width, height);
