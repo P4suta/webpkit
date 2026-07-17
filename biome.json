@@ -20,7 +20,10 @@
       "!target/**",
       "!node_modules/**",
       "!artifacts/**",
-      "!package-lock.json"
+      "!package-lock.json",
+      "!mutants.out/**",
+      "!mutants.out.old/**",
+      "!mutants-*/**"
     ]
   },
   "linter": { "enabled": false }

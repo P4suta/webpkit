@@ -573,7 +573,7 @@ impl<D: FrameDecoder + Clone> IncrementalDecoder<D> {
         if let Some(first_row) = rows_first {
             return Ok(Progress::RowsDecoded {
                 first_row,
-                count: rows_count,
+                rows: rows_count,
             });
         }
         Ok(Progress::NeedMoreInput)
@@ -1101,9 +1101,9 @@ mod tests {
                     assert_eq!((info.dimensions.width(), info.dimensions.height()), (w, h));
                     header_at = Some(event);
                 },
-                Progress::RowsDecoded { first_row, count } => {
+                Progress::RowsDecoded { first_row, rows: n } => {
                     first_rows_at.get_or_insert(event);
-                    rows.push((first_row, count));
+                    rows.push((first_row, n));
                 },
                 Progress::FrameComplete(_) => panic!("a still image must not report FrameComplete"),
                 Progress::Finished => finished += 1,

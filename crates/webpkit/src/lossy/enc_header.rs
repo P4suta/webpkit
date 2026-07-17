@@ -53,16 +53,18 @@ pub(crate) const fn frame_header_bytes(
 
 /// The macroblock-segmentation portion of the control header (RFC §9.3), emitted
 /// only for the `Full`/`Best` tiers when the frame uses more than one segment. The
-/// quantizers are transmitted as *relative* deltas over the base index
-/// (`absolute_delta = false`), the per-segment loop-filter strengths are all zero
-/// (so the deblocking filter behaves exactly as an unsegmented frame), and the map
-/// is always retransmitted (`update_map = true`), so each macroblock carries its
-/// segment id. The exact inverse of `header::parse_segment_header`.
+/// quantizers and loop-filter strengths are transmitted as *relative* deltas over the
+/// base index / base filter level (`absolute_delta = false`), and the map is always
+/// retransmitted (`update_map = true`), so each macroblock carries its segment id. The
+/// exact inverse of `header::parse_segment_header`.
 #[derive(Clone, Copy)]
 pub(crate) struct SegmentParams {
     /// Per-segment quantizer delta over the base index (`put_signed(7)`); unused
     /// segments carry `0`.
     pub(crate) quantizer: [i32; 4],
+    /// Per-segment loop-filter strength delta over the base level (`put_signed(6)`);
+    /// unused segments carry `0`.
+    pub(crate) filter_strength: [i32; 4],
     /// Segment-id decision-tree probabilities (`put_literal(8)`), derived from the
     /// segment populations.
     pub(crate) tree_probs: [u8; 3],
@@ -137,10 +139,15 @@ pub(crate) fn write_control_header(
                     enc.put_signed(7, q);
                 }
             }
-            // Per-segment filter-strength deltas: all absent (0), so the loop
-            // filter behaves exactly as an unsegmented frame.
-            for _ in 0..4 {
-                enc.put_flag(false);
+            // Per-segment filter-strength deltas: present + signed(6) when non-zero,
+            // so a busier (coarser) segment deblocks harder than a flat one.
+            for &f in &seg.filter_strength {
+                if f == 0 {
+                    enc.put_flag(false);
+                } else {
+                    enc.put_flag(true);
+                    enc.put_signed(6, f);
+                }
             }
             // update_map is set, so the three segment-id tree probabilities follow.
             for &p in &seg.tree_probs {
@@ -304,13 +311,14 @@ mod tests {
     #[test]
     fn control_header_round_trips_the_segment_header() {
         // A segmented control header must decode back through parse_segment_header /
-        // parse_quant to exactly the emitted per-segment quantizers and tree probs:
-        // use_segment + update_map set, relative deltas, all filter strengths zero.
-        // Distinct signed quantizer deltas (mixed signs, one zero) catch a swapped or
-        // dropped field, and the derived dqm proves the relative q = base_q + delta
-        // derivation the decoder applies.
+        // parse_quant to exactly the emitted per-segment quantizers, filter-strength
+        // deltas and tree probs: use_segment + update_map set, relative deltas.
+        // Distinct signed deltas (mixed signs, one zero) catch a swapped or dropped
+        // field, and the derived dqm proves the relative q = base_q + delta derivation
+        // the decoder applies.
         let seg = SegmentParams {
             quantizer: [8, -12, 0, 20],
+            filter_strength: [5, -9, 0, 13],
             tree_probs: [200, 60, 140],
         };
         let filter = FilterHeader::default();
@@ -341,8 +349,8 @@ mod tests {
         );
         assert_eq!(
             frame.segment.filter_strength,
-            [0, 0, 0, 0],
-            "no filter deltas"
+            [5, -9, 0, 13],
+            "per-segment filter deltas"
         );
         assert_eq!(frame.proba.segments, [200, 60, 140], "segment tree probs");
         // The relative derivation: segment i uses q = base_q + delta, so segment 0's

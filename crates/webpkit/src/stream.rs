@@ -223,14 +223,14 @@ pub enum Progress {
     NeedMoreInput,
     /// The header is now known (reported once, before the pixels are complete).
     HeaderReady(ImageInfo),
-    /// Output rows `first_row..first_row + count` (0-based) were finalized on this
+    /// Output rows `first_row..first_row + rows` (0-based) were finalized on this
     /// push and are available via the decoder's `drain_rows` (still images only).
     /// One `push` can finalize a burst of rows at once.
     RowsDecoded {
         /// 0-based index of the first newly-finalized row.
         first_row: u32,
         /// Number of newly-finalized rows.
-        count: u32,
+        rows: u32,
     },
     /// One animation frame was decoded and composited onto the persistent canvas
     /// (animations only). The [`FrameMeta`] describes the frame just completed.

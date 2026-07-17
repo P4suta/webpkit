@@ -38,8 +38,8 @@ alloc = []
 rayon = ["dep:rayon", "std"]
 # Opt-in interop with the `image` crate: `TryFrom` conversions between
 # `image::DynamicImage`/`RgbaImage` and `Image` (see `interop.rs`). Off by default,
-# so a plain build keeps the zero-dependency baseline; needs an allocator.
-image = ["dep:image", "alloc"]
+# so a plain build keeps the zero-dependency baseline; the `image` crate needs std.
+image = ["dep:image", "std"]
 # Exposes the internal module tree (`lossless`, `lossy`, `container`, `image`,
 # `anim`, `stream`, …) as `#[doc(hidden)] pub` so this workspace's own test &
 # tooling crates can reach codec internals module-first. OFF by default and never

@@ -411,7 +411,7 @@ proptest! {
     fn libwebp_decodes_our_best_encode((width, height, rgba) in arbitrary_opaque_image()) {
         let dims = webpkit::lossless::Dimensions::new(width, height).unwrap();
         let image = webpkit::lossless::ImageRef::new(dims, webpkit::lossless::PixelLayout::Rgba8, &rgba).unwrap();
-        let config = webpkit::lossless::EncoderConfig::default().with_effort(webpkit::lossless::Effort::Best);
+        let config = webpkit::lossless::EncoderConfig::default().with_effort(webpkit::lossless::Effort::level(9));
         let webp = webpkit::lossless::encode(image, &config)
             .map_err(|e| TestCaseError::fail(format!("webpkit::lossless Best encode failed: {e}")))?;
         // webpkit::lossless round-trips its own Best output...
@@ -503,7 +503,7 @@ fn libwebp_decodes_best_transform_families() {
             webpkit::lossless::ImageRef::new(dims, webpkit::lossless::PixelLayout::Rgba8, &rgba)
                 .unwrap();
         let config = webpkit::lossless::EncoderConfig::default()
-            .with_effort(webpkit::lossless::Effort::Best);
+            .with_effort(webpkit::lossless::Effort::level(9));
         let webp =
             webpkit::lossless::encode(image, &config).expect("webpkit::lossless Best encode");
         // webpkit::lossless decodes its own Best output.

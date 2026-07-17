@@ -70,6 +70,32 @@ impl Dimensions {
     pub fn pixel_count(self) -> u64 {
         u64::from(self.width) * u64::from(self.height)
     }
+
+    /// Resolve a resize target where a `0` axis is derived from the other to keep
+    /// `self`'s aspect ratio, the rule `cwebp`/`dwebp` apply (libwebp's
+    /// `WebPRescalerGetScaledDimensions`). A derived axis is the *ceiling* of the
+    /// proportional value, matching libwebp exactly.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidDimensions`] if both axes are `0`, or if a resolved axis is
+    /// `0` or exceeds `16384` — an over-range request is an honest error, never a
+    /// silent clamp.
+    pub fn scaled(self, width: u32, height: u32) -> Result<Self> {
+        let (sw, sh) = (u64::from(self.width), u64::from(self.height));
+        let mut w = u64::from(width);
+        let mut h = u64::from(height);
+        // Order mirrors libwebp: width first, then height off the (possibly-derived)
+        // width, each derived axis the ceiling of the proportional value.
+        if w == 0 {
+            w = (sw * h).div_ceil(sh);
+        }
+        if h == 0 {
+            h = (sh * w).div_ceil(sw);
+        }
+        let fit = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        Self::new(fit(w), fit(h))
+    }
 }
 
 /// The byte order of a pixel buffer at the API boundary.
@@ -411,6 +437,35 @@ impl Image {
         }
         self.has_alpha = alpha.iter().any(|&a| a != 0xff);
         Ok(())
+    }
+
+    /// Crop to the exact pixel window `rect`, returning a new image that copies just
+    /// that sub-rectangle (layout and metadata carried through, `has_alpha`
+    /// recomputed over the window).
+    ///
+    /// The window must lie fully inside the image; there is no silent clamp. Crop is
+    /// the same core geometry the `cwebp`/`dwebp` tools apply.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidDimensions`] if `rect` is empty, or [`Error::CropOutOfBounds`]
+    /// if it does not fit inside the image.
+    pub fn crop(&self, rect: crate::geometry::Rect) -> Result<Self> {
+        crate::geometry::crop(self, rect)
+    }
+
+    /// Resize to `target` with the bit-exact fixed-point rescaler ported from
+    /// libwebp's `WebPRescaler`, returning a new image whose pixels match
+    /// `cwebp`/`dwebp`'s resampler byte-for-byte.
+    ///
+    /// Color channels are premultiplied by alpha before interpolation and restored
+    /// afterward (libwebp's ARGB `WebPPictureRescale` path), so translucent edges
+    /// resample cleanly; opaque images are unaffected by the matting. Use
+    /// [`Dimensions::scaled`] to derive `target` from a single axis while keeping
+    /// aspect. Layout and metadata carry through.
+    #[must_use]
+    pub fn resize(&self, target: Dimensions) -> Self {
+        crate::geometry::resize(self, target)
     }
 }
 

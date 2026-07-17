@@ -4,7 +4,7 @@
 .SH NAME
 encode \- Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .SH SYNOPSIS
-\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-near\-lossless\fR] [\fB\-\-crop\fR] [\fB\-\-resize\fR] [\fB\-\-target\-size\fR] [\fB\-\-min\-psnr\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
+\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-near\-lossless\fR] [\fB\-\-crop\fR] [\fB\-\-resize\fR] [\fB\-\-target\-size\fR] [\fB\-\-min\-psnr\fR] [\fB\-\-metadata\fR] [\fB\-\-optimize\fR] [\fB\-\-mixed\fR] [\fB\-\-min\-size\fR] [\fB\-\-kmax\fR] [\fB\-\-kmin\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
 .SH DESCRIPTION
 Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .SH OPTIONS
@@ -59,18 +59,18 @@ bgra8: `B, G, R, A`
 .RE
 .TP
 \fB\-m\fR, \fB\-\-method\fR \fI<METHOD>\fR
-Encoder effort [default: balanced, or from env/config]
+Encoder effort [default: auto, or from env/config]
 .br
 
 .br
 \fIPossible values:\fR
 .RS 14
 .IP \(bu 2
-fast: Fastest: literal + subtract\-green only
+auto: Adapt the search depth to the image\*(Aqs content and size (the default)
 .IP \(bu 2
-balanced: Balanced (the default): LZ77 + color cache
+fast: Fastest: the shallowest fixed search
 .IP \(bu 2
-best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
+best: Smallest: the deepest fixed search
 .RE
 .TP
 \fB\-\-lossless\fR
@@ -117,6 +117,21 @@ exif: Keep Exif
 .IP \(bu 2
 xmp: Keep XMP
 .RE
+.TP
+\fB\-\-optimize\fR
+Inter\-frame optimize a GIF animation: encode each frame as a minimal delta
+.TP
+\fB\-\-mixed\fR
+With \-\-optimize: trial each frame lossy and lossless, keep the smaller (gif2webp \-mixed)
+.TP
+\fB\-\-min\-size\fR
+With \-\-optimize: exhaustively search each frame\*(Aqs rect/blend/dispose/codec (gif2webp `\-min_size`)
+.TP
+\fB\-\-kmax\fR \fI<N>\fR
+With \-\-optimize: force a keyframe at least every N frames (gif2webp \-kmax; 0 = only the first)
+.TP
+\fB\-\-kmin\fR \fI<N>\fR
+With \-\-optimize: never place keyframes closer than N frames apart (gif2webp \-kmin)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)

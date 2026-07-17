@@ -545,11 +545,7 @@ mod tests {
 
         let plain = encode(img, &EncoderConfig::default()).unwrap();
         let level = 20;
-        let near = encode(
-            img,
-            &EncoderConfig::default().with_near_lossless(level),
-        )
-        .unwrap();
+        let near = encode(img, &EncoderConfig::default().with_near_lossless(level)).unwrap();
         assert!(
             near.len() < plain.len(),
             "near-lossless ({}) must beat plain lossless ({})",
@@ -586,13 +582,13 @@ mod tests {
     }
 
     #[test]
-    fn fast_effort_still_round_trips() {
+    fn low_effort_still_round_trips() {
         let rgba: Vec<u8> = (0..16u8)
             .flat_map(|v| [v, v.wrapping_mul(3), v.wrapping_mul(7), 255])
             .collect();
         let dims = Dimensions::new(4, 4).unwrap();
         let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
-        let file = encode(img, &EncoderConfig::new().with_effort(Effort::Fast)).unwrap();
+        let file = encode(img, &EncoderConfig::new().with_effort(Effort::level(0))).unwrap();
         assert_eq!(decode_rgba(&file).unwrap(), (dims, rgba));
     }
 

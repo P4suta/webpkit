@@ -29,7 +29,9 @@ fn main() -> Result<()> {
     let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba)?;
 
     // Lossless (VP8L): a byte-exact round-trip at the highest effort.
-    let lossless = Encoder::lossless().effort(Effort::Best).encode_ref(img)?;
+    let lossless = Encoder::lossless()
+        .effort(Effort::level(9))
+        .encode_ref(img)?;
     let back = decode(&lossless)?;
     assert_eq!(back.as_bytes(), &rgba[..], "lossless must be byte-exact");
     println!("lossless: {} bytes, decoded byte-exact", lossless.len());

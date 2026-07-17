@@ -187,10 +187,157 @@ fn encode_stream(
 /// Full LZ77 + color-cache candidate search over already-transformed `pixels`
 /// laid out at `working_width` (which a color-indexing transform reduces below
 /// `header_width`; every other family leaves them equal), returning the smallest
-/// stream. Parses both reference strategies, lets the cost model pick a cache
-/// size for each, materializes up to three candidates, and keeps the smallest.
-/// The `(literal, no-cache)` candidate is always first, so this never regresses
-/// the plain literal baseline for the given `plans`.
+/// stream. `optimal_parse` adds the cost-model DP candidate; `meta_huffman` adds
+/// the multi-group meta-Huffman shots — both breadth knobs, gated so a lower
+/// effort level searches less. Parses the reference strategies, lets the cost
+/// model pick a cache size for each, and keeps the smallest. The
+/// `(literal, no-cache)` candidate is always first, so this never regresses the
+/// plain literal baseline for the given `plans`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "threads the emit context (dimensions, plans, working width) and the \
+              two breadth gates through unchanged; bundling it would only hide the \
+              data flow the named wrappers rely on"
+)]
+fn search_lz77_variant(
+    header_width: u32,
+    header_height: u32,
+    alpha_used: bool,
+    plans: &[TransformPlan],
+    working_width: u32,
+    pixels: &[u32],
+    optimal_parse: bool,
+    meta_huffman: bool,
+) -> Vec<u8> {
+    let emit = |cache_bits, model: &RefModel<'_>, histogram: &Histogram| {
+        emit_stream(
+            header_width,
+            header_height,
+            alpha_used,
+            plans,
+            cache_bits,
+            model,
+            histogram,
+        )
+    };
+    // Baseline: all literals, with and without a cache — the non-regression floor.
+    // The cache search hands back the winning size's histogram, reused by that
+    // candidate's emit (the @0 emit still builds its own, since the winner may be
+    // > 0).
+    let mut best = {
+        let tokens_literal = parse(pixels, false);
+        let model_literal = RefModel::new(&tokens_literal, pixels, working_width);
+        let (cache_literal, hist_literal) = best_cache_bits(&model_literal);
+        let mut best = emit(0, &model_literal, &model_literal.histogram(0));
+        if cache_literal > 0 {
+            keep_smaller(
+                &mut best,
+                emit(cache_literal, &model_literal, &hist_literal),
+            );
+        }
+        best
+    };
+    // The greedy LZ77 stream. Kept alive as the DP seed and the meta-Huffman input;
+    // its hash chain is carried alongside so the DP reuses it instead of rebuilding
+    // the same pure-function-of-pixels chain (byte-identical either way).
+    let (tokens_lz77, chain) = parse_lz77(pixels);
+    let model_lz77 = RefModel::new(&tokens_lz77, pixels, working_width);
+    let (cache_lz77, hist_lz77) = best_cache_bits(&model_lz77);
+    keep_smaller(&mut best, emit(cache_lz77, &model_lz77, &hist_lz77));
+    let ysize = pixels.len() as u32 / working_width;
+    // Cost-model-driven optimal parse: a self-floored extra candidate (chosen only
+    // when strictly smaller by real bytes), seeded from the greedy stream.
+    if optimal_parse {
+        let tokens_dp = parse_optimal(pixels, working_width, &tokens_lz77, &chain);
+        drop(chain);
+        let model_dp = RefModel::new(&tokens_dp, pixels, working_width);
+        let (cache_dp, hist_dp) = best_cache_bits(&model_dp);
+        keep_smaller(&mut best, emit(cache_dp, &model_dp, &hist_dp));
+        if meta_huffman {
+            // A meta-Huffman shot on each of the greedy and DP streams — both
+            // self-floored against the single-group candidates already folded in.
+            meta_shot(
+                &mut best,
+                header_width,
+                header_height,
+                alpha_used,
+                plans,
+                cache_lz77,
+                &model_lz77,
+                pixels,
+                working_width,
+                ysize,
+            );
+            meta_shot(
+                &mut best,
+                header_width,
+                header_height,
+                alpha_used,
+                plans,
+                cache_dp,
+                &model_dp,
+                pixels,
+                working_width,
+                ysize,
+            );
+        }
+    } else if meta_huffman {
+        // No DP candidate at this breadth: the meta-Huffman shot rides the greedy
+        // stream alone.
+        meta_shot(
+            &mut best,
+            header_width,
+            header_height,
+            alpha_used,
+            plans,
+            cache_lz77,
+            &model_lz77,
+            pixels,
+            working_width,
+            ysize,
+        );
+    }
+    best
+}
+
+/// Fold a meta-Huffman candidate for `model` into `best` when [`meta::plan`] finds
+/// a beneficial grouping — self-floored, so it only wins by real emitted bytes.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "threads the emit context (dimensions, plans, cache) and the model \
+              through unchanged; bundling it would only hide the data flow"
+)]
+fn meta_shot(
+    best: &mut Vec<u8>,
+    header_width: u32,
+    header_height: u32,
+    alpha_used: bool,
+    plans: &[TransformPlan],
+    cache_bits: u32,
+    model: &RefModel<'_>,
+    pixels: &[u32],
+    working_width: u32,
+    ysize: u32,
+) {
+    if let Some(plan) = meta::plan(model.tokens, pixels, working_width, ysize, cache_bits) {
+        keep_smaller(
+            best,
+            emit_stream_meta(
+                header_width,
+                header_height,
+                alpha_used,
+                plans,
+                cache_bits,
+                model,
+                &plan,
+            ),
+        );
+    }
+}
+
+/// The Balanced search: LZ77 + color cache + optimal parse, no meta-Huffman. The
+/// transform-free form is the [`encode`] floor; the byte-identical wrapper keeps
+/// the historical name for the direct cost-model tests.
 fn search_lz77(
     header_width: u32,
     header_height: u32,
@@ -199,65 +346,22 @@ fn search_lz77(
     working_width: u32,
     pixels: &[u32],
 ) -> Vec<u8> {
-    let emit = |cache_bits, model: &RefModel<'_>, histogram: &Histogram| {
-        emit_stream(
-            header_width,
-            header_height,
-            alpha_used,
-            plans,
-            cache_bits,
-            model,
-            histogram,
-        )
-    };
-    // Each candidate's parse + model live only until its stream is folded into
-    // `best`, then drop — so the peak never holds every full-size token stream at
-    // once. The fold order (literal@0, literal@cache, lz77, dp) is unchanged, so
-    // the selected bytes are identical; only the memory high-water mark shrinks.
-    //
-    // Baseline: all literals, no cache — the non-regression floor. Dropped before
-    // the LZ77/DP work below, which never needs the literal stream. The cache
-    // search hands back the winning size's histogram, reused by that candidate's
-    // emit (the @0 emit still builds its own, since the winner may be > 0).
-    let mut best = {
-        let tokens_literal = parse(pixels, false);
-        let model_literal = RefModel::new(&tokens_literal, pixels, working_width);
-        let (cache_literal, hist_literal) = best_cache_bits(&model_literal);
-        let mut best = emit(0, &model_literal, &model_literal.histogram(0));
-        if cache_literal > 0 {
-            keep_smaller(
-                &mut best,
-                emit(cache_literal, &model_literal, &hist_literal),
-            );
-        }
-        best
-    };
-    // The greedy LZ77 stream is kept alive only as the DP seed. Its hash chain is
-    // carried alongside so the DP reuses it instead of rebuilding the same
-    // pure-function-of-pixels chain (byte-identical either way).
-    let (tokens_lz77, chain) = parse_lz77(pixels);
-    {
-        let model_lz77 = RefModel::new(&tokens_lz77, pixels, working_width);
-        let (cache_lz77, hist_lz77) = best_cache_bits(&model_lz77);
-        keep_smaller(&mut best, emit(cache_lz77, &model_lz77, &hist_lz77));
-    }
-    // Cost-model-driven optimal parse: a self-floored extra candidate (chosen only
-    // when strictly smaller by real bytes), seeded from the greedy stream. Once the
-    // DP has consumed it, the greedy stream and its chain are no longer needed here.
-    let tokens_dp = parse_optimal(pixels, working_width, &tokens_lz77, &chain);
-    drop(tokens_lz77);
-    drop(chain);
-    {
-        let model_dp = RefModel::new(&tokens_dp, pixels, working_width);
-        let (cache_dp, hist_dp) = best_cache_bits(&model_dp);
-        keep_smaller(&mut best, emit(cache_dp, &model_dp, &hist_dp));
-    }
-    best
+    search_lz77_variant(
+        header_width,
+        header_height,
+        alpha_used,
+        plans,
+        working_width,
+        pixels,
+        true,
+        false,
+    )
 }
 
-/// [`search_lz77`] plus a meta-Huffman candidate: it reproduces the single-group
-/// candidate set (so it self-floors) and, when [`meta::plan`] finds a beneficial
-/// grouping on the LZ77 model, offers a multi-group stream too. Best-only.
+/// The full-breadth search: [`search_lz77`] plus the meta-Huffman shots (the
+/// historical `search_lz77_best`). Production families call [`family_search`]
+/// with a [`Breadth`]; this named form backs the direct cost-model tests.
+#[cfg(test)]
 fn search_lz77_best(
     header_width: u32,
     header_height: u32,
@@ -266,81 +370,16 @@ fn search_lz77_best(
     working_width: u32,
     pixels: &[u32],
 ) -> Vec<u8> {
-    let emit = |cache_bits, model: &RefModel<'_>, histogram: &Histogram| {
-        emit_stream(
-            header_width,
-            header_height,
-            alpha_used,
-            plans,
-            cache_bits,
-            model,
-            histogram,
-        )
-    };
-    // The literal candidate's parse + model live only until its stream is folded,
-    // then drop before the LZ77/DP/meta work — which never needs the literal
-    // stream. Fold order is unchanged, so the selected bytes are identical. The
-    // cache search's winning histogram is reused by that candidate's emit (the @0
-    // emit still builds its own, since the winner may be > 0).
-    let mut best = {
-        let tokens_literal = parse(pixels, false);
-        let model_literal = RefModel::new(&tokens_literal, pixels, working_width);
-        let (cache_literal, hist_literal) = best_cache_bits(&model_literal);
-        let mut best = emit(0, &model_literal, &model_literal.histogram(0));
-        if cache_literal > 0 {
-            keep_smaller(
-                &mut best,
-                emit(cache_literal, &model_literal, &hist_literal),
-            );
-        }
-        best
-    };
-    // The greedy stream and its model live on: seed for the DP and input to the
-    // meta-Huffman shot below. Its hash chain is carried only as far as the DP,
-    // which reuses it instead of rebuilding the same chain (byte-identical either
-    // way).
-    let (tokens_lz77, chain) = parse_lz77(pixels);
-    let model_lz77 = RefModel::new(&tokens_lz77, pixels, working_width);
-    let (cache_lz77, hist_lz77) = best_cache_bits(&model_lz77);
-    keep_smaller(&mut best, emit(cache_lz77, &model_lz77, &hist_lz77));
-    // Cost-model-driven optimal parse: a self-floored extra candidate (single
-    // group), seeded from the greedy stream.
-    let tokens_dp = parse_optimal(pixels, working_width, &tokens_lz77, &chain);
-    drop(chain);
-    let model_dp = RefModel::new(&tokens_dp, pixels, working_width);
-    let (cache_dp, hist_dp) = best_cache_bits(&model_dp);
-    keep_smaller(&mut best, emit(cache_dp, &model_dp, &hist_dp));
-    let ysize = pixels.len() as u32 / working_width;
-    if let Some(plan) = meta::plan(&tokens_lz77, pixels, working_width, ysize, cache_lz77) {
-        keep_smaller(
-            &mut best,
-            emit_stream_meta(
-                header_width,
-                header_height,
-                alpha_used,
-                plans,
-                cache_lz77,
-                &model_lz77,
-                &plan,
-            ),
-        );
-    }
-    // The same meta-Huffman shot on the DP stream — also self-floored.
-    if let Some(plan_dp) = meta::plan(&tokens_dp, pixels, working_width, ysize, cache_dp) {
-        keep_smaller(
-            &mut best,
-            emit_stream_meta(
-                header_width,
-                header_height,
-                alpha_used,
-                plans,
-                cache_dp,
-                &model_dp,
-                &plan_dp,
-            ),
-        );
-    }
-    best
+    search_lz77_variant(
+        header_width,
+        header_height,
+        alpha_used,
+        plans,
+        working_width,
+        pixels,
+        true,
+        true,
+    )
 }
 
 /// Tile-bits candidates for the predictor/cross-color families. [`keep_smaller`]
@@ -357,7 +396,75 @@ const _: () = {
     }
 };
 
-/// One independent `Effort::Best` candidate family. Evaluated in the fixed order
+/// How wide the Tier 3 search casts its net at one effort level: which tile sizes
+/// the predictor/cross-color families sweep, whether cross-color runs at all, and
+/// whether the per-family search adds the optimal-parse and meta-Huffman shots.
+/// Produced by [`schedule`]; every field is monotone in the level, so a higher
+/// level only ever *adds* candidates.
+#[derive(Clone, Copy)]
+struct Breadth {
+    /// A prefix of [`TRANSFORM_TILE_BITS_SWEEP`] (nested across levels) the
+    /// predictor and cross-color families sweep.
+    tile_bits: &'static [u32],
+    /// Whether the cross-color family is evaluated.
+    cross_color: bool,
+    /// Whether each family search adds the cost-model optimal-parse candidate.
+    optimal_parse: bool,
+    /// Whether each family search adds the meta-Huffman shots.
+    meta_huffman: bool,
+}
+
+/// Map an effort level (`0..=9`) to its [`Breadth`]. Monotone: each higher level's
+/// candidate set is a superset of the one below (wider tile sweep, then
+/// cross-color, then meta-Huffman), so the real-byte winner never grows with the
+/// level. Level 9 enables the full search — byte-for-byte the historical
+/// `encode_best` — pinned by `level_nine_is_full_breadth`.
+const fn schedule(level: u8) -> Breadth {
+    const T4: &[u32] = &[4];
+    const T34: &[u32] = &[3, 4];
+    const T234: &[u32] = &[2, 3, 4];
+    const FULL: &[u32] = &TRANSFORM_TILE_BITS_SWEEP;
+    match level {
+        0 => Breadth {
+            tile_bits: T4,
+            cross_color: false,
+            optimal_parse: false,
+            meta_huffman: false,
+        },
+        1 => Breadth {
+            tile_bits: T4,
+            cross_color: true,
+            optimal_parse: true,
+            meta_huffman: false,
+        },
+        2 => Breadth {
+            tile_bits: T34,
+            cross_color: true,
+            optimal_parse: true,
+            meta_huffman: false,
+        },
+        3 => Breadth {
+            tile_bits: T234,
+            cross_color: true,
+            optimal_parse: true,
+            meta_huffman: false,
+        },
+        4 | 5 => Breadth {
+            tile_bits: FULL,
+            cross_color: true,
+            optimal_parse: true,
+            meta_huffman: false,
+        },
+        _ => Breadth {
+            tile_bits: FULL,
+            cross_color: true,
+            optimal_parse: true,
+            meta_huffman: true,
+        },
+    }
+}
+
+/// One independent `Effort` candidate family. Evaluated in the fixed order
 /// [`build_best_tasks`] emits, so [`reduce_task_minima`] is deterministic and the
 /// serial and rayon evaluators agree byte-for-byte.
 #[derive(Clone, Copy)]
@@ -368,48 +475,83 @@ enum BestTask {
     CrossColor(u32),
 }
 
-/// The canonical candidate task order: floor, palette, then predictor and
-/// cross-color once per swept tile size.
-fn build_best_tasks() -> Vec<BestTask> {
+/// The canonical candidate task order for `breadth`: floor, palette, then predictor
+/// (and, when enabled, cross-color) once per swept tile size.
+fn build_best_tasks(breadth: Breadth) -> Vec<BestTask> {
     let mut tasks = vec![BestTask::Floor, BestTask::Palette];
-    tasks.extend(
-        TRANSFORM_TILE_BITS_SWEEP
-            .iter()
-            .map(|&b| BestTask::Predictor(b)),
-    );
-    tasks.extend(
-        TRANSFORM_TILE_BITS_SWEEP
-            .iter()
-            .map(|&b| BestTask::CrossColor(b)),
-    );
+    tasks.extend(breadth.tile_bits.iter().map(|&b| BestTask::Predictor(b)));
+    if breadth.cross_color {
+        tasks.extend(breadth.tile_bits.iter().map(|&b| BestTask::CrossColor(b)));
+    }
     tasks
 }
 
-/// Evaluate one task into its ordered candidate streams. The four `*_streams`
-/// helpers hold the family logic once, shared by the serial and rayon evaluators.
+/// Evaluate one task into its ordered candidate streams at `breadth`. The four
+/// `*_streams` helpers hold the family logic once, shared by the serial and rayon
+/// evaluators.
 fn run_best_task(
     task: BestTask,
+    breadth: Breadth,
     width: u32,
     height: u32,
     alpha_used: bool,
     argb: &[u32],
 ) -> Vec<Vec<u8>> {
     match task {
-        BestTask::Floor => floor_streams(width, height, alpha_used, argb),
-        BestTask::Palette => palette_streams(width, height, alpha_used, argb),
-        BestTask::Predictor(bits) => predictor_streams(width, height, alpha_used, argb, bits),
-        BestTask::CrossColor(bits) => cross_color_streams(width, height, alpha_used, argb, bits),
+        BestTask::Floor => floor_streams(breadth, width, height, alpha_used, argb),
+        BestTask::Palette => palette_streams(breadth, width, height, alpha_used, argb),
+        BestTask::Predictor(bits) => {
+            predictor_streams(breadth, width, height, alpha_used, argb, bits)
+        },
+        BestTask::CrossColor(bits) => {
+            cross_color_streams(breadth, width, height, alpha_used, argb, bits)
+        },
     }
 }
 
-/// The Tier 0/1/2 floor (always first, so it seeds `best` and wins ties) plus the
-/// two no-transform meta-Huffman shots.
-fn floor_streams(width: u32, height: u32, alpha_used: bool, argb: &[u32]) -> Vec<Vec<u8>> {
+/// Run one transform family's search at `breadth`: adds the optimal-parse and
+/// meta-Huffman candidates only when the level enables them.
+fn family_search(
+    breadth: Breadth,
+    header_width: u32,
+    header_height: u32,
+    alpha_used: bool,
+    plans: &[TransformPlan],
+    working_width: u32,
+    pixels: &[u32],
+) -> Vec<u8> {
+    search_lz77_variant(
+        header_width,
+        header_height,
+        alpha_used,
+        plans,
+        working_width,
+        pixels,
+        breadth.optimal_parse,
+        breadth.meta_huffman,
+    )
+}
+
+/// The transform-free floor (always first, so it seeds `best` and wins ties). The
+/// floor itself is the full [`encode`] search, so it is present at every breadth;
+/// the two no-transform meta-Huffman shots are added only when the level enables
+/// them (otherwise they are subsumed by the floor).
+fn floor_streams(
+    breadth: Breadth,
+    width: u32,
+    height: u32,
+    alpha_used: bool,
+    argb: &[u32],
+) -> Vec<Vec<u8>> {
     let floor = encode_with(width, height, argb, true);
-    let raw_meta = search_lz77_best(width, height, alpha_used, &[], width, argb);
+    if !breadth.meta_huffman {
+        return vec![floor];
+    }
+    let raw_meta = family_search(breadth, width, height, alpha_used, &[], width, argb);
     let mut sg = argb.to_vec();
     subtract_green::forward(&mut sg);
-    let sg_meta = search_lz77_best(
+    let sg_meta = family_search(
+        breadth,
         width,
         height,
         alpha_used,
@@ -421,14 +563,21 @@ fn floor_streams(width: u32, height: u32, alpha_used: bool, argb: &[u32]) -> Vec
 }
 
 /// The palette family (empty when the image has > 256 distinct colors).
-fn palette_streams(width: u32, height: u32, alpha_used: bool, argb: &[u32]) -> Vec<Vec<u8>> {
+fn palette_streams(
+    breadth: Breadth,
+    width: u32,
+    height: u32,
+    alpha_used: bool,
+    argb: &[u32],
+) -> Vec<Vec<u8>> {
     if let Some(p) = palette::forward(argb, width) {
         let working_width = subsample_size(width, p.bits);
         let plans = [TransformPlan::ColorIndexing {
             num_colors: p.num_colors,
             colormap: p.colormap,
         }];
-        vec![search_lz77_best(
+        vec![family_search(
+            breadth,
             width,
             height,
             alpha_used,
@@ -444,6 +593,7 @@ fn palette_streams(width: u32, height: u32, alpha_used: bool, argb: &[u32]) -> V
 /// The predictor family at one tile size: predictor alone, then predictor +
 /// subtract-green (spatial before pointwise).
 fn predictor_streams(
+    breadth: Breadth,
     width: u32,
     height: u32,
     alpha_used: bool,
@@ -451,7 +601,8 @@ fn predictor_streams(
     bits: u32,
 ) -> Vec<Vec<u8>> {
     let (residual, tile_data) = predictor::forward(argb, width, height, bits);
-    let alone = search_lz77_best(
+    let alone = family_search(
+        breadth,
         width,
         height,
         alpha_used,
@@ -464,7 +615,8 @@ fn predictor_streams(
     );
     let mut residual_sg = residual;
     subtract_green::forward(&mut residual_sg);
-    let with_sg = search_lz77_best(
+    let with_sg = family_search(
+        breadth,
         width,
         height,
         alpha_used,
@@ -481,6 +633,7 @@ fn predictor_streams(
 /// The cross-color family at one tile size: cross-color alone, then cross-color +
 /// subtract-green.
 fn cross_color_streams(
+    breadth: Breadth,
     width: u32,
     height: u32,
     alpha_used: bool,
@@ -488,7 +641,8 @@ fn cross_color_streams(
     bits: u32,
 ) -> Vec<Vec<u8>> {
     let (stored, tile_data) = cross_color::forward(argb, width, height, bits);
-    let alone = search_lz77_best(
+    let alone = family_search(
+        breadth,
         width,
         height,
         alpha_used,
@@ -501,7 +655,8 @@ fn cross_color_streams(
     );
     let mut stored_sg = stored;
     subtract_green::forward(&mut stored_sg);
-    let with_sg = search_lz77_best(
+    let with_sg = family_search(
+        breadth,
         width,
         height,
         alpha_used,
@@ -559,6 +714,7 @@ fn reduce_task_minima(minima: impl IntoIterator<Item = Option<Vec<u8>>>) -> Vec<
 #[cfg(not(feature = "rayon"))]
 fn evaluate_best_tasks(
     tasks: Vec<BestTask>,
+    breadth: Breadth,
     width: u32,
     height: u32,
     alpha_used: bool,
@@ -569,12 +725,13 @@ fn evaluate_best_tasks(
     reduce_task_minima(
         tasks
             .into_iter()
-            .map(|t| keep_smallest(run_best_task(t, width, height, alpha_used, argb))),
+            .map(|t| keep_smallest(run_best_task(t, breadth, width, height, alpha_used, argb))),
     )
 }
 #[cfg(feature = "rayon")]
 fn evaluate_best_tasks(
     tasks: Vec<BestTask>,
+    breadth: Breadth,
     width: u32,
     height: u32,
     alpha_used: bool,
@@ -586,14 +743,17 @@ fn evaluate_best_tasks(
     // keeps task order, so the fold below resolves ties identically to serial.
     let minima: Vec<Option<Vec<u8>>> = tasks
         .into_par_iter()
-        .map(|t| keep_smallest(run_best_task(t, width, height, alpha_used, argb)))
+        .map(|t| keep_smallest(run_best_task(t, breadth, width, height, alpha_used, argb)))
         .collect();
     reduce_task_minima(minima)
 }
 
-/// Tier 3 ("Best") encode: return the SMALLEST stream among the Tier 0/1/2 floor
-/// and each forward-transform family (palette, predictor, cross-color). The floor
-/// is always in the candidate set, so Best never regresses [`encode`].
+/// Tier 3 encode at breadth `level` (`0..=9`): return the SMALLEST stream among the
+/// transform-free floor and each forward-transform family (palette, predictor,
+/// cross-color) the level's [`Breadth`] enables. The floor — the full [`encode`]
+/// search — is always in the candidate set and ranked by real emitted bytes, so
+/// this is never larger than [`encode`] at any level, and its spatial predictor is
+/// always evaluated (no path skips it). Level 9 enables every family.
 ///
 /// Palette is mutually exclusive with the spatial transforms (it reduces the
 /// working width; the others do not), so the families are evaluated as separate
@@ -602,9 +762,24 @@ fn evaluate_best_tasks(
 /// forwards applied — in the mandated `PALETTE -> PREDICTOR -> CROSS_COLOR ->
 /// SUBTRACT_GREEN` order, which the decoder inverts in reverse.
 #[must_use]
-pub(crate) fn encode_best(width: u32, height: u32, argb: &[u32]) -> Vec<u8> {
+pub(crate) fn encode_best_at(level: u8, width: u32, height: u32, argb: &[u32]) -> Vec<u8> {
+    let breadth = schedule(level);
     let alpha_used = argb.iter().any(|&p| p >> 24 != 0xff);
-    evaluate_best_tasks(build_best_tasks(), width, height, alpha_used, argb)
+    evaluate_best_tasks(
+        build_best_tasks(breadth),
+        breadth,
+        width,
+        height,
+        alpha_used,
+        argb,
+    )
+}
+
+/// Full-breadth ([`schedule`] level 9) Tier 3 encode — byte-for-byte the historical
+/// `encode_best`, the reference the byte-stability and round-trip tests pin.
+#[cfg(test)]
+pub(crate) fn encode_best(width: u32, height: u32, argb: &[u32]) -> Vec<u8> {
+    encode_best_at(crate::effort::MAX_LEVEL, width, height, argb)
 }
 
 /// Replace `best` with `candidate` when the candidate is strictly smaller.
@@ -1093,8 +1268,9 @@ impl Prefix {
 mod tests {
     use super::{
         RefModel, TransformPlan, best_cache_bits, emit_stream, emit_stream_meta, encode,
-        encode_best, encode_stream,
+        encode_best, encode_best_at, encode_stream,
     };
+    use crate::effort::MAX_LEVEL;
     use crate::lossless::transform::predictor;
     use crate::lossless::vp8l::backref::parse;
     use crate::lossless::vp8l::decode::decode;
@@ -1489,13 +1665,11 @@ mod tests {
 
     #[test]
     fn encode_best_output_is_byte_stable() {
-        // Golden FNV-1a-64 of `encode_best`'s exact output. The Effort::Best (Tier3)
-        // path has NO other byte oracle — `xtask corpus-sweep` and
-        // `encode_output_is_byte_stable` both re-encode with the default Balanced
-        // method — so this pins the predictor/cross-color/palette forward transforms
-        // and their (integer, deterministic) selection heuristics against silent
-        // byte drift. The scattered case exercises the palette family, the gradient
-        // the predictor family.
+        // Golden FNV-1a-64 of `encode_best`'s exact output — the full Tier-3 search
+        // (breadth level 9). This pins the predictor/cross-color/palette forward
+        // transforms and their (integer, deterministic) selection heuristics against
+        // silent byte drift. The scattered case exercises the palette family, the
+        // gradient the predictor family.
         const EXPECTED: [u64; 4] = [
             0xaa74_a8dc_ab4f_7a97,
             0x0e16_a604_b5f2_a267,
@@ -1508,6 +1682,86 @@ mod tests {
             got, EXPECTED,
             "encode_best output bytes drifted from the committed golden"
         );
+    }
+
+    #[test]
+    fn level_nine_is_full_breadth() {
+        // The breadth schedule must saturate at level 9: `encode_best_at(9)` is the
+        // full transform search, byte-for-byte the historical `encode_best`. The
+        // level-9 default is the golden the whole effort collapse rests on, so pin it
+        // against the committed `encode_best` output directly.
+        for (w, h, pixels) in byte_stability_cases() {
+            assert_eq!(
+                encode_best_at(MAX_LEVEL, w, h, &pixels),
+                encode_best(w, h, &pixels),
+                "level 9 must reproduce encode_best byte-for-byte ({w}x{h})"
+            );
+        }
+    }
+
+    #[test]
+    fn encode_best_at_is_monotone_and_floored() {
+        // Higher levels only ADD candidates, so the chosen size is non-increasing in
+        // the level; and every level keeps the transform-free floor, so no level is
+        // larger than `encode`. Both hold for structured and noisy inputs, and every
+        // level round-trips.
+        use crate::lossless::vp8l::decode::decode;
+        let cases: [(u32, u32, Vec<u32>); 3] = [
+            // A smooth gradient the predictor collapses.
+            (
+                16,
+                16,
+                (0..256u32)
+                    .map(|i| {
+                        let v = (i % 16 + i / 16) * 8;
+                        argb(255, v, v, v)
+                    })
+                    .collect(),
+            ),
+            // A scattered small palette.
+            (
+                16,
+                16,
+                (0..256usize)
+                    .map(|i| {
+                        let c = (i * 7 + i / 16) as u32 % 6;
+                        argb(255, c * 20 + 8, c * 13 + 17, c * 7 + 29)
+                    })
+                    .collect(),
+            ),
+            // Near-noise: the floor wins, so every level ties at `encode`.
+            (
+                12,
+                12,
+                (0..144u32)
+                    .map(|i| {
+                        let s = i.wrapping_mul(2_654_435_761);
+                        argb(255, s & 0xff, (s >> 8) & 0xff, (s >> 16) & 0xff)
+                    })
+                    .collect(),
+            ),
+        ];
+        for (w, h, pixels) in cases {
+            let floor = encode(w, h, &pixels).len();
+            let mut prev = usize::MAX;
+            for level in 0..=MAX_LEVEL {
+                let bytes = encode_best_at(level, w, h, &pixels);
+                assert!(
+                    bytes.len() <= prev,
+                    "level {level} ({}) must not exceed level {} ({prev}) on {w}x{h}",
+                    bytes.len(),
+                    level.wrapping_sub(1)
+                );
+                assert!(
+                    bytes.len() <= floor,
+                    "level {level} ({}) must not exceed the floor ({floor}) on {w}x{h}",
+                    bytes.len()
+                );
+                let decoded = decode(&bytes).expect("every level must decode");
+                assert_eq!(decoded.argb.as_slice(), pixels.as_slice());
+                prev = bytes.len();
+            }
+        }
     }
 
     #[test]
@@ -1544,20 +1798,23 @@ mod tests {
     #[test]
     fn serial_and_parallel_evaluation_agree() {
         use super::{
-            build_best_tasks, evaluate_best_tasks, keep_smallest, reduce_task_minima, run_best_task,
+            build_best_tasks, evaluate_best_tasks, keep_smallest, reduce_task_minima,
+            run_best_task, schedule,
         };
+        let breadth = schedule(crate::effort::MAX_LEVEL);
         for (w, h, pixels) in byte_stability_cases() {
             let alpha = pixels.iter().any(|&p| p >> 24 != 0xff);
             // Independent serial reference: fold each family's own minimum in task
             // order (the serial `evaluate_best_tasks` is not compiled under rayon).
             let serial = reduce_task_minima(
-                build_best_tasks()
+                build_best_tasks(breadth)
                     .into_iter()
-                    .map(|t| keep_smallest(run_best_task(t, w, h, alpha, &pixels))),
+                    .map(|t| keep_smallest(run_best_task(t, breadth, w, h, alpha, &pixels))),
             );
             // The rayon evaluator (feature on) must match the serial reference and
             // the public entry point, byte-for-byte.
-            let parallel = evaluate_best_tasks(build_best_tasks(), w, h, alpha, &pixels);
+            let parallel =
+                evaluate_best_tasks(build_best_tasks(breadth), breadth, w, h, alpha, &pixels);
             assert_eq!(
                 serial, parallel,
                 "rayon evaluation must equal serial, byte-for-byte"
@@ -1800,14 +2057,21 @@ mod tests {
         // back to the source. A function-replacement mutant returning `vec![]`
         // produces no candidates — caught by the length assert; the decodes pin that
         // both streams are correct.
-        use super::cross_color_streams;
+        use super::{cross_color_streams, schedule};
         let pixels: Vec<u32> = (0..64u32)
             .map(|i| {
                 let g = i * 2;
                 argb(255, g >> 1, g, g >> 2)
             })
             .collect();
-        let streams = cross_color_streams(8, 8, alpha_used(&pixels), &pixels, 3);
+        let streams = cross_color_streams(
+            schedule(crate::effort::MAX_LEVEL),
+            8,
+            8,
+            alpha_used(&pixels),
+            &pixels,
+            3,
+        );
         assert_eq!(
             streams.len(),
             2,
@@ -1898,7 +2162,11 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use super::{RefModel, best_cache_bits, emit_stream_meta, encode, encode_best, encode_with};
+    use super::{
+        RefModel, best_cache_bits, emit_stream_meta, encode, encode_best, encode_best_at,
+        encode_with,
+    };
+    use crate::effort::MAX_LEVEL;
     use crate::lossless::constants::{ALPHABET_SIZE, MAX_CACHE_BITS};
     use crate::lossless::histogram::Histogram;
     use crate::lossless::vp8l::backref::{Resolved, Token, parse, resolve};
@@ -2053,6 +2321,27 @@ mod proptests {
             let a = encode_best(width, height, &pixels);
             for _ in 0..3 {
                 prop_assert_eq!(&encode_best(width, height, &pixels), &a);
+            }
+        }
+
+        /// Representative breadth levels round-trip exactly, stay deterministic, and
+        /// never exceed the transform-free floor — the non-regression the breadth
+        /// schedule owes to `keep_smaller` (its monotonicity across all ten levels is
+        /// pinned deterministically by `encode_best_at_is_monotone_and_floored`).
+        #[test]
+        fn encode_best_at_round_trips_and_floors_every_level(
+            width in 1u32..=16, height in 1u32..=16, seed in any::<u64>(), variant in 0u8..3,
+        ) {
+            let pixels = structured_pixels(variant, seed, width, height);
+            let floor = encode(width, height, &pixels).len();
+            for level in [0u8, MAX_LEVEL / 2, MAX_LEVEL] {
+                let bytes = encode_best_at(level, width, height, &pixels);
+                prop_assert!(bytes.len() <= floor, "level {} exceeded the floor", level);
+                prop_assert_eq!(&encode_best_at(level, width, height, &pixels), &bytes);
+                let decoded = decode(&bytes).expect("every level must decode");
+                prop_assert_eq!(decoded.width, width);
+                prop_assert_eq!(decoded.height, height);
+                prop_assert_eq!(decoded.argb, pixels.clone());
             }
         }
 

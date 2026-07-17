@@ -57,14 +57,42 @@ pub(crate) const RD_DISTO_MULT: i64 = 256;
 /// A cost no real path reaches — the Viterbi "unreachable state" sentinel.
 const INF: i64 = i64::MAX / 4;
 
+/// Whether the trellis weights its coefficient-domain squared error by the
+/// per-frequency [`K_WEIGHT_TRELLIS`] table (libwebp's `kWeightTrellis`) and pairs it
+/// with the matching `>> 3` lambda base. When `true` the distortion is
+/// `kWeightTrellis[j] * err * err` (low frequencies count for more) scored against the
+/// rate with libwebp's `>> 3` lambda; when `false` it is the plain `err * err` with a
+/// `>> 6` lambda that stands in for the missing weight table.
+const TRELLIS_FREQ_WEIGHTING: bool = true;
+
 /// Right shift turning `7 * q_ac^2` into the trellis `lambda` (libwebp's
-/// `lambda_trellis` base is `(7 * q^2) >> 3`). Because we weigh an unweighted
-/// coefficient-domain squared error against the rate — where libwebp additionally
-/// scales distortion by a per-frequency `kWeightTrellis` factor — a larger shift is
-/// needed to hold the rate/distortion balance. Empirically tuned so the reference
-/// photo/noisy frames shrink clearly while every quality's PSNR stays within ~0.5 dB
-/// of round-to-nearest (a shift of 5 already costs >1 dB on smooth photo content).
-const LAMBDA_SHIFT: u32 = 6;
+/// `lambda_trellis` base is `(7 * q^2) >> 3`). With [`TRELLIS_FREQ_WEIGHTING`] on the
+/// per-frequency [`K_WEIGHT_TRELLIS`] weight carries the distortion shaping and the
+/// shift is libwebp's `>> 3`; with it off an *unweighted* squared error is balanced
+/// against the rate by a larger `>> 6` shift instead (a shift of 5 already costs >1 dB
+/// on smooth photo content).
+const LAMBDA_SHIFT: u32 = if TRELLIS_FREQ_WEIGHTING { 3 } else { 6 };
+
+/// Per-frequency trellis distortion weights (libwebp `kWeightTrellis`, the `USE_TDISTO`
+/// table) indexed by natural (row-major) coefficient position: low frequencies weigh
+/// more, so dropping low-frequency energy costs more distortion. A committed constant,
+/// consumed only when [`TRELLIS_FREQ_WEIGHTING`] is on.
+const K_WEIGHT_TRELLIS: [i64; 16] = [
+    30, 27, 19, 11, //
+    27, 24, 17, 10, //
+    19, 17, 12, 8, //
+    11, 10, 8, 6, //
+];
+
+/// The per-frequency distortion weight for natural coefficient position `j`: the
+/// [`K_WEIGHT_TRELLIS`] entry when weighting is on, else `1` (the plain `err * err`).
+const fn trellis_weight(j: usize) -> i64 {
+    if TRELLIS_FREQ_WEIGHTING {
+        K_WEIGHT_TRELLIS[j]
+    } else {
+        1
+    }
+}
 
 /// The rate-distortion multiplier for trellis quantization, derived from a plane's
 /// AC dequant step `q_ac`: `lambda = max(1, (7 * q_ac^2) >> LAMBDA_SHIFT)`. Coarser
@@ -288,8 +316,9 @@ pub(crate) fn trellis_quantize_block(
     // charge the distortion of the trailing zeros the terminal EOB skips.
     let mut suffix_dist = [0i64; 17];
     for n in (first..16).rev() {
-        let c = i64::from(coeffs[ZIGZAG[n]]);
-        suffix_dist[n] = suffix_dist[n + 1] + c * c;
+        let j = ZIGZAG[n];
+        let c = i64::from(coeffs[j]);
+        suffix_dist[n] = suffix_dist[n + 1] + trellis_weight(j) * c * c;
     }
 
     let mut v = Viterbi {
@@ -359,7 +388,8 @@ pub(crate) fn trellis_quantize_block(
                 work!(TrellisEval);
                 let err = i64::from(abs_coeff - m * q);
                 let rate = base + extra + value_rate(m, p);
-                let cand = prev_cost[ci] + RD_DISTO_MULT * err * err + lambda * rate;
+                let cand =
+                    prev_cost[ci] + RD_DISTO_MULT * trellis_weight(j) * err * err + lambda * rate;
                 let out = ctx_of(m);
                 if cand < v.cost[n][out] {
                     v.cost[n][out] = cand;
@@ -553,13 +583,14 @@ mod tests {
     /// diverge from `7 * q * q`), while the `q0/q4` clamp cases anchor the floor.
     #[test]
     fn trellis_lambda_is_exact() {
-        // (7*1*1)>>6 = 0 -> clamped to 1; (7*4*4)>>6 = 112>>6 = 1;
-        // (7*400)>>6 = 43; (7*10000)>>6 = 1093; (7*40000)>>6 = 4375.
+        // With per-frequency weighting on, LAMBDA_SHIFT is libwebp's `>> 3`:
+        // (7*1*1)>>3 = 0 -> clamped to 1; (7*4*4)>>3 = 112>>3 = 14;
+        // (7*400)>>3 = 350; (7*10000)>>3 = 8750; (7*40000)>>3 = 35000.
         assert_eq!(trellis_lambda(1), 1);
-        assert_eq!(trellis_lambda(4), 1);
-        assert_eq!(trellis_lambda(20), 43);
-        assert_eq!(trellis_lambda(100), 1093);
-        assert_eq!(trellis_lambda(200), 4375);
+        assert_eq!(trellis_lambda(4), 14);
+        assert_eq!(trellis_lambda(20), 350);
+        assert_eq!(trellis_lambda(100), 8750);
+        assert_eq!(trellis_lambda(200), 35000);
     }
 
     /// The large-value probability array used by the exact-rate tests: every entry in
@@ -730,9 +761,9 @@ mod tests {
                 coeffs: block(&[(1, 90), (4, -50), (8, 30)]),
                 first: 1,
                 ctx0: 2,
-                levels: block(&[(1, 2), (2, -1)]),
-                recon: block(&[(1, 88), (4, -44)]),
-                last: 2,
+                levels: block(&[(1, 2), (2, -1), (3, 1)]),
+                recon: block(&[(1, 88), (4, -44), (8, 44)]),
+                last: 3,
             },
             Case {
                 q: 40,
@@ -767,9 +798,9 @@ mod tests {
                 coeffs: block(&[(0, 200), (1, 55), (3, 48), (7, 40), (12, 35)]),
                 first: 0,
                 ctx0: 0,
-                levels: block(&[(0, 4), (1, 1)]),
-                recon: block(&[(0, 188), (1, 56)]),
-                last: 1,
+                levels: block(&[(0, 4), (1, 1), (6, 1)]),
+                recon: block(&[(0, 188), (1, 56), (3, 56)]),
+                last: 6,
             },
         ];
         for (i, c) in cases.iter().enumerate() {
@@ -780,30 +811,32 @@ mod tests {
         }
     }
 
-    /// A terminate-here **tie**: two candidate last-non-zero positions score the
-    /// exact same rate-distortion total, so which one wins is decided purely by the
-    /// `total < best_total` strict-`<` tie-break (keep the earlier position). At
-    /// `base_q = 17` (DC step 19, AC step 21) the block `{coeff[0] = 33, coeff[3] =
-    /// 20}` reaches this boundary: coding only the DC as level 2 (last = 0, dropping
-    /// the AC coefficient into the trailing-zero `suffix_dist`) ties exactly with
-    /// also coding the AC coefficient as level 1 (last = 6). Strict `<` keeps the
-    /// first-seen (earlier) termination — DC-only — so the block trellises to `last
-    /// = 0`. The `< -> <=` mutant would instead adopt the equal-cost later
-    /// termination, coding the AC coefficient (`last = 6`, `recon[3] = 21`); this
-    /// exact golden pins the tie-break direction.
+    /// A low-frequency-AC survival boundary. At `base_q = 17` (DC step 19, AC step 21)
+    /// the block `{coeff[0] = 33, coeff[3] = 20}` sits where dropping the AC coefficient
+    /// into the trailing-zero `suffix_dist` (DC-only, `last = 0`) trades against coding
+    /// it as level 1 (`last = 6`, natural position 3 = zig-zag index 6). Because natural
+    /// position 3 carries a high per-frequency [`K_WEIGHT_TRELLIS`] weight, its weighted
+    /// distortion outweighs the extra rate, so the trellis keeps it — an exact golden
+    /// pinning the weighted objective at the boundary. (The strict-`<` tie-break
+    /// *ordering* is exercised across ties by [`trellis_matches_the_brute_force_optimum`],
+    /// whose odometer visits candidates in the same `l0 -> l0-1 -> 0` order.)
     #[test]
-    fn trellis_tie_break_keeps_the_earlier_termination() {
+    fn trellis_low_frequency_ac_survives_the_weighted_objective() {
         let coeffs = block(&[(0, 33), (3, 20)]);
         let out = trellis(17, coeffs, 0, 0);
         assert_eq!(
             out.levels,
-            block(&[(0, 2)]),
-            "only the DC is coded (level 2)"
+            block(&[(0, 2), (6, 1)]),
+            "DC level 2 and the low-frequency AC (zig-zag 6) as level 1"
         );
-        assert_eq!(out.recon, block(&[(0, 38)]), "recon is DC-only (2 * 19)");
         assert_eq!(
-            out.last, 0,
-            "the strict-< tie-break keeps the earlier (DC-only) termination"
+            out.recon,
+            block(&[(0, 38), (3, 21)]),
+            "recon: DC 2*19 and AC 1*21 at natural position 3"
+        );
+        assert_eq!(
+            out.last, 6,
+            "the surviving AC lands the last non-zero at zig-zag 6"
         );
     }
 
@@ -863,7 +896,7 @@ mod tests {
                 let mag = cand[k][idx[k]];
                 let abs_c = i32::from(coeffs[j]).abs();
                 let err = i64::from(abs_c - mag * q);
-                dist += err * err;
+                dist += super::trellis_weight(j) * err * err;
                 let signed = if coeffs[j] < 0 { -mag } else { mag };
                 levels[n] = signed as i16;
                 recon[j] = (signed * q) as i16;

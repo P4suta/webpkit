@@ -32,7 +32,7 @@ struct MetricCase {
     content: String,
     /// Square edge length in pixels.
     edge: u32,
-    /// Encoder method label (`"fast"` | `"balanced"` | `"best"`).
+    /// Encoder method label (`"l0"` | `"auto"` | `"l9"`).
     method: String,
     /// Raw RGBA byte length (`edge * edge * 4`), the ratio denominator.
     raw_len: u64,
@@ -63,12 +63,12 @@ struct MetricsLedger {
 
 /// The methods measured at `edge`: the full [`ALL_METHODS`] set at every size.
 ///
-/// Every method — including `Best` (the full Tier-3 forward-transform search) at
-/// `edge = 512` — is gated at every size. `Best@512`'s six encodes are affordable
-/// because each candidate family folds to its minimum incrementally, so the peak
-/// never holds every stream at once: the release ledger builds in a couple of
-/// minutes, well within the metrics job's 20-minute cap. `edge` is a parameter so
-/// a size-specific cap has a home without touching the call site.
+/// Every method — including `l9` (the deepest forward-transform search) at
+/// `edge = 512` — is gated at every size. `l9@512`'s encodes are affordable because
+/// each candidate family folds to its minimum incrementally, so the peak never
+/// holds every stream at once: the release ledger builds in a couple of minutes,
+/// well within the metrics job's 20-minute cap. `edge` is a parameter so a
+/// size-specific cap has a home without touching the call site.
 const fn methods_for(_edge: u32) -> &'static [webpkit::lossless::Effort] {
     &ALL_METHODS
 }
@@ -312,7 +312,7 @@ pub(crate) fn metrics(
     Ok(())
 }
 
-/// Print (never gate) a size comparison of our `Method::Best` encoder against
+/// Print (never gate) a size comparison of our deepest-effort (`l9`) encoder against
 /// libwebp `cwebp -m 6 -q 100` over the shared synthetic corpus.
 ///
 /// This is a developer aid, not a committed artifact: it writes NO file to the
@@ -335,7 +335,7 @@ fn compare_vs_libwebp() -> Result<()> {
     }
 
     println!();
-    println!("ours(Method::Best) vs cwebp -m 6 -q 100 (printed only, NOT gated):");
+    println!("ours(l9) vs cwebp -m 6 -q 100 (printed only, NOT gated):");
     println!(
         "  {:<16} {:>12} {:>12} {:>12}",
         "id", "ours bytes", "cwebp bytes", "ours/cwebp"
@@ -345,7 +345,7 @@ fn compare_vs_libwebp() -> Result<()> {
     let src_png = tmp.path().join("src.png");
     let out_webp = tmp.path().join("out.webp");
     let config =
-        webpkit::lossless::EncoderConfig::new().with_effort(webpkit::lossless::Effort::Best);
+        webpkit::lossless::EncoderConfig::new().with_effort(webpkit::lossless::Effort::level(9));
 
     for sample in webpkit_samples::matrix() {
         // Cap Best to edge <= 256 for time, mirroring the ledger's Best@512 cap.
@@ -377,7 +377,7 @@ fn compare_vs_libwebp() -> Result<()> {
     Ok(())
 }
 
-/// Print (never gate) a size comparison of our `Method::Best` encoder against
+/// Print (never gate) a size comparison of our deepest-effort (`l9`) encoder against
 /// libwebp `cwebp -m 6 -q 100` over the *real* images in a caller-supplied
 /// directory `real`.
 ///
@@ -406,7 +406,7 @@ fn compare_vs_libwebp_real(real: &Path, max_edge: u32) -> Result<()> {
     }
 
     println!();
-    println!("ours(Method::Best) vs cwebp -m 6 -q 100 on real images (printed only, NOT gated):");
+    println!("ours(l9) vs cwebp -m 6 -q 100 on real images (printed only, NOT gated):");
     match (max_edge > 0).then_some(max_edge) {
         Some(width) => println!("  input width capped to {width}px by cwebp (aspect preserved)"),
         None => println!("  native resolution (no resize)"),
@@ -422,7 +422,7 @@ fn compare_vs_libwebp_real(real: &Path, max_edge: u32) -> Result<()> {
     // input. Ordering/skips are preserved for stable rows.
     let prepared = prepare_real_images(&cwebp, real, max_edge)?;
     let config =
-        webpkit::lossless::EncoderConfig::new().with_effort(webpkit::lossless::Effort::Best);
+        webpkit::lossless::EncoderConfig::new().with_effort(webpkit::lossless::Effort::level(9));
 
     let mut total_ours = 0u64;
     let mut total_cwebp = 0u64;
@@ -504,7 +504,7 @@ struct LossyMetricCase {
     content: String,
     /// Square edge length in pixels.
     edge: u32,
-    /// Encoder method label (`"fast"` | `"balanced"` | `"best"`).
+    /// Encoder method label (`"l0"` | `"auto"` | `"l9"`).
     method: String,
     /// Encoder quality in `0..=100`.
     quality: u8,
@@ -589,14 +589,16 @@ fn measure_one_lossy(
 }
 
 /// Compute a fresh lossy metrics ledger over the shared synthetic corpus crossed
-/// with [`LOSSY_METHODS`] x [`LOSSY_QUALITIES`] (`Best` capped to
+/// with [`LOSSY_METHODS`] x [`LOSSY_QUALITIES`] (`l9` capped to
 /// [`LOSSY_METRICS_BEST_MAX_EDGE`]). Integer-only, so it is byte-reproducible for
 /// the drift gate. Cases are sorted by `id` for a deterministic diff.
 fn compute_lossy_metrics() -> Result<LossyMetricsLedger> {
     let mut cases = Vec::new();
     for sample in webpkit_samples::matrix() {
         for &method in &LOSSY_METHODS {
-            if method == webpkit::lossy::Effort::Best && sample.edge > LOSSY_METRICS_BEST_MAX_EDGE {
+            if method == webpkit::lossy::Effort::level(9)
+                && sample.edge > LOSSY_METRICS_BEST_MAX_EDGE
+            {
                 continue;
             }
             for &quality in &LOSSY_QUALITIES {
@@ -837,7 +839,7 @@ pub(crate) fn metrics_lossy(action: MetricsAction, vs_libwebp: bool) -> Result<(
     Ok(())
 }
 
-/// Print (never gate) a lossy size + PSNR comparison of our `Method::Best`
+/// Print (never gate) a lossy size + PSNR comparison of our deepest-effort (`l9`)
 /// encoder against libwebp `cwebp -q Q` over the shared sample matrix.
 ///
 /// Both encoders' raw `VP8 ` payloads are decoded by *our* decoder, so the PSNR
@@ -855,7 +857,7 @@ fn compare_lossy_vs_libwebp() -> Result<()> {
     }
 
     println!();
-    println!("ours(Method::Best) vs cwebp -q Q (lossy, printed only, NOT gated):");
+    println!("ours(l9) vs cwebp -q Q (lossy, printed only, NOT gated):");
     println!("  bytes = VP8 payload; both decoded by our decoder for an apples-to-apples PSNR");
     println!(
         "  {:<14} {:>3} {:>10} {:>8} {:>11} {:>9}",
@@ -879,7 +881,7 @@ fn compare_lossy_vs_libwebp() -> Result<()> {
             )?;
             let cfg = webpkit::lossy::LossyConfig::new()
                 .with_quality(q)
-                .with_effort(webpkit::lossy::Effort::Best);
+                .with_effort(webpkit::lossy::Effort::level(9));
             let (_dims, payload) = webpkit::lossy::encode_vp8(image, &cfg)?;
             let ours_bytes = payload.len() as u64;
             let ours_psnr = psnr_rgb(&sample.rgba, webpkit::lossy::decode(&payload)?.as_bytes());

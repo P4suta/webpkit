@@ -178,9 +178,17 @@ pub fn parse_container(input: &[u8], read_metadata: bool) -> Result<ParsedWebp<'
                 extended = Some(info);
             },
             FourCc::VP8L if image.is_none() => image = Some(chunk.data),
-            FourCc::ICCP if read_metadata => metadata.icc_profile = Some(chunk.data.to_vec()),
-            FourCc::EXIF if read_metadata => metadata.exif = Some(chunk.data.to_vec()),
-            FourCc::XMP if read_metadata => metadata.xmp = Some(chunk.data.to_vec()),
+            // First-wins, mirroring the `image.is_none()` guard: a duplicate chunk
+            // must not silently override the earlier one.
+            FourCc::ICCP if read_metadata && metadata.icc_profile.is_none() => {
+                metadata.icc_profile = Some(chunk.data.to_vec());
+            },
+            FourCc::EXIF if read_metadata && metadata.exif.is_none() => {
+                metadata.exif = Some(chunk.data.to_vec());
+            },
+            FourCc::XMP if read_metadata && metadata.xmp.is_none() => {
+                metadata.xmp = Some(chunk.data.to_vec());
+            },
             FourCc::ANIM | FourCc::ANMF | FourCc::VP8 => return Err(Error::UnsupportedFeature),
             _ => {},
         }
@@ -207,10 +215,14 @@ pub fn extract_metadata(input: &[u8]) -> Metadata {
     };
     for chunk in walk {
         let Ok(chunk) = chunk else { break };
+        // First-wins, mirroring the `image.is_none()` guard: a duplicate chunk must
+        // not silently override the earlier one.
         match chunk.id {
-            FourCc::ICCP => metadata.icc_profile = Some(chunk.data.to_vec()),
-            FourCc::EXIF => metadata.exif = Some(chunk.data.to_vec()),
-            FourCc::XMP => metadata.xmp = Some(chunk.data.to_vec()),
+            FourCc::ICCP if metadata.icc_profile.is_none() => {
+                metadata.icc_profile = Some(chunk.data.to_vec());
+            },
+            FourCc::EXIF if metadata.exif.is_none() => metadata.exif = Some(chunk.data.to_vec()),
+            FourCc::XMP if metadata.xmp.is_none() => metadata.xmp = Some(chunk.data.to_vec()),
             _ => {},
         }
     }
@@ -322,9 +334,17 @@ pub fn read_container(input: &[u8], read_metadata: bool) -> Result<ContainerCont
             FourCc::VP8 if image.is_none() => image = Some(ImageChunk::Lossy(chunk.data)),
             FourCc::ALPH => alpha = Some(chunk.data),
             FourCc::ANIM | FourCc::ANMF => animated = true,
-            FourCc::ICCP if read_metadata => metadata.icc_profile = Some(chunk.data.to_vec()),
-            FourCc::EXIF if read_metadata => metadata.exif = Some(chunk.data.to_vec()),
-            FourCc::XMP if read_metadata => metadata.xmp = Some(chunk.data.to_vec()),
+            // First-wins, mirroring the `image.is_none()` guard: a duplicate chunk
+            // must not silently override the earlier one.
+            FourCc::ICCP if read_metadata && metadata.icc_profile.is_none() => {
+                metadata.icc_profile = Some(chunk.data.to_vec());
+            },
+            FourCc::EXIF if read_metadata && metadata.exif.is_none() => {
+                metadata.exif = Some(chunk.data.to_vec());
+            },
+            FourCc::XMP if read_metadata && metadata.xmp.is_none() => {
+                metadata.xmp = Some(chunk.data.to_vec());
+            },
             _ => {},
         }
     }

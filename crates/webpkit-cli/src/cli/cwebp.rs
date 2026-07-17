@@ -9,7 +9,7 @@
 
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
-use webpkit::Image;
+use webpkit::{AlphaFilterMode, AlphaMethod, Image, LossyTuning, Preset};
 
 use crate::{
     codec::EncodeMode,
@@ -25,49 +25,298 @@ use crate::{
     term,
 };
 
-/// Every flag `cwebp` recognizes, accepted or rejected — the search space for a
-/// did-you-mean suggestion, so a typo of a *rejected* flag still points home.
-const KNOWN_FLAGS: &[&str] = &[
-    "-o",
-    "-q",
-    "-m",
-    "-z",
-    "-lossless",
-    "-metadata",
-    "-quiet",
-    "-v",
-    "-color",
-    "-short",
-    "-progress",
-    "-exact",
-    "-noalpha",
-    "-low_memory",
-    "-noasm",
-    "-mt",
-    "-alpha_q",
-    "-alpha_method",
-    "-alpha_filter",
-    "-blend_alpha",
-    "-version",
-    "-near_lossless",
-    "-size",
-    "-psnr",
-    "-pass",
-    "-sns",
-    "-f",
-    "-sharpness",
-    "-segments",
-    "-partition_limit",
-    "-jpeg_like",
-    "-sharp_yuv",
-    "-hint",
-    "-af",
-    "-pre",
-    "-map",
-    "-crop",
-    "-resize",
-    "-preset",
+/// The `-h` help line for an [`Disposition::Active`] flag: a left-column usage and a
+/// right-column blurb, rendered by [`print_help`] from the one flag table.
+struct HelpEntry {
+    /// The flag and its value placeholder, e.g. `-q <float>`.
+    usage: &'static str,
+    /// A one-line description.
+    blurb: &'static str,
+}
+
+/// What the drop-in does with a recognized flag — the single source of truth that
+/// drives the parser's classification, the rejection diagnostics, the did-you-mean
+/// candidate set, and the generated `-h` help. Adding, moving, or retiring a flag is a
+/// one-line [`FLAGS`] edit that can never drift across those four concerns.
+enum Disposition {
+    /// Recognized and acted on by a parser arm below. `Some(help)` renders its `-h`
+    /// line; aliases and the specially-handled `-h`/`--help` carry `None`.
+    Active(Option<HelpEntry>),
+    /// Accepted for libwebp compatibility and ignored. `takes_value` skips its argument
+    /// so the following token is not mistaken for input.
+    CompatNoop {
+        /// Whether the flag consumes the next argument.
+        takes_value: bool,
+    },
+    /// Not supported; rejected with a tailored `cause` and `help` under a caret.
+    Rejected {
+        /// The one-line reason shown after the title.
+        cause: &'static str,
+        /// The `help:` lines pointing at a supported path.
+        help: &'static [&'static str],
+    },
+}
+
+/// One flag and its [`Disposition`].
+struct FlagSpec {
+    /// The flag spelling, including the leading dash.
+    name: &'static str,
+    /// What the parser does with it.
+    disposition: Disposition,
+}
+
+/// A helpful line, factored out so the two generic-tuning rejections share one text.
+const TUNE_HELP: &[&str] = &[
+    "the encoder is tuned through effort and quality only:",
+    "  cwebp -m <0-6> -q <0-100> <in> -o <out.webp>",
 ];
+
+/// Shorthand for an [`Disposition::Active`] flag with a rendered help line.
+const fn active(usage: &'static str, blurb: &'static str) -> Disposition {
+    Disposition::Active(Some(HelpEntry { usage, blurb }))
+}
+
+/// The single flag-disposition table. Order here is the order of the generated `-h`
+/// help; [`known_flags`], the rejection reasons, and the did-you-mean candidates all
+/// derive from it.
+const FLAGS: &[FlagSpec] = &[
+    FlagSpec {
+        name: "-o",
+        disposition: active("-o <file>", "output file (`-` for stdout)"),
+    },
+    FlagSpec {
+        name: "-q",
+        disposition: active(
+            "-q <float>",
+            "lossy quality 0-100 (default 75); effort in -lossless mode",
+        ),
+    },
+    FlagSpec {
+        name: "-m",
+        disposition: active("-m <int>", "method 0-6 (effort)"),
+    },
+    FlagSpec {
+        name: "-lossless",
+        disposition: active(
+            "-lossless",
+            "encode losslessly (VP8L) instead of lossy (VP8)",
+        ),
+    },
+    FlagSpec {
+        name: "-z",
+        disposition: active("-z <int>", "lossless level 0-9 (implies -lossless)"),
+    },
+    FlagSpec {
+        name: "-near_lossless",
+        disposition: active(
+            "-near_lossless <int>",
+            "near-lossless preprocessing 0-100, lower = stronger (implies -lossless)",
+        ),
+    },
+    FlagSpec {
+        name: "-metadata",
+        disposition: active("-metadata <list>", "all,none,icc,exif,xmp (default: all)"),
+    },
+    FlagSpec {
+        name: "-preset",
+        disposition: active(
+            "-preset <name>",
+            "content preset: default, photo, picture, drawing, icon, text (a tuning base)",
+        ),
+    },
+    FlagSpec {
+        name: "-crop",
+        disposition: active(
+            "-crop x y w h",
+            "crop before encoding (dimensions match libwebp; pixels differ)",
+        ),
+    },
+    FlagSpec {
+        name: "-resize",
+        disposition: active(
+            "-resize w h",
+            "resize before encoding (0 on one axis keeps aspect)",
+        ),
+    },
+    FlagSpec {
+        name: "-size",
+        disposition: active(
+            "-size <int>",
+            "target output size in bytes (searches lossy quality)",
+        ),
+    },
+    FlagSpec {
+        name: "-psnr",
+        disposition: active(
+            "-psnr <float>",
+            "target reconstruction PSNR floor in dB (lossy)",
+        ),
+    },
+    FlagSpec {
+        name: "-pass",
+        disposition: active(
+            "-pass <int>",
+            "number of entropy-refinement passes 1-10 (1 = single pass)",
+        ),
+    },
+    FlagSpec {
+        name: "-sns",
+        disposition: active("-sns <int>", "spatial noise shaping 0-100"),
+    },
+    FlagSpec {
+        name: "-f",
+        disposition: active("-f <int>", "in-loop filter strength 0-100"),
+    },
+    FlagSpec {
+        name: "-sharpness",
+        disposition: active("-sharpness <int>", "in-loop filter sharpness 0-7"),
+    },
+    FlagSpec {
+        name: "-segments",
+        disposition: active("-segments <int>", "number of quantizer segments 1-4"),
+    },
+    FlagSpec {
+        name: "-partition_limit",
+        disposition: active(
+            "-partition_limit <int>",
+            "first-partition rate cap 0-100 (0 = no limit)",
+        ),
+    },
+    FlagSpec {
+        name: "-jpeg_like",
+        disposition: active(
+            "-jpeg_like",
+            "bias quantization toward a JPEG-like size curve",
+        ),
+    },
+    FlagSpec {
+        name: "-sharp_yuv",
+        disposition: active("-sharp_yuv", "luminance-guided (sharp) chroma subsampling"),
+    },
+    FlagSpec {
+        name: "-exact",
+        disposition: active(
+            "-exact",
+            "preserve the RGB under fully-transparent pixels (the default)",
+        ),
+    },
+    FlagSpec {
+        name: "-alpha_q",
+        disposition: active(
+            "-alpha_q <int>",
+            "alpha quality 0-100 (100 = lossless, the default)",
+        ),
+    },
+    FlagSpec {
+        name: "-alpha_method",
+        disposition: active(
+            "-alpha_method <int>",
+            "alpha compression: 0 raw, 1 lossless (default)",
+        ),
+    },
+    FlagSpec {
+        name: "-alpha_filter",
+        disposition: active(
+            "-alpha_filter <str>",
+            "alpha filter: none, fast, or best (default)",
+        ),
+    },
+    FlagSpec {
+        name: "-noalpha",
+        disposition: active("-noalpha", "drop the alpha channel (encode opaque)"),
+    },
+    FlagSpec {
+        name: "-quiet",
+        disposition: active("-quiet", "suppress the status line"),
+    },
+    FlagSpec {
+        name: "-short",
+        disposition: active("-short", "concise output: print only the result size"),
+    },
+    FlagSpec {
+        name: "-progress",
+        disposition: active("-progress", "report encoding progress by stage"),
+    },
+    FlagSpec {
+        name: "-v",
+        disposition: active("-v", "verbose output (repeatable)"),
+    },
+    FlagSpec {
+        name: "-color",
+        disposition: active("-color <when>", "auto (default), always, or never"),
+    },
+    FlagSpec {
+        name: "-version",
+        disposition: active("-version", "print version"),
+    },
+    // Accepted for libwebp compatibility, ignored here.
+    FlagSpec {
+        name: "-low_memory",
+        disposition: Disposition::CompatNoop { takes_value: false },
+    },
+    FlagSpec {
+        name: "-noasm",
+        disposition: Disposition::CompatNoop { takes_value: false },
+    },
+    FlagSpec {
+        name: "-mt",
+        disposition: Disposition::CompatNoop { takes_value: false },
+    },
+    // The true residue of genuinely-unsupported flags.
+    FlagSpec {
+        name: "-blend_alpha",
+        disposition: Disposition::Rejected {
+            cause: "compositing the image onto a background color is a preprocessing step this \
+                    encoder does not model.",
+            help: &[
+                "flatten first with an image tool, or drop alpha entirely:",
+                "  cwebp -noalpha <in> -o <out.webp>",
+            ],
+        },
+    },
+    FlagSpec {
+        name: "-hint",
+        disposition: Disposition::Rejected {
+            cause: GENERIC_TUNE_CAUSE,
+            help: TUNE_HELP,
+        },
+    },
+    FlagSpec {
+        name: "-af",
+        disposition: Disposition::Rejected {
+            cause: GENERIC_TUNE_CAUSE,
+            help: TUNE_HELP,
+        },
+    },
+    FlagSpec {
+        name: "-pre",
+        disposition: Disposition::Rejected {
+            cause: GENERIC_TUNE_CAUSE,
+            help: TUNE_HELP,
+        },
+    },
+    FlagSpec {
+        name: "-map",
+        disposition: Disposition::Rejected {
+            cause: GENERIC_TUNE_CAUSE,
+            help: TUNE_HELP,
+        },
+    },
+];
+
+/// The shared cause for the internal-tuning-knob rejections.
+const GENERIC_TUNE_CAUSE: &str = "this is an internal encoder-tuning knob webpkit does not expose.";
+
+/// The [`FlagSpec`] for `name`, or `None` when the flag is unknown.
+fn spec(name: &str) -> Option<&'static FlagSpec> {
+    FLAGS.iter().find(|f| f.name == name)
+}
+
+/// Every flag the drop-in recognizes — the did-you-mean search space, so a typo of a
+/// *rejected* flag still points home. Derived from the one table.
+fn known_flags() -> Vec<&'static str> {
+    FLAGS.iter().map(|f| f.name).collect()
+}
 
 /// Parse `cwebp`-style arguments, encode, and return a process exit code.
 #[must_use]
@@ -85,6 +334,11 @@ pub(crate) fn main() -> ExitCode {
 
 /// A parsed `cwebp` invocation.
 #[derive(Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "a flat accumulator of independent cwebp boolean flags (lossless, noalpha, \
+              sharp_yuv, quiet); a state machine would obscure the one-flag-per-field map"
+)]
 struct Config {
     input: Option<PathBuf>,
     output: Option<PathBuf>,
@@ -107,6 +361,38 @@ struct Config {
     target_psnr: Option<f64>,
     /// `-noalpha`: drop the alpha channel (encode the image opaque).
     noalpha: bool,
+    /// `-sns N`: spatial-noise-shaping strength (`0..=100`).
+    sns: Option<u8>,
+    /// `-f N`: in-loop deblocking-filter strength (`0..=100`).
+    filter_strength: Option<u8>,
+    /// `-sharpness N`: in-loop deblocking-filter sharpness (`0..=7`).
+    filter_sharpness: Option<u8>,
+    /// `-segments N`: number of macroblock quantizer segments (`1..=4`).
+    segments: Option<u8>,
+    /// `-alpha_q N`: alpha-plane quality (`0..=100`; `100` = lossless).
+    alpha_q: Option<u8>,
+    /// `-alpha_method N`: alpha compression (`0` raw / `1` lossless).
+    alpha_method: Option<AlphaMethod>,
+    /// `-alpha_filter <none|fast|best>`: alpha spatial-filter search.
+    alpha_filter: Option<AlphaFilterMode>,
+    /// `-sharp_yuv`: use luminance-guided (sharp) chroma subsampling instead of the box
+    /// filter. Off by default, matching the byte-identical plain path.
+    sharp_yuv: bool,
+    /// `-preset <name>`: a content preset expanded into a base [`LossyTuning`] that the
+    /// explicit knobs above override.
+    preset: Option<Preset>,
+    /// `-exact`: preserve the RGB under fully-transparent pixels (webpkit's default).
+    exact: bool,
+    /// `-jpeg_like`: bias quantization toward a JPEG-like size curve.
+    jpeg_like: bool,
+    /// `-partition_limit N`: first-partition rate cap (`0..=100`; `0` = no limit).
+    partition_limit: Option<u8>,
+    /// `-pass N`: entropy-refinement pass count (`1..=10`; `1` = single pass).
+    pass: Option<u8>,
+    /// `-short`: collapse the status line to the essential result (output size).
+    short: bool,
+    /// `-progress`: report encoding progress by stage.
+    progress: bool,
     verbose: u8,
     quiet: bool,
 }
@@ -115,7 +401,7 @@ impl Config {
     /// The codec and knobs this invocation selects.
     ///
     /// Lossless maps `-m`/`-z`/`-q` onto the effort method; lossy takes its
-    /// quality from `-q` (default 75) and effort from `-m` (default Balanced).
+    /// quality from `-q` (default 75) and effort from `-m` (default auto).
     fn encode_mode(&self) -> EncodeMode {
         if self.lossless {
             EncodeMode::Lossless {
@@ -126,8 +412,56 @@ impl Config {
             EncodeMode::Lossy {
                 quality: effort::lossy_quality(self.quality.unwrap_or(75.0)),
                 method: effort::lossy_method(self.method),
+                tuning: self.tuning(),
             }
         }
+    }
+
+    /// The psychovisual [`LossyTuning`] this invocation selects: a `-preset` bundle (or
+    /// the near-best default) as the base, with each explicit `-sns`/`-f`/`-sharpness`/
+    /// `-segments`/alpha/RD knob applied on top (every setter validates its range). A
+    /// preset is only a base, so an explicit knob always wins over it.
+    fn tuning(&self) -> LossyTuning {
+        let mut tuning = self
+            .preset
+            .map_or_else(LossyTuning::default, Preset::tuning);
+        if let Some(sns) = self.sns {
+            tuning = tuning.with_sns_strength(sns);
+        }
+        if let Some(f) = self.filter_strength {
+            tuning = tuning.with_filter_strength(f);
+        }
+        if let Some(sharpness) = self.filter_sharpness {
+            tuning = tuning.with_filter_sharpness(sharpness);
+        }
+        if let Some(segments) = self.segments {
+            tuning = tuning.with_segments(segments);
+        }
+        if let Some(alpha_q) = self.alpha_q {
+            tuning = tuning.with_alpha_q(alpha_q);
+        }
+        if let Some(method) = self.alpha_method {
+            tuning = tuning.with_alpha_method(method);
+        }
+        if let Some(filter) = self.alpha_filter {
+            tuning = tuning.with_alpha_filter(filter);
+        }
+        if self.sharp_yuv {
+            tuning = tuning.with_sharp_yuv(true);
+        }
+        if self.exact {
+            tuning = tuning.with_exact(true);
+        }
+        if self.jpeg_like {
+            tuning = tuning.with_jpeg_like(true);
+        }
+        if let Some(limit) = self.partition_limit {
+            tuning = tuning.with_partition_limit(limit);
+        }
+        if let Some(pass) = self.pass {
+            tuning = tuning.with_pass(pass);
+        }
+        tuning
     }
 }
 
@@ -136,7 +470,8 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
         Parsed::Run(config) => config,
         Parsed::Handled => return Ok(()),
     };
-    let reporter = Reporter::new(config.verbose, config.quiet);
+    let reporter = Reporter::new(config.verbose, config.quiet)
+        .with_short_and_progress(config.short, config.progress);
     let mode = config.encode_mode();
     let input = config
         .input
@@ -147,6 +482,7 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
 
     let source = Source::from_arg(&input);
     let sink = Sink::from_arg(&output);
+    reporter.progress("reading");
     let bytes = source.read()?;
     let format = InputFormat::resolve(None, source.extension().as_deref(), &bytes);
     reject_raw_source(format, &source.label())?;
@@ -177,19 +513,26 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
     // A `-size`/`-psnr` target makes this a quality search; otherwise a single encode.
     let target = Target::from_flags(config.target_size, config.target_psnr);
     let strategy = Strategy::resolve(mode, false, false, target)?;
+    reporter.progress("encoding");
     let encoded = strategy.run(&image, &metadata)?;
+    reporter.progress("writing");
     sink.write(&encoded.bytes)?;
     if let Some(search) = encoded.search_line() {
         reporter.detail(&format!("search: {search}"));
     }
-    reporter.status(&format!(
-        "{} -> {} ({}x{}, {} bytes)",
-        source.label(),
-        sink.label(),
-        image.width(),
-        image.height(),
-        encoded.bytes.len(),
-    ));
+    // `-short`: just the essential result (the output size); otherwise the full line.
+    if reporter.is_short() {
+        reporter.status(&format!("{} bytes", encoded.bytes.len()));
+    } else {
+        reporter.status(&format!(
+            "{} -> {} ({}x{}, {} bytes)",
+            source.label(),
+            sink.label(),
+            image.width(),
+            image.height(),
+            encoded.bytes.len(),
+        ));
+    }
     Ok(())
 }
 
@@ -264,18 +607,60 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                 let height = value_u32(args, &mut index, "-resize")?;
                 config.resize = Some(Resize::new(width, height)?);
             },
-            // Rate control by CLI-side search over quality (lossy only).
+            // Rate control by a codec-native quality search (lossy only).
             "-size" => config.target_size = Some(value_u64(args, &mut index, "-size")?),
             "-psnr" => config.target_psnr = Some(parse_f64(&value(args, &mut index, "-psnr")?)?),
+            // `-pass N`: entropy-refinement pass count, mapped onto `LossyTuning::with_pass`
+            // (each pass sharpens the size estimate). `1` (the default) is byte-identical.
+            "-pass" => config.pass = Some(value_knob(args, &mut index, "-pass")?),
+            // Psychovisual tuning knobs, mapped onto the encoder's `LossyTuning`
+            // (each setter validates its own range).
+            "-sns" => config.sns = Some(value_knob(args, &mut index, "-sns")?),
+            "-f" => config.filter_strength = Some(value_knob(args, &mut index, "-f")?),
+            "-sharpness" => {
+                config.filter_sharpness = Some(value_knob(args, &mut index, "-sharpness")?);
+            },
+            "-segments" => config.segments = Some(value_knob(args, &mut index, "-segments")?),
+            // A content preset: expanded into a base `LossyTuning`, overridden by any
+            // explicit knob above. `default` (or no preset) is byte-identical.
+            "-preset" => config.preset = Some(parse_preset(&value(args, &mut index, "-preset")?)?),
+            // Luminance-guided chroma subsampling (a boolean flag), mapped onto
+            // `LossyTuning::with_sharp_yuv`. Off by default, so omitting it is byte-identical.
+            "-sharp_yuv" => config.sharp_yuv = true,
+            // `-exact` preserves the RGB under fully-transparent pixels — webpkit's
+            // default, so this states the guarantee. `-jpeg_like`/`-partition_limit`
+            // bias the base quantizer; both neutral by default (byte-identical).
+            "-exact" => config.exact = true,
+            "-jpeg_like" => config.jpeg_like = true,
+            "-partition_limit" => {
+                config.partition_limit = Some(value_knob(args, &mut index, "-partition_limit")?);
+            },
+            // Lossy-alpha knobs: `-alpha_q` drives the level-quantization pre-pass,
+            // `-alpha_method`/`-alpha_filter` bound the stored-plane search.
+            "-alpha_q" => config.alpha_q = Some(value_knob(args, &mut index, "-alpha_q")?),
+            "-alpha_method" => {
+                config.alpha_method = Some(parse_alpha_method(&value(
+                    args,
+                    &mut index,
+                    "-alpha_method",
+                )?)?);
+            },
+            "-alpha_filter" => {
+                config.alpha_filter = Some(parse_alpha_filter(&value(
+                    args,
+                    &mut index,
+                    "-alpha_filter",
+                )?)?);
+            },
             // Applied from a prescan in `main`, before parsing can fail; parsed again
             // here to consume the value and to reject a bad one by name.
             "-color" | "--color" => {
                 term::parse_choice(&value(args, &mut index, &token)?)?;
             },
             "-v" => config.verbose = config.verbose.saturating_add(1),
-            // Accepted for compatibility, a no-op here. `-exact` preserves the RGB of
-            // fully-transparent pixels — already this encoder's behavior.
-            "-short" | "-progress" | "-exact" | "-low_memory" | "-noasm" | "-mt" => {},
+            // Concise output / per-stage progress, both via the Reporter (stderr only).
+            "-short" => config.short = true,
+            "-progress" => config.progress = true,
             // Drop the alpha channel: make the image opaque before encoding.
             "-noalpha" => config.noalpha = true,
             "--" => {
@@ -284,106 +669,66 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                     config.input = Some(PathBuf::from(&args[index]));
                 }
             },
-            other if is_rejected(other) => return Err(reject(&rendered, index, other)),
-            other if other.starts_with('-') && other.len() > 1 => {
-                return Err(CliError::Rejected(Box::new(diag::unknown_flag(
-                    "cwebp",
-                    &rendered,
-                    index,
-                    other,
-                    KNOWN_FLAGS,
-                ))));
+            // Everything else is classified by the one flag table: a compat no-op is
+            // skipped (consuming its value if any), a rejected flag draws its caret and
+            // cause, and an unrecognized dash-flag draws a did-you-mean.
+            other => match spec(other).map(|f| &f.disposition) {
+                Some(Disposition::CompatNoop { takes_value }) => {
+                    if *takes_value {
+                        let _ = value_os(args, &mut index, other)?;
+                    }
+                },
+                Some(Disposition::Rejected { cause, help }) => {
+                    return Err(reject(&rendered, index, other, cause, help));
+                },
+                // An Active flag reaches here only if its parser arm above is missing —
+                // a drift the `active_flags_are_dispatched` test forbids; fall through to
+                // the did-you-mean so a caller still gets a caret, never a silent accept.
+                Some(Disposition::Active(_)) | None
+                    if other.starts_with('-') && other.chars().count() > 1 =>
+                {
+                    return Err(CliError::Rejected(Box::new(diag::unknown_flag(
+                        "cwebp",
+                        &rendered,
+                        index,
+                        other,
+                        &known_flags(),
+                    ))));
+                },
+                _ => config.input = Some(PathBuf::from(&args[index])),
             },
-            _ => config.input = Some(PathBuf::from(&args[index])),
         }
         index += 1;
     }
     Ok(Parsed::Run(Box::new(config)))
 }
 
-/// Internal encoder-tuning knobs this encoder does not implement. They are
-/// rejected (rather than silently ignored) so a caller is never misled into
-/// thinking an internal tuning parameter took effect. `-crop`/`-resize`/`-size`/
-/// `-psnr` are **not** here — they are now live (preprocessing and a quality
-/// search) rather than internal tuning.
-fn is_rejected(flag: &str) -> bool {
-    matches!(
-        flag,
-        "-pass"
-            | "-sns"
-            | "-f"
-            | "-sharpness"
-            | "-segments"
-            | "-partition_limit"
-            | "-jpeg_like"
-            | "-sharp_yuv"
-            | "-hint"
-            | "-af"
-            | "-pre"
-            | "-map"
-            | "-preset"
-            | "-alpha_q"
-            | "-alpha_method"
-            | "-alpha_filter"
-            | "-blend_alpha"
-    )
-}
-
-/// The tailored cause and help for one rejected flag. Different knobs want
-/// different answers, so the reason is per-flag rather than one flat sentence.
-struct Rejection {
-    cause: &'static str,
-    help: &'static [&'static str],
-}
-
-fn rejection_of(flag: &str) -> Rejection {
-    match flag {
-        "-preset" => Rejection {
-            cause: "a preset bundles the internal tuning knobs below, none of which webpkit \
-                    exposes.",
-            help: &[
-                "choose effort and quality directly:",
-                "  cwebp -m <0-6> -q <0-100> <in> -o <out.webp>",
-            ],
-        },
-        "-alpha_q" | "-alpha_method" | "-alpha_filter" => Rejection {
-            cause: "webpkit always stores alpha losslessly; there is no lossy-alpha \
-                    compression to tune, so this knob has nothing to change.",
-            help: &[
-                "alpha is preserved exactly; drop the flag.",
-                "to discard alpha entirely, use -noalpha.",
-            ],
-        },
-        "-blend_alpha" => Rejection {
-            cause: "compositing the image onto a background color is a preprocessing \
-                    step this encoder does not model.",
-            help: &[
-                "flatten first with an image tool, or drop alpha entirely:",
-                "  cwebp -noalpha <in> -o <out.webp>",
-            ],
-        },
-        _ => Rejection {
-            cause: "this is an internal encoder-tuning knob webpkit does not expose.",
-            help: &[
-                "the encoder is tuned through effort and quality only:",
-                "  cwebp -m <0-6> -q <0-100> <in> -o <out.webp>",
-            ],
-        },
-    }
-}
-
-/// Build the rejection diagnostic for `flag` at `index`, with a caret and its own
-/// cause and help.
-fn reject(args: &[String], index: usize, flag: &str) -> CliError {
-    let rejection = rejection_of(flag);
+/// Build the rejection diagnostic for `flag` at `index`, with a caret and the
+/// `cause`/`help` the flag table carries for it.
+fn reject(args: &[String], index: usize, flag: &str, cause: &str, help: &[&str]) -> CliError {
     let mut diag = Diagnostic::new(format!("`{flag}` is not supported by this encoder"))
-        .with_cause(rejection.cause)
-        .with_help(rejection.help.iter().copied())
+        .with_cause(cause)
+        .with_help(help.iter().copied())
         .with_note("other libwebp rate-control and preprocessing flags are rejected the same way");
     if let Some(span) = ArgvSpan::at_token("cwebp", args, index) {
         diag = diag.with_span(span);
     }
     CliError::Rejected(Box::new(diag))
+}
+
+/// Parse a `-preset` name into a [`Preset`] (libwebp's `WebPPreset` set).
+fn parse_preset(text: &str) -> Result<Preset, CliError> {
+    match text {
+        "default" => Ok(Preset::Default),
+        "photo" => Ok(Preset::Photo),
+        "picture" => Ok(Preset::Picture),
+        "drawing" => Ok(Preset::Drawing),
+        "icon" => Ok(Preset::Icon),
+        "text" => Ok(Preset::Text),
+        _ => Err(CliError::Usage(format!(
+            "`-preset` expects default, photo, picture, drawing, icon, or text, got `{text}`"
+        ))),
+    }
 }
 
 /// Drop the alpha channel: force every pixel opaque so the encoder omits alpha
@@ -443,6 +788,44 @@ fn value_u32(args: &[OsString], index: &mut usize, flag: &str) -> Result<u32, Cl
     })
 }
 
+/// The next argument parsed as a psychovisual-tuning knob (`-sns`/`-f`/`-sharpness`/
+/// `-segments`): a non-negative integer, saturating into `u8` (the [`LossyTuning`]
+/// setter re-validates it into the knob's own range).
+fn value_knob(args: &[OsString], index: &mut usize, flag: &str) -> Result<u8, CliError> {
+    let text = value(args, index, flag)?;
+    let n = parse_i64(&text)?;
+    u8::try_from(n.clamp(0, i64::from(u8::MAX))).map_err(|_| {
+        CliError::Usage(format!(
+            "`{flag}` expected a non-negative integer, got `{text}`"
+        ))
+    })
+}
+
+/// Parse a `-alpha_method` value: `0` stores the alpha plane raw, `1` compresses it
+/// losslessly (libwebp's two alpha methods).
+fn parse_alpha_method(text: &str) -> Result<AlphaMethod, CliError> {
+    match text {
+        "0" => Ok(AlphaMethod::None),
+        "1" => Ok(AlphaMethod::Compressed),
+        _ => Err(CliError::Usage(format!(
+            "`-alpha_method` expects 0 (raw) or 1 (lossless), got `{text}`"
+        ))),
+    }
+}
+
+/// Parse a `-alpha_filter` value: `none`, `fast`, or `best` (libwebp's alpha filter
+/// choices), selecting how many spatial predictors the alpha search trials.
+fn parse_alpha_filter(text: &str) -> Result<AlphaFilterMode, CliError> {
+    match text {
+        "none" => Ok(AlphaFilterMode::None),
+        "fast" => Ok(AlphaFilterMode::Fast),
+        "best" => Ok(AlphaFilterMode::Best),
+        _ => Err(CliError::Usage(format!(
+            "`-alpha_filter` expects none, fast, or best, got `{text}`"
+        ))),
+    }
+}
+
 /// The next argument parsed as a `u64` (a byte target).
 fn value_u64(args: &[OsString], index: &mut usize, flag: &str) -> Result<u64, CliError> {
     let text = value(args, index, flag)?;
@@ -470,28 +853,84 @@ fn parse_metadata(list: &str) -> Result<Vec<MetadataField>, CliError> {
         .collect()
 }
 
+/// The column width the flag usage is padded to before its blurb, sized to the
+/// widest usage the table renders.
+const HELP_USAGE_WIDTH: usize = 22;
+
+/// Render the `-h` help from the one flag table: the header, then one line per
+/// [`Disposition::Active`] flag that carries a [`HelpEntry`], in table order. Nothing
+/// to hand-maintain — a table edit reflows the help.
 fn print_help() {
-    crate::report::out(
+    let mut text = String::from(
         "cwebp (webpkit) — encode PNG/PPM/PAM to WebP (lossy by default)\n\n\
          Usage: cwebp [options] <input> -o <output.webp>\n\n\
-         Options:\n\
-         \x20 -o <file>        output file (`-` for stdout)\n\
-         \x20 -q <float>       lossy quality 0-100 (default 75); effort in -lossless mode\n\
-         \x20 -m <int>         method 0-6 (effort)\n\
-         \x20 -lossless        encode losslessly (VP8L) instead of lossy (VP8)\n\
-         \x20 -z <int>         lossless level 0-9 (implies -lossless)\n\
-         \x20 -near_lossless <int>  near-lossless preprocessing 0-100, lower = stronger (implies -lossless)\n\
-         \x20 -metadata <list> all,none,icc,exif,xmp (default: all)\n\
-         \x20 -crop x y w h    crop before encoding (dimensions match libwebp; pixels differ)\n\
-         \x20 -resize w h      resize before encoding (0 on one axis keeps aspect)\n\
-         \x20 -size <int>      target output size in bytes (searches lossy quality)\n\
-         \x20 -psnr <float>    target reconstruction PSNR floor in dB (lossy)\n\
-         \x20 -quiet / -v      quieter / more verbose\n\
-         \x20 -color <when>    auto (default), always, or never\n\
-         \x20 -version         print version\n",
+         Options:\n",
     );
+    for flag in FLAGS {
+        if let Disposition::Active(Some(entry)) = &flag.disposition {
+            text.push_str("  ");
+            text.push_str(entry.usage);
+            for _ in entry.usage.len()..HELP_USAGE_WIDTH {
+                text.push(' ');
+            }
+            text.push(' ');
+            text.push_str(entry.blurb);
+            text.push('\n');
+        }
+    }
+    crate::report::out(&text);
 }
 
 fn print_version() {
     crate::report::out(&format!("cwebp (webpkit) {}", env!("CARGO_PKG_VERSION")));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::{Disposition, FLAGS, parse};
+    use crate::error::CliError;
+
+    #[test]
+    fn flag_table_has_no_duplicate_names() {
+        let mut names: Vec<&str> = FLAGS.iter().map(|f| f.name).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "a flag appears twice in the table");
+    }
+
+    #[test]
+    fn active_flags_are_dispatched_not_reported_unknown() {
+        // Every `Active` flag must have a real parser arm: feeding it alone may fail for
+        // a missing value or input (`CliError::Usage`), but it must never be `Rejected`,
+        // which is what an Active flag missing from the dispatch match would produce (it
+        // would fall through to the did-you-mean). This ties the table to the arms so the
+        // two cannot drift.
+        for flag in FLAGS {
+            if !matches!(flag.disposition, Disposition::Active(_)) {
+                continue;
+            }
+            let args = [OsString::from(flag.name)];
+            assert!(
+                !matches!(parse(&args), Err(CliError::Rejected(_))),
+                "`{}` is Active but the parser routed it to a rejection/unknown",
+                flag.name
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_residue_is_exactly_the_true_unsupported_flags() {
+        // The rejected set is the true residue only: the genuinely-unsupported knobs.
+        // Everything the audit called out (`-preset`, `-jpeg_like`, `-partition_limit`,
+        // `-exact`) and P6b's rate control (`-size`/`-psnr`/`-pass`) is now Active.
+        let rejected: Vec<&str> = FLAGS
+            .iter()
+            .filter(|f| matches!(f.disposition, Disposition::Rejected { .. }))
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(rejected, ["-blend_alpha", "-hint", "-af", "-pre", "-map"]);
+    }
 }

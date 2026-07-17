@@ -9,6 +9,11 @@
 //! The dependency is optional: a default build pulls in no `image` crate and this
 //! module does not exist — the zero-dependency baseline is unchanged.
 
+// The `image` crate needs std; the `image` feature enables `std`, so this only
+// fires if that wiring is broken.
+#[cfg(all(feature = "image", not(feature = "std")))]
+compile_error!("the `image` feature requires `std` (enabled transitively via the feature)");
+
 use crate::error::{Error, Result};
 use crate::image::{Dimensions, Image, Metadata, PixelLayout, pack_pixels, unpack_pixels};
 

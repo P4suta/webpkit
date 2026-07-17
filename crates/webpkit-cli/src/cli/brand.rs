@@ -17,7 +17,10 @@ use std::{
 };
 
 use clap::{CommandFactory as _, Parser, Subcommand};
-use webpkit::{DEFAULT_MAX_PIXELS, DecodeOptions};
+use webpkit::{
+    AnimCodec, AnimationEncoder, AnimationMux, BlendMode, DEFAULT_MAX_PIXELS, DecodeOptions,
+    Dimensions, DisposalMode, Effort, FrameMeta, LossyParams, MuxFrame,
+};
 
 use crate::{
     bulk,
@@ -80,6 +83,8 @@ const SUBCOMMANDS: &[&str] = &[
     "decode",
     "encode",
     "convert",
+    "animate",
+    "mux",
     "info",
     "meta",
     "diff",
@@ -142,7 +147,7 @@ struct AutoArgs {
     /// Near-lossless preprocessing 0-100 (lower = stronger; implies lossless).
     #[arg(long, value_name = "N", conflicts_with = "lossy", value_parser = clap::value_parser!(u8).range(0..=100))]
     near_lossless: Option<u8>,
-    /// Encoder effort [default: balanced, or from env/config].
+    /// Encoder effort [default: auto, or from env/config].
     #[arg(short, long, value_enum)]
     method: Option<Method>,
     /// Metadata to embed: all,none,icc,exif,xmp (default: all).
@@ -210,6 +215,19 @@ enum Command {
     Encode(EncodeArgs),
     /// Batch-convert many images (or directories) to WebP, in parallel.
     Convert(ConvertArgs),
+    /// Assemble still images into an animated WebP (surpasses img2webp/gif2webp).
+    ///
+    /// Each input (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM) is decoded and added as one frame.
+    /// `--delay` sets the per-frame duration (one value for all, or a comma list),
+    /// `--loop` the loop count, and `--lossy Q` switches from the lossless default.
+    /// The canvas defaults to the largest frame, or set it with `--canvas WxH`.
+    Animate(AnimateArgs),
+    /// Edit an animated WebP without re-encoding frames (webpmux-parity muxing).
+    ///
+    /// Extract a frame, edit the loop count / background, or insert / remove /
+    /// replace frames — every untouched frame's encoded bytes pass through
+    /// byte-for-byte, and the ICC/Exif/XMP metadata is preserved.
+    Mux(MuxCmdArgs),
     /// Print a summary of a WebP file (size, alpha, metadata, animation).
     Info(InfoArgs),
     /// Read, set, or strip a WebP file's metadata (ICC/Exif/XMP), without
@@ -342,7 +360,7 @@ struct ConvertArgs {
     /// Output directory (created outputs are `<stem>.webp`); default: beside input.
     #[arg(short, long)]
     output: Option<PathBuf>,
-    /// Encoder effort (ignored with --optimize) [default: balanced, or from env/config].
+    /// Encoder effort (ignored with --optimize) [default: auto, or from env/config].
     #[arg(short, long, value_enum)]
     method: Option<Method>,
     /// Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless.
@@ -372,6 +390,204 @@ struct ConvertArgs {
     /// Skip an input whose `.webp` output exists (still exits 0).
     #[arg(long, conflicts_with = "force")]
     no_clobber: bool,
+}
+
+/// How a frame combines with the canvas underneath it (CLI mirror of
+/// [`BlendMode`]).
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+enum BlendArg {
+    /// Alpha-blend the frame over the canvas (the default).
+    #[default]
+    Blend,
+    /// Overwrite the frame's rectangle, ignoring what is underneath.
+    Overwrite,
+}
+
+impl From<BlendArg> for BlendMode {
+    fn from(blend: BlendArg) -> Self {
+        match blend {
+            BlendArg::Blend => Self::Blend,
+            BlendArg::Overwrite => Self::Overwrite,
+        }
+    }
+}
+
+/// What happens to a frame's rectangle after it is displayed (CLI mirror of
+/// [`DisposalMode`]).
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+enum DisposeArg {
+    /// Leave the canvas as-is for the next frame (the default).
+    #[default]
+    Keep,
+    /// Clear the frame's rectangle to transparent before the next frame.
+    Background,
+}
+
+impl From<DisposeArg> for DisposalMode {
+    fn from(dispose: DisposeArg) -> Self {
+        match dispose {
+            DisposeArg::Keep => Self::Keep,
+            DisposeArg::Background => Self::Background,
+        }
+    }
+}
+
+/// Arguments for `webp animate`.
+#[derive(Debug, clap::Args)]
+struct AnimateArgs {
+    /// Still images, one per frame, in display order (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM).
+    #[arg(required = true)]
+    inputs: Vec<PathBuf>,
+    /// Output `.webp` file; `-` writes stdout.
+    #[arg(short, long)]
+    output: PathBuf,
+    /// Per-frame delay in ms: one value for every frame, or a comma list (`40,40,80`).
+    #[arg(long, value_name = "MS", default_value = "100")]
+    delay: String,
+    /// Loop count; `0` (the default) loops forever.
+    #[arg(long = "loop", value_name = "N", default_value_t = 0)]
+    loop_count: u16,
+    /// Advisory background color as `RRGGBBAA` hex (e.g. `ffffffff`).
+    #[arg(long, value_name = "RRGGBBAA")]
+    bgcolor: Option<String>,
+    /// Disposal method applied to every frame.
+    #[arg(long, value_enum, default_value_t)]
+    dispose: DisposeArg,
+    /// Blend method applied to every frame.
+    #[arg(long, value_enum, default_value_t)]
+    blend: BlendArg,
+    /// Encode frames lossily (VP8) at this quality 0-100; the default is lossless.
+    #[arg(long, value_name = "Q")]
+    lossy: Option<u8>,
+    /// Canvas size as `WxH`; defaults to the largest frame.
+    #[arg(long, value_name = "WxH")]
+    canvas: Option<String>,
+    /// Encoder effort [default: auto, or from env/config].
+    #[arg(short, long, value_enum)]
+    method: Option<Method>,
+    /// Force the input format instead of sniffing each file.
+    #[arg(long, value_enum)]
+    input_format: Option<InputFormat>,
+    /// Inter-frame optimize: encode each frame as a minimal delta against the canvas.
+    ///
+    /// The optimizer derives each frame's rectangle, blend, and dispose itself so the
+    /// result composites pixel-identically to the full-frame animation, only smaller;
+    /// `--blend` and `--dispose` are therefore ignored under `--optimize`.
+    #[arg(long)]
+    optimize: bool,
+    /// With --optimize: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed).
+    #[arg(long, requires = "optimize")]
+    mixed: bool,
+    /// With --optimize: exhaustively search each frame's rect/blend/dispose/codec (gif2webp `-min_size`).
+    #[arg(long = "min-size", requires = "optimize")]
+    min_size: bool,
+    /// With --optimize: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first).
+    #[arg(long, value_name = "N", requires = "optimize")]
+    kmax: Option<u32>,
+    /// With --optimize: never place keyframes closer than N frames apart (gif2webp -kmin).
+    #[arg(long, value_name = "N", requires = "optimize")]
+    kmin: Option<u32>,
+}
+
+/// Arguments for `webp mux`.
+#[derive(Debug, clap::Args)]
+struct MuxCmdArgs {
+    #[command(subcommand)]
+    action: MuxAction,
+}
+
+/// A `webp mux` action: extract a frame, edit the header, or edit the frame list.
+#[derive(Debug, Subcommand)]
+enum MuxAction {
+    /// Extract one frame as a standalone still WebP (bytes copied verbatim).
+    GetFrame(MuxGetFrameArgs),
+    /// Rewrite the loop count and/or background color.
+    Set(MuxSetArgs),
+    /// Remove one frame, rebuilding the frame list.
+    Remove(MuxRemoveArgs),
+    /// Insert a still WebP as a new frame (its image bytes copied verbatim).
+    Insert(MuxInsertArgs),
+    /// Replace one frame's image with a still WebP, keeping its placement/timing.
+    Replace(MuxReplaceArgs),
+}
+
+/// Arguments for `webp mux get-frame`.
+#[derive(Debug, clap::Args)]
+struct MuxGetFrameArgs {
+    /// Input animated `.webp` file.
+    input: PathBuf,
+    /// 0-based frame index to extract.
+    index: u32,
+    /// Output `.webp` file; `-` writes stdout.
+    #[arg(short, long)]
+    output: PathBuf,
+}
+
+/// Arguments for `webp mux set`.
+#[derive(Debug, clap::Args)]
+struct MuxSetArgs {
+    /// Input animated `.webp` file.
+    input: PathBuf,
+    /// Output `.webp` file; `-` writes stdout.
+    #[arg(short, long)]
+    output: PathBuf,
+    /// New loop count (`0` loops forever).
+    #[arg(long = "loop", value_name = "N")]
+    loop_count: Option<u16>,
+    /// New background color as `RRGGBBAA` hex.
+    #[arg(long, value_name = "RRGGBBAA")]
+    bgcolor: Option<String>,
+}
+
+/// Arguments for `webp mux remove`.
+#[derive(Debug, clap::Args)]
+struct MuxRemoveArgs {
+    /// Input animated `.webp` file.
+    input: PathBuf,
+    /// 0-based frame index to remove.
+    index: u32,
+    /// Output `.webp` file; `-` writes stdout.
+    #[arg(short, long)]
+    output: PathBuf,
+}
+
+/// Arguments for `webp mux insert`.
+#[derive(Debug, clap::Args)]
+struct MuxInsertArgs {
+    /// Input animated `.webp` file.
+    input: PathBuf,
+    /// The still `.webp` to insert as a new frame.
+    frame: PathBuf,
+    /// Output `.webp` file; `-` writes stdout.
+    #[arg(short, long)]
+    output: PathBuf,
+    /// 0-based index to insert at; defaults to appending at the end.
+    #[arg(long, value_name = "N")]
+    at: Option<u32>,
+    /// The new frame's display duration in ms.
+    #[arg(long, value_name = "MS", default_value_t = 100)]
+    delay: u32,
+    /// The new frame's blend method.
+    #[arg(long, value_enum, default_value_t)]
+    blend: BlendArg,
+    /// The new frame's disposal method.
+    #[arg(long, value_enum, default_value_t)]
+    dispose: DisposeArg,
+}
+
+/// Arguments for `webp mux replace`.
+#[derive(Debug, clap::Args)]
+struct MuxReplaceArgs {
+    /// Input animated `.webp` file.
+    input: PathBuf,
+    /// The still `.webp` whose image replaces the frame.
+    frame: PathBuf,
+    /// Output `.webp` file; `-` writes stdout.
+    #[arg(short, long)]
+    output: PathBuf,
+    /// 0-based index of the frame to replace.
+    #[arg(long, value_name = "N")]
+    at: u32,
 }
 
 /// Arguments for `webp diff`.
@@ -499,6 +715,10 @@ struct DecodeArgs {
 
 /// Arguments for `webp encode`.
 #[derive(Debug, clap::Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "clap flag struct: each bool is an independent switch, not modeled state"
+)]
 struct EncodeArgs {
     /// Input image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw); `-` (default) reads stdin.
     #[arg(default_value = "-")]
@@ -518,7 +738,7 @@ struct EncodeArgs {
     /// Byte order for raw input only.
     #[arg(long, value_enum, default_value_t)]
     layout: Layout,
-    /// Encoder effort [default: balanced, or from env/config].
+    /// Encoder effort [default: auto, or from env/config].
     #[arg(short, long, value_enum)]
     method: Option<Method>,
     /// Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless.
@@ -551,6 +771,21 @@ struct EncodeArgs {
     /// Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp).
     #[arg(long, value_enum, value_delimiter = ',')]
     metadata: Vec<MetadataField>,
+    /// Inter-frame optimize a GIF animation: encode each frame as a minimal delta.
+    #[arg(long)]
+    optimize: bool,
+    /// With --optimize: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed).
+    #[arg(long, requires = "optimize")]
+    mixed: bool,
+    /// With --optimize: exhaustively search each frame's rect/blend/dispose/codec (gif2webp `-min_size`).
+    #[arg(long = "min-size", requires = "optimize")]
+    min_size: bool,
+    /// With --optimize: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first).
+    #[arg(long, value_name = "N", requires = "optimize")]
+    kmax: Option<u32>,
+    /// With --optimize: never place keyframes closer than N frames apart (gif2webp -kmin).
+    #[arg(long, value_name = "N", requires = "optimize")]
+    kmin: Option<u32>,
 }
 
 /// The codec flags this invocation passed, as [`codec::CodecFlags`].
@@ -789,6 +1024,8 @@ fn run(command: &Command, reporter: &Reporter) -> Result<ExitCode, CliError> {
         Command::Decode(args) => decode(args, reporter).map(|()| ok),
         Command::Encode(args) => encode(args, reporter).map(|()| ok),
         Command::Convert(args) => convert(args, reporter).map(|()| ok),
+        Command::Animate(args) => animate(args, reporter).map(|()| ok),
+        Command::Mux(args) => mux(args, reporter).map(|()| ok),
         Command::Info(args) => info(args, reporter).map(|()| ok),
         Command::Meta(args) => meta(args, reporter).map(|()| ok),
         Command::Diff(args) => diff_cmd(args, reporter),
@@ -979,7 +1216,12 @@ fn convert(args: &ConvertArgs, reporter: &Reporter) -> Result<(), CliError> {
         force: args.force,
         no_clobber: args.no_clobber,
     };
-    let outcome = bulk::convert(&args.inputs, &options)?;
+    // Live N/total progress as files complete (rayon), through the Reporter so it is
+    // TTY-aware and silent under `--quiet`.
+    let outcome = bulk::convert(&args.inputs, &options, |done, total| {
+        reporter.bulk_progress(done, total);
+    })?;
+    reporter.bulk_progress_finish();
     for (ok, text) in &outcome.lines {
         if *ok {
             reporter.detail(text);
@@ -1161,7 +1403,14 @@ fn auto_encode(
     let pipeline = pipeline_of(args.crop.as_deref(), args.resize.as_deref())?;
 
     let produced = if pipeline.is_empty() {
-        let encoded = codec::encode_input(bytes, format, mode, selection, true)?;
+        let encoded = codec::encode_input(
+            bytes,
+            format,
+            mode,
+            selection,
+            true,
+            codec::AnimOptimize::default(),
+        )?;
         Produced {
             bytes: encoded.bytes,
             width: encoded.width,
@@ -1378,6 +1627,30 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
     )?;
     let flags = flags_of(&settings, target.is_some(), args.near_lossless);
     let (mode, derived) = codec::resolve_mode(format, flags)?;
+    // The inter-frame optimizer applies only to the GIF animation path; a still
+    // (crop/resize/size-target, raw pixels, or a non-GIF input) has no frames to
+    // diff, so `--optimize` there is a usage error rather than a silent no-op.
+    let optimize = codec::AnimOptimize {
+        enabled: args.optimize,
+        mixed: args.mixed,
+        min_size: args.min_size,
+        kmax: args.kmax.unwrap_or(0),
+        kmin: args.kmin.unwrap_or(0),
+    };
+    if optimize.enabled
+        && (format != InputFormat::Gif
+            || target.is_some()
+            || args.crop.is_some()
+            || args.resize.is_some()
+            || args.width.is_some()
+            || args.height.is_some())
+    {
+        return Err(CliError::Usage(
+            "`--optimize` optimizes an animated GIF; it needs a GIF input and cannot \
+             combine with --crop/--resize/--target-size or raw dimensions"
+                .to_owned(),
+        ));
+    }
     if reporter.is_dry_run() {
         report::plan(&format!(
             "{} -> {} ({})",
@@ -1415,7 +1688,7 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
         let image = pipeline.apply(format::read_image(&bytes, format, None)?)?;
         run_still(strategy, &image, selection, format)?
     } else {
-        let e = codec::encode_input(&bytes, format, mode, selection, true)?;
+        let e = codec::encode_input(&bytes, format, mode, selection, true, optimize)?;
         Produced {
             bytes: e.bytes,
             width: e.width,
@@ -1512,12 +1785,46 @@ fn info_lines(report: &inspect::Report) -> Vec<String> {
         lines.push(format!("Loop:       {}", loop_line(anim.loop_count)));
         lines.push(format!("Frames:     {}", anim.frames));
         lines.push(format!("Duration:   {} ms", anim.duration_ms));
+        lines.push(format!("Background: {}", bgcolor_line(anim.background)));
     } else {
         lines.push(format!("Dimensions: {}x{}", report.width, report.height));
     }
     lines.push(format!("Alpha:      {}", yes_no(report.alpha)));
     lines.push(format!("Metadata:   {}", metadata_line(report.metadata)));
+    for line in frame_lines(&report.frames) {
+        lines.push(line);
+    }
     lines
+}
+
+/// The per-frame table for an animation: one line per frame with its placement,
+/// timing, and compositing methods. Empty (no lines) for a still.
+fn frame_lines(frames: &[inspect::FrameInfo]) -> Vec<String> {
+    frames
+        .iter()
+        .map(|frame| {
+            format!(
+                "  frame {}: {}x{} at {},{}, {} ms, {}, {}, {}",
+                frame.index,
+                frame.width,
+                frame.height,
+                frame.x,
+                frame.y,
+                frame.duration_ms,
+                frame.blend,
+                frame.dispose,
+                frame.codec,
+            )
+        })
+        .collect()
+}
+
+/// Format an RGBA background color as `#RRGGBBAA`.
+fn bgcolor_line(rgba: [u8; 4]) -> String {
+    format!(
+        "#{:02X}{:02X}{:02X}{:02X}",
+        rgba[0], rgba[1], rgba[2], rgba[3]
+    )
 }
 
 /// `webpinfo`-style chunk dump, shown under `-v`.
@@ -1680,6 +1987,405 @@ fn write_meta(
 /// Read a whole file into memory to use as a metadata field's value.
 fn read_field(path: &Path) -> Result<Vec<u8>, CliError> {
     Source::File(path.to_path_buf()).read()
+}
+
+/// Assemble still images into an animated WebP.
+///
+/// Each input is decoded through the same readers `encode` uses and added as one
+/// frame at offset `0,0`; the canvas defaults to the largest frame. `--delay`,
+/// `--loop`, `--bgcolor`, `--blend`, `--dispose`, and `--lossy` shape the timing
+/// and codec.
+fn animate(args: &AnimateArgs, reporter: &Reporter) -> Result<(), CliError> {
+    if args.inputs.is_empty() {
+        return Err(CliError::Usage(
+            "`animate` needs at least one input image".to_owned(),
+        ));
+    }
+    let mut images = Vec::with_capacity(args.inputs.len());
+    for input in &args.inputs {
+        let bytes = Source::File(input.clone()).read()?;
+        let format = InputFormat::resolve(
+            args.input_format,
+            io::extension_of(input).as_deref(),
+            &bytes,
+        );
+        reporter.detail(&format!("adding frame {format:?} {}", input.display()));
+        images.push(format::read_image(&bytes, format, None)?);
+    }
+    let canvas = match &args.canvas {
+        Some(spec) => parse_canvas(spec)?,
+        None => canvas_of(&images)?,
+    };
+    let delays = parse_delays(&args.delay, images.len())?;
+    let sink = Sink::from_arg(&args.output);
+
+    if reporter.is_dry_run() {
+        report::plan(&format!(
+            "animate {} frame(s) -> {} ({}x{})",
+            images.len(),
+            sink.label(),
+            canvas.width(),
+            canvas.height(),
+        ));
+        return Ok(());
+    }
+
+    let codec = args
+        .lossy
+        .map_or(AnimCodec::Lossless, |quality| AnimCodec::Lossy {
+            params: LossyParams::new(quality),
+        });
+    let effort = Effort::from(args.method.unwrap_or_default());
+
+    if args.optimize {
+        let bytes = animate_optimized(args, &images, canvas, &delays, codec, effort)?;
+        sink.write(&bytes)?;
+        reporter.status(&format!(
+            "optimized {} frame(s) -> {} ({}x{}, {} bytes, {})",
+            images.len(),
+            sink.label(),
+            canvas.width(),
+            canvas.height(),
+            bytes.len(),
+            if args.lossy.is_some() {
+                "lossy"
+            } else {
+                "lossless"
+            },
+        ));
+        return Ok(());
+    }
+
+    let blend = BlendMode::from(args.blend);
+    let dispose = DisposalMode::from(args.dispose);
+
+    let metas: Vec<FrameMeta> = images
+        .iter()
+        .zip(&delays)
+        .map(|(image, &delay)| FrameMeta::new(0, 0, image.dimensions(), delay, blend, dispose))
+        .collect();
+
+    let base = AnimationEncoder::new(canvas)
+        .loop_count(args.loop_count)
+        .effort(effort)
+        .codec(codec);
+    let base = match &args.bgcolor {
+        Some(hex) => base.background(parse_rgba(hex)?),
+        None => base,
+    };
+
+    let mut frames = images.iter().zip(&metas);
+    let Some((first_image, first_meta)) = frames.next() else {
+        return Err(CliError::Usage(
+            "`animate` needs at least one input image".to_owned(),
+        ));
+    };
+    let mut encoder = base.add_frame(first_image.as_image_ref(), *first_meta)?;
+    for (image, meta) in frames {
+        encoder = encoder.add_frame(image.as_image_ref(), *meta)?;
+    }
+    let bytes = encoder.finish();
+    sink.write(&bytes)?;
+    reporter.status(&format!(
+        "assembled {} frame(s) -> {} ({}x{}, {} bytes, {})",
+        images.len(),
+        sink.label(),
+        canvas.width(),
+        canvas.height(),
+        bytes.len(),
+        if args.lossy.is_some() {
+            "lossy"
+        } else {
+            "lossless"
+        },
+    ));
+    Ok(())
+}
+
+/// Assemble the frames through the inter-frame optimizer, which derives each frame's
+/// minimal delta rectangle, blend, dispose, and codec while reproducing every frame
+/// exactly. Each source frame is padded to the canvas (the origin, rest transparent)
+/// so the optimizer sees the full-frame the animation must reproduce.
+///
+/// The `-mixed` / `-min_size` lossy trial uses `--lossy`'s quality when given, else a
+/// neutral default — the quality gif2webp trials with.
+fn animate_optimized(
+    args: &AnimateArgs,
+    images: &[webpkit::Image],
+    canvas: Dimensions,
+    delays: &[u32],
+    codec: AnimCodec,
+    effort: Effort,
+) -> Result<Vec<u8>, CliError> {
+    use webpkit::{AnimationOptimizer, ImageRef};
+
+    let lossy_params = match codec {
+        AnimCodec::Lossy { params } => params,
+        _ => LossyParams::new(75),
+    };
+    let base = AnimationOptimizer::new(canvas)
+        .loop_count(args.loop_count)
+        .effort(effort)
+        .codec(codec)
+        .lossy_params(lossy_params)
+        .mixed(args.mixed)
+        .min_size(args.min_size)
+        .keyframe_interval(args.kmin.unwrap_or(0), args.kmax.unwrap_or(0));
+    let base = match &args.bgcolor {
+        Some(hex) => base.background(parse_rgba(hex)?),
+        None => base,
+    };
+
+    let mut frames = images.iter().zip(delays);
+    let Some((first, &first_delay)) = frames.next() else {
+        return Err(CliError::Usage(
+            "`animate` needs at least one input image".to_owned(),
+        ));
+    };
+    let first_buf = pad_to_canvas(first, canvas);
+    let first_ref = ImageRef::new(canvas, first.layout(), &first_buf)?;
+    let mut opt = base.add_frame(first_ref, first_delay)?;
+    for (image, &delay) in frames {
+        let buf = pad_to_canvas(image, canvas);
+        let frame_ref = ImageRef::new(canvas, image.layout(), &buf)?;
+        opt = opt.add_frame(frame_ref, delay)?;
+    }
+    Ok(opt.optimize()?)
+}
+
+/// Place `image` at the origin of a canvas-sized buffer in the image's own layout,
+/// the rest left transparent. An all-zero pixel reads as fully transparent in every
+/// [`webpkit::PixelLayout`], so the padding contributes nothing to the composite.
+fn pad_to_canvas(image: &webpkit::Image, canvas: Dimensions) -> Vec<u8> {
+    let src = image.as_bytes();
+    let (cw, ch) = (canvas.width() as usize, canvas.height() as usize);
+    let (iw, ih) = (image.width() as usize, image.height() as usize);
+    if iw == cw && ih == ch {
+        return src.to_vec();
+    }
+    let mut out = vec![0u8; cw * ch * 4];
+    let row_bytes = iw.min(cw) * 4;
+    for row in 0..ih.min(ch) {
+        let (s, d) = (row * iw * 4, row * cw * 4);
+        out[d..d + row_bytes].copy_from_slice(&src[s..s + row_bytes]);
+    }
+    out
+}
+
+/// The smallest canvas that holds every frame at offset `0,0`: the max width and
+/// max height across the images.
+fn canvas_of(images: &[webpkit::Image]) -> Result<Dimensions, CliError> {
+    let width = images.iter().map(webpkit::Image::width).max().unwrap_or(1);
+    let height = images.iter().map(webpkit::Image::height).max().unwrap_or(1);
+    Dimensions::new(width, height).map_err(CliError::from)
+}
+
+/// Parse a `WxH` canvas size into validated [`Dimensions`].
+fn parse_canvas(spec: &str) -> Result<Dimensions, CliError> {
+    let bad = || CliError::Usage(format!("`{spec}` is not a WxH canvas size"));
+    let (w, h) = spec.split_once(['x', 'X']).ok_or_else(bad)?;
+    let parse = |s: &str| s.trim().parse::<u32>().map_err(|_| bad());
+    Dimensions::new(parse(w)?, parse(h)?).map_err(CliError::from)
+}
+
+/// Parse `--delay`: one millisecond value applied to every frame, or a comma list
+/// whose length must equal the frame count.
+fn parse_delays(spec: &str, count: usize) -> Result<Vec<u32>, CliError> {
+    let parse = |s: &str| {
+        s.trim().parse::<u32>().map_err(|_| {
+            CliError::Usage(format!("`--delay` expects a millisecond count, got `{s}`"))
+        })
+    };
+    if spec.contains(',') {
+        let list: Vec<u32> = spec.split(',').map(parse).collect::<Result<_, _>>()?;
+        if list.len() != count {
+            return Err(CliError::Usage(format!(
+                "`--delay` has {} value(s) but there are {count} frame(s)",
+                list.len(),
+            )));
+        }
+        Ok(list)
+    } else {
+        Ok(vec![parse(spec)?; count])
+    }
+}
+
+/// Parse an `RRGGBBAA` (optionally `#`-prefixed) hex color into RGBA bytes.
+fn parse_rgba(spec: &str) -> Result<[u8; 4], CliError> {
+    let bad = || CliError::Usage(format!("`{spec}` is not an RRGGBBAA hex color"));
+    let hex = spec.strip_prefix('#').unwrap_or(spec);
+    if hex.len() != 8 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(bad());
+    }
+    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| bad());
+    Ok([byte(0)?, byte(2)?, byte(4)?, byte(6)?])
+}
+
+/// Edit an animated WebP without re-encoding frames — the webpmux muxing half.
+fn mux(args: &MuxCmdArgs, reporter: &Reporter) -> Result<(), CliError> {
+    match &args.action {
+        MuxAction::GetFrame(args) => mux_get_frame(args, reporter),
+        MuxAction::Set(args) => mux_set(args, reporter),
+        MuxAction::Remove(args) => mux_remove(args, reporter),
+        MuxAction::Insert(args) => mux_insert(args, reporter),
+        MuxAction::Replace(args) => mux_replace(args, reporter),
+    }
+}
+
+/// Extract one frame as a standalone still WebP.
+fn mux_get_frame(args: &MuxGetFrameArgs, reporter: &Reporter) -> Result<(), CliError> {
+    let source = Source::from_arg(&args.input);
+    let bytes = source.read()?;
+    let anim = AnimationMux::read(&bytes)?;
+    let index = args.index as usize;
+    let frame = anim.frame_as_webp(index).ok_or_else(|| {
+        CliError::Usage(format!(
+            "frame {index} is out of range (the animation has {} frame(s))",
+            anim.frame_count(),
+        ))
+    })?;
+    write_muxed(
+        &frame,
+        &source,
+        &args.output,
+        reporter,
+        &format!("frame {index}"),
+    )
+}
+
+/// Rewrite the loop count and/or background color.
+fn mux_set(args: &MuxSetArgs, reporter: &Reporter) -> Result<(), CliError> {
+    if args.loop_count.is_none() && args.bgcolor.is_none() {
+        return Err(CliError::Usage(
+            "`mux set` needs --loop and/or --bgcolor".to_owned(),
+        ));
+    }
+    let source = Source::from_arg(&args.input);
+    let bytes = source.read()?;
+    let mut anim = AnimationMux::read(&bytes)?;
+    if let Some(loop_count) = args.loop_count {
+        anim.set_loop_count(loop_count);
+    }
+    if let Some(hex) = &args.bgcolor {
+        anim.set_background(parse_rgba(hex)?);
+    }
+    write_muxed(
+        &anim.finish(),
+        &source,
+        &args.output,
+        reporter,
+        "header edit",
+    )
+}
+
+/// Remove one frame.
+fn mux_remove(args: &MuxRemoveArgs, reporter: &Reporter) -> Result<(), CliError> {
+    let source = Source::from_arg(&args.input);
+    let bytes = source.read()?;
+    let mut anim = AnimationMux::read(&bytes)?;
+    let index = args.index as usize;
+    if anim.remove_frame(index).is_none() {
+        return Err(CliError::Usage(format!(
+            "frame {index} is out of range (the animation has {} frame(s))",
+            anim.frame_count(),
+        )));
+    }
+    write_muxed(
+        &anim.finish(),
+        &source,
+        &args.output,
+        reporter,
+        &format!("removed frame {index}"),
+    )
+}
+
+/// Insert a still WebP as a new frame.
+fn mux_insert(args: &MuxInsertArgs, reporter: &Reporter) -> Result<(), CliError> {
+    let source = Source::from_arg(&args.input);
+    let bytes = source.read()?;
+    let mut anim = AnimationMux::read(&bytes)?;
+    let at = args.at.map_or_else(|| anim.frame_count(), |n| n as usize);
+    if at > anim.frame_count() {
+        return Err(CliError::Usage(format!(
+            "`--at {at}` is out of range (the animation has {} frame(s))",
+            anim.frame_count(),
+        )));
+    }
+    let frame_bytes = Source::File(args.frame.clone()).read()?;
+    let frame = MuxFrame::from_webp_still(
+        &frame_bytes,
+        0,
+        0,
+        args.delay,
+        BlendMode::from(args.blend),
+        DisposalMode::from(args.dispose),
+    )?;
+    anim.insert_frame(at, frame)?;
+    write_muxed(
+        &anim.finish(),
+        &source,
+        &args.output,
+        reporter,
+        &format!("inserted frame at {at}"),
+    )
+}
+
+/// Replace one frame's image, keeping its placement, timing, and compositing.
+fn mux_replace(args: &MuxReplaceArgs, reporter: &Reporter) -> Result<(), CliError> {
+    let source = Source::from_arg(&args.input);
+    let bytes = source.read()?;
+    let mut anim = AnimationMux::read(&bytes)?;
+    let at = args.at as usize;
+    let old = anim.frames().get(at).ok_or_else(|| {
+        CliError::Usage(format!(
+            "frame {at} is out of range (the animation has {} frame(s))",
+            anim.frame_count(),
+        ))
+    })?;
+    let (x, y, duration, blend, dispose) = (
+        old.x(),
+        old.y(),
+        old.duration_ms(),
+        old.blend(),
+        old.dispose(),
+    );
+    let frame_bytes = Source::File(args.frame.clone()).read()?;
+    let frame = MuxFrame::from_webp_still(&frame_bytes, x, y, duration, blend, dispose)?;
+    anim.replace_frame(at, frame)?;
+    write_muxed(
+        &anim.finish(),
+        &source,
+        &args.output,
+        reporter,
+        &format!("replaced frame {at}"),
+    )
+}
+
+/// Write a muxed result, honoring `--dry-run` and reporting the edit.
+fn write_muxed(
+    bytes: &[u8],
+    source: &Source,
+    output: &Path,
+    reporter: &Reporter,
+    what: &str,
+) -> Result<(), CliError> {
+    let sink = Sink::from_arg(output);
+    if reporter.is_dry_run() {
+        report::plan(&format!(
+            "mux {what}: {} -> {}",
+            source.label(),
+            sink.label()
+        ));
+        return Ok(());
+    }
+    sink.write(bytes)?;
+    reporter.status(&format!(
+        "{what}: {} -> {} ({} bytes)",
+        source.label(),
+        sink.label(),
+        bytes.len(),
+    ));
+    Ok(())
 }
 
 #[cfg(test)]

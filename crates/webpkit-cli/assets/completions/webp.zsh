@@ -24,12 +24,12 @@ never\:"Never style"))' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects lossy]:QUALITY:_default' \
 '(--lossy)--near-lossless=[Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)]:N:_default' \
-'-m+[Encoder effort \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
-balanced\:"Balanced (the default)\: LZ77 + color cache"
-best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
-'--method=[Encoder effort \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
-balanced\:"Balanced (the default)\: LZ77 + color cache"
-best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
+'-m+[Encoder effort \[default\: auto, or from env/config\]]:METHOD:((auto\:"Adapt the search depth to the image'\''s content and size (the default)"
+fast\:"Fastest\: the shallowest fixed search"
+best\:"Smallest\: the deepest fixed search"))' \
+'--method=[Encoder effort \[default\: auto, or from env/config\]]:METHOD:((auto\:"Adapt the search depth to the image'\''s content and size (the default)"
+fast\:"Fastest\: the shallowest fixed search"
+best\:"Smallest\: the deepest fixed search"))' \
 '*--metadata=[Metadata to embed\: all,none,icc,exif,xmp (default\: all)]:METADATA:((all\:"Keep ICC, Exif, and XMP"
 none\:"Strip everything (a bare \`VP8L\` output)"
 icc\:"Keep the ICC color profile"
@@ -112,12 +112,12 @@ raw\:"Raw row-major pixels; requires \`--width\`/\`--height\`/\`--layout\`"))' \
 '--layout=[Byte order for raw input only]:LAYOUT:((rgba8\:"\`R, G, B, A\`"
 argb8\:"\`A, R, G, B\`"
 bgra8\:"\`B, G, R, A\`"))' \
-'-m+[Encoder effort \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
-balanced\:"Balanced (the default)\: LZ77 + color cache"
-best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
-'--method=[Encoder effort \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
-balanced\:"Balanced (the default)\: LZ77 + color cache"
-best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
+'-m+[Encoder effort \[default\: auto, or from env/config\]]:METHOD:((auto\:"Adapt the search depth to the image'\''s content and size (the default)"
+fast\:"Fastest\: the shallowest fixed search"
+best\:"Smallest\: the deepest fixed search"))' \
+'--method=[Encoder effort \[default\: auto, or from env/config\]]:METHOD:((auto\:"Adapt the search depth to the image'\''s content and size (the default)"
+fast\:"Fastest\: the shallowest fixed search"
+best\:"Smallest\: the deepest fixed search"))' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '(--lossy)--near-lossless=[Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)]:N:_default' \
@@ -130,12 +130,17 @@ none\:"Strip everything (a bare \`VP8L\` output)"
 icc\:"Keep the ICC color profile"
 exif\:"Keep Exif"
 xmp\:"Keep XMP"))' \
+'--kmax=[With --optimize\: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first)]:N:_default' \
+'--kmin=[With --optimize\: never place keyframes closer than N frames apart (gif2webp -kmin)]:N:_default' \
 '--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
 always\:"Style even when the stream is redirected"
 never\:"Never style"))' \
 '--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
 '(--lossy)--lossless[Force lossless (VP8L). The default is source-derived\: JPEG → lossy, else lossless]' \
 '--lossy[Encode lossily (VP8) instead of losslessly (VP8L)]' \
+'--optimize[Inter-frame optimize a GIF animation\: encode each frame as a minimal delta]' \
+'--mixed[With --optimize\: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed)]' \
+'--min-size[With --optimize\: exhaustively search each frame'\''s rect/blend/dispose/codec (gif2webp \`-min_size\`)]' \
 '*-v[Print per-stage detail on stderr]' \
 '*--verbose[Print per-stage detail on stderr]' \
 '(-v --verbose)--quiet[Suppress all non-error output]' \
@@ -149,12 +154,12 @@ never\:"Never style"))' \
 _arguments "${_arguments_options[@]}" : \
 '-o+[Output directory (created outputs are \`<stem>.webp\`); default\: beside input]:OUTPUT:_files' \
 '--output=[Output directory (created outputs are \`<stem>.webp\`); default\: beside input]:OUTPUT:_files' \
-'-m+[Encoder effort (ignored with --optimize) \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
-balanced\:"Balanced (the default)\: LZ77 + color cache"
-best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
-'--method=[Encoder effort (ignored with --optimize) \[default\: balanced, or from env/config\]]:METHOD:((fast\:"Fastest\: literal + subtract-green only"
-balanced\:"Balanced (the default)\: LZ77 + color cache"
-best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
+'-m+[Encoder effort (ignored with --optimize) \[default\: auto, or from env/config\]]:METHOD:((auto\:"Adapt the search depth to the image'\''s content and size (the default)"
+fast\:"Fastest\: the shallowest fixed search"
+best\:"Smallest\: the deepest fixed search"))' \
+'--method=[Encoder effort (ignored with --optimize) \[default\: auto, or from env/config\]]:METHOD:((auto\:"Adapt the search depth to the image'\''s content and size (the default)"
+fast\:"Fastest\: the shallowest fixed search"
+best\:"Smallest\: the deepest fixed search"))' \
 '-q+[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '--quality=[Lossy quality 0-100 (higher = larger, closer to source); selects --lossy]:QUALITY:_default' \
 '(--lossy)--near-lossless=[Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)]:N:_default' \
@@ -182,6 +187,215 @@ never\:"Never style"))' \
 '--help[Print help (see more with '\''--help'\'')]' \
 '*::inputs -- Input images and/or directories (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM):_files' \
 && ret=0
+;;
+(animate)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--output=[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--delay=[Per-frame delay in ms\: one value for every frame, or a comma list (\`40,40,80\`)]:MS:_default' \
+'--loop=[Loop count; \`0\` (the default) loops forever]:N:_default' \
+'--bgcolor=[Advisory background color as \`RRGGBBAA\` hex (e.g. \`ffffffff\`)]:RRGGBBAA:_default' \
+'--dispose=[Disposal method applied to every frame]:DISPOSE:((keep\:"Leave the canvas as-is for the next frame (the default)"
+background\:"Clear the frame'\''s rectangle to transparent before the next frame"))' \
+'--blend=[Blend method applied to every frame]:BLEND:((blend\:"Alpha-blend the frame over the canvas (the default)"
+overwrite\:"Overwrite the frame'\''s rectangle, ignoring what is underneath"))' \
+'--lossy=[Encode frames lossily (VP8) at this quality 0-100; the default is lossless]:Q:_default' \
+'--canvas=[Canvas size as \`WxH\`; defaults to the largest frame]:WxH:_default' \
+'-m+[Encoder effort \[default\: auto, or from env/config\]]:METHOD:((auto\:"Adapt the search depth to the image'\''s content and size (the default)"
+fast\:"Fastest\: the shallowest fixed search"
+best\:"Smallest\: the deepest fixed search"))' \
+'--method=[Encoder effort \[default\: auto, or from env/config\]]:METHOD:((auto\:"Adapt the search depth to the image'\''s content and size (the default)"
+fast\:"Fastest\: the shallowest fixed search"
+best\:"Smallest\: the deepest fixed search"))' \
+'--input-format=[Force the input format instead of sniffing each file]:INPUT_FORMAT:((png\:"PNG (any color type; normalized to RGBA8)"
+ppm\:"Netpbm binary PPM (\`P6\`, RGB)"
+pam\:"Netpbm binary PAM (\`P7\`, RGBA)"
+jpeg\:"JPEG (decoded to RGBA8; needs the \`formats\` feature)"
+gif\:"GIF (first frame as a still; whole-file animation is a separate path)"
+tiff\:"TIFF (decoded to RGBA8; needs the \`formats\` feature)"
+bmp\:"BMP (decoded to RGBA8; needs the \`formats\` feature)"
+raw\:"Raw row-major pixels; requires \`--width\`/\`--height\`/\`--layout\`"))' \
+'--kmax=[With --optimize\: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first)]:N:_default' \
+'--kmin=[With --optimize\: never place keyframes closer than N frames apart (gif2webp -kmin)]:N:_default' \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'--optimize[Inter-frame optimize\: encode each frame as a minimal delta against the canvas]' \
+'--mixed[With --optimize\: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed)]' \
+'--min-size[With --optimize\: exhaustively search each frame'\''s rect/blend/dispose/codec (gif2webp \`-min_size\`)]' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+'*::inputs -- Still images, one per frame, in display order (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM):_files' \
+&& ret=0
+;;
+(mux)
+_arguments "${_arguments_options[@]}" : \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+":: :_webp__subcmd__mux_commands" \
+"*::: :->mux" \
+&& ret=0
+
+    case $state in
+    (mux)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:webp-mux-command-$line[1]:"
+        case $line[1] in
+            (get-frame)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--output=[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':input -- Input animated `.webp` file:_files' \
+':index -- 0-based frame index to extract:_default' \
+&& ret=0
+;;
+(set)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--output=[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--loop=[New loop count (\`0\` loops forever)]:N:_default' \
+'--bgcolor=[New background color as \`RRGGBBAA\` hex]:RRGGBBAA:_default' \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':input -- Input animated `.webp` file:_files' \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--output=[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':input -- Input animated `.webp` file:_files' \
+':index -- 0-based frame index to remove:_default' \
+&& ret=0
+;;
+(insert)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--output=[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--at=[0-based index to insert at; defaults to appending at the end]:N:_default' \
+'--delay=[The new frame'\''s display duration in ms]:MS:_default' \
+'--blend=[The new frame'\''s blend method]:BLEND:((blend\:"Alpha-blend the frame over the canvas (the default)"
+overwrite\:"Overwrite the frame'\''s rectangle, ignoring what is underneath"))' \
+'--dispose=[The new frame'\''s disposal method]:DISPOSE:((keep\:"Leave the canvas as-is for the next frame (the default)"
+background\:"Clear the frame'\''s rectangle to transparent before the next frame"))' \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':input -- Input animated `.webp` file:_files' \
+':frame -- The still `.webp` to insert as a new frame:_files' \
+&& ret=0
+;;
+(replace)
+_arguments "${_arguments_options[@]}" : \
+'-o+[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--output=[Output \`.webp\` file; \`-\` writes stdout]:OUTPUT:_files' \
+'--at=[0-based index of the frame to replace]:N:_default' \
+'--color=[auto, always, or never \[default\: auto, or from env/config\]]:WHEN:((auto\:"Style only when the stream is a terminal that wants it (the default)"
+always\:"Style even when the stream is redirected"
+never\:"Never style"))' \
+'--threads=[Worker threads for parallel work; 0 (the default) uses one per core]:N:_default' \
+'*-v[Print per-stage detail on stderr]' \
+'*--verbose[Print per-stage detail on stderr]' \
+'(-v --verbose)--quiet[Suppress all non-error output]' \
+'--dry-run[Report what would be written, without encoding or writing anything]' \
+'-h[Print help (see more with '\''--help'\'')]' \
+'--help[Print help (see more with '\''--help'\'')]' \
+':input -- Input animated `.webp` file:_files' \
+':frame -- The still `.webp` whose image replaces the frame:_files' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_webp__subcmd__mux__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:webp-mux-help-command-$line[1]:"
+        case $line[1] in
+            (get-frame)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(insert)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(replace)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
 ;;
 (info)
 _arguments "${_arguments_options[@]}" : \
@@ -345,9 +559,9 @@ never\:"Never style"))' \
 (config)
 _arguments "${_arguments_options[@]}" : \
 '--quality=[Override\: lossy quality 0-100]:0-100:_default' \
-'--effort=[Override\: encoder effort]:EFFORT:((fast\:"Fastest\: literal + subtract-green only"
-balanced\:"Balanced (the default)\: LZ77 + color cache"
-best\:"Smallest\: adds Tier 3 forward transforms and meta-Huffman on top of Balanced"))' \
+'--effort=[Override\: encoder effort]:EFFORT:((auto\:"Adapt the search depth to the image'\''s content and size (the default)"
+fast\:"Fastest\: the shallowest fixed search"
+best\:"Smallest\: the deepest fixed search"))' \
 '--codec=[Override\: lossless or lossy]:CODEC:((lossless\:"Lossless (VP8L)"
 lossy\:"Lossy (VP8)"))' \
 '*--metadata=[Override\: metadata to carry (all,none,icc,exif,xmp)]:METADATA:((all\:"Keep ICC, Exif, and XMP"
@@ -489,6 +703,46 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(animate)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(mux)
+_arguments "${_arguments_options[@]}" : \
+":: :_webp__subcmd__help__subcmd__mux_commands" \
+"*::: :->mux" \
+&& ret=0
+
+    case $state in
+    (mux)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:webp-help-mux-command-$line[1]:"
+        case $line[1] in
+            (get-frame)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(remove)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(insert)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(replace)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (info)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -580,6 +834,8 @@ _webp_commands() {
 'decode:Decode a WebP file to PNG (default), PPM/PAM, or raw pixels' \
 'encode:Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
+'animate:Assemble still images into an animated WebP (surpasses img2webp/gif2webp)' \
+'mux:Edit an animated WebP without re-encoding frames (webpmux-parity muxing)' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
 'meta:Read, set, or strip a WebP file'\''s metadata (ICC/Exif/XMP), without re-encoding the image' \
 'diff:Compare two images\: report PSNR and the largest per-channel difference' \
@@ -591,6 +847,11 @@ _webp_commands() {
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'webp commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__animate_commands] )) ||
+_webp__subcmd__animate_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp animate commands' commands "$@"
 }
 (( $+functions[_webp__subcmd__completions_commands] )) ||
 _webp__subcmd__completions_commands() {
@@ -664,6 +925,8 @@ _webp__subcmd__help_commands() {
 'decode:Decode a WebP file to PNG (default), PPM/PAM, or raw pixels' \
 'encode:Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file' \
 'convert:Batch-convert many images (or directories) to WebP, in parallel' \
+'animate:Assemble still images into an animated WebP (surpasses img2webp/gif2webp)' \
+'mux:Edit an animated WebP without re-encoding frames (webpmux-parity muxing)' \
 'info:Print a summary of a WebP file (size, alpha, metadata, animation)' \
 'meta:Read, set, or strip a WebP file'\''s metadata (ICC/Exif/XMP), without re-encoding the image' \
 'diff:Compare two images\: report PSNR and the largest per-channel difference' \
@@ -675,6 +938,11 @@ _webp__subcmd__help_commands() {
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'webp help commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__animate_commands] )) ||
+_webp__subcmd__help__subcmd__animate_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help animate commands' commands "$@"
 }
 (( $+functions[_webp__subcmd__help__subcmd__completions_commands] )) ||
 _webp__subcmd__help__subcmd__completions_commands() {
@@ -762,6 +1030,42 @@ _webp__subcmd__help__subcmd__meta__subcmd__strip_commands() {
     local commands; commands=()
     _describe -t commands 'webp help meta strip commands' commands "$@"
 }
+(( $+functions[_webp__subcmd__help__subcmd__mux_commands] )) ||
+_webp__subcmd__help__subcmd__mux_commands() {
+    local commands; commands=(
+'get-frame:Extract one frame as a standalone still WebP (bytes copied verbatim)' \
+'set:Rewrite the loop count and/or background color' \
+'remove:Remove one frame, rebuilding the frame list' \
+'insert:Insert a still WebP as a new frame (its image bytes copied verbatim)' \
+'replace:Replace one frame'\''s image with a still WebP, keeping its placement/timing' \
+    )
+    _describe -t commands 'webp help mux commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__mux__subcmd__get-frame_commands] )) ||
+_webp__subcmd__help__subcmd__mux__subcmd__get-frame_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help mux get-frame commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__mux__subcmd__insert_commands] )) ||
+_webp__subcmd__help__subcmd__mux__subcmd__insert_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help mux insert commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__mux__subcmd__remove_commands] )) ||
+_webp__subcmd__help__subcmd__mux__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help mux remove commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__mux__subcmd__replace_commands] )) ||
+_webp__subcmd__help__subcmd__mux__subcmd__replace_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help mux replace commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__help__subcmd__mux__subcmd__set_commands] )) ||
+_webp__subcmd__help__subcmd__mux__subcmd__set_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp help mux set commands' commands "$@"
+}
 (( $+functions[_webp__subcmd__info_commands] )) ||
 _webp__subcmd__info_commands() {
     local commands; commands=()
@@ -826,6 +1130,85 @@ _webp__subcmd__meta__subcmd__show_commands() {
 _webp__subcmd__meta__subcmd__strip_commands() {
     local commands; commands=()
     _describe -t commands 'webp meta strip commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux_commands] )) ||
+_webp__subcmd__mux_commands() {
+    local commands; commands=(
+'get-frame:Extract one frame as a standalone still WebP (bytes copied verbatim)' \
+'set:Rewrite the loop count and/or background color' \
+'remove:Remove one frame, rebuilding the frame list' \
+'insert:Insert a still WebP as a new frame (its image bytes copied verbatim)' \
+'replace:Replace one frame'\''s image with a still WebP, keeping its placement/timing' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'webp mux commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__get-frame_commands] )) ||
+_webp__subcmd__mux__subcmd__get-frame_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux get-frame commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__help_commands] )) ||
+_webp__subcmd__mux__subcmd__help_commands() {
+    local commands; commands=(
+'get-frame:Extract one frame as a standalone still WebP (bytes copied verbatim)' \
+'set:Rewrite the loop count and/or background color' \
+'remove:Remove one frame, rebuilding the frame list' \
+'insert:Insert a still WebP as a new frame (its image bytes copied verbatim)' \
+'replace:Replace one frame'\''s image with a still WebP, keeping its placement/timing' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'webp mux help commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__help__subcmd__get-frame_commands] )) ||
+_webp__subcmd__mux__subcmd__help__subcmd__get-frame_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux help get-frame commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__help__subcmd__help_commands] )) ||
+_webp__subcmd__mux__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux help help commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__help__subcmd__insert_commands] )) ||
+_webp__subcmd__mux__subcmd__help__subcmd__insert_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux help insert commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__help__subcmd__remove_commands] )) ||
+_webp__subcmd__mux__subcmd__help__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux help remove commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__help__subcmd__replace_commands] )) ||
+_webp__subcmd__mux__subcmd__help__subcmd__replace_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux help replace commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__help__subcmd__set_commands] )) ||
+_webp__subcmd__mux__subcmd__help__subcmd__set_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux help set commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__insert_commands] )) ||
+_webp__subcmd__mux__subcmd__insert_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux insert commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__remove_commands] )) ||
+_webp__subcmd__mux__subcmd__remove_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux remove commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__replace_commands] )) ||
+_webp__subcmd__mux__subcmd__replace_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux replace commands' commands "$@"
+}
+(( $+functions[_webp__subcmd__mux__subcmd__set_commands] )) ||
+_webp__subcmd__mux__subcmd__set_commands() {
+    local commands; commands=()
+    _describe -t commands 'webp mux set commands' commands "$@"
 }
 
 if [ "$funcstack[1]" = "_webp" ]; then

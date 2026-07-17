@@ -31,6 +31,10 @@ pub(crate) enum Level {
 pub(crate) struct Reporter {
     level: Level,
     dry_run: bool,
+    /// `-short`: collapse the status line to its essential result (the output size).
+    short: bool,
+    /// `-progress`: emit a coarse per-stage progress line during the operation.
+    progress: bool,
 }
 
 impl Reporter {
@@ -47,6 +51,8 @@ impl Reporter {
         Self {
             level,
             dry_run: false,
+            short: false,
+            progress: false,
         }
     }
 
@@ -58,13 +64,29 @@ impl Reporter {
         self
     }
 
+    /// Enable `-short` (a concise, result-only status line) and `-progress` (coarse
+    /// per-stage progress). Both are silent under `--quiet`.
+    #[must_use]
+    pub(crate) const fn with_short_and_progress(mut self, short: bool, progress: bool) -> Self {
+        self.short = short;
+        self.progress = progress;
+        self
+    }
+
     /// Whether this is a dry run — no encoding, no writing, just the plan.
     #[must_use]
     pub(crate) const fn is_dry_run(&self) -> bool {
         self.dry_run
     }
 
-    /// A one-line summary, shown at [`Level::Normal`] and above.
+    /// Whether `-short` collapsed the status to its essential result.
+    #[must_use]
+    pub(crate) const fn is_short(&self) -> bool {
+        self.short
+    }
+
+    /// A one-line summary, shown at [`Level::Normal`] and above. Under `-short` the
+    /// caller passes the collapsed form here instead.
     pub(crate) fn status(&self, message: &str) {
         if self.level != Level::Quiet {
             line(message);
@@ -77,6 +99,60 @@ impl Reporter {
             line(message);
         }
     }
+
+    /// A coarse progress line (`-progress`): the named `stage` of the current
+    /// operation. Shown only when `-progress` is set and output is not silenced, so
+    /// the default run prints nothing new. It goes to stderr like every status line,
+    /// so a `-o -` pipe on stdout is never disturbed.
+    pub(crate) fn progress(&self, stage: &str) {
+        if self.progress && self.level != Level::Quiet {
+            line(&format!("[{stage}]"));
+        }
+    }
+
+    /// A live `done/total` counter during a bulk conversion, emitted as each file
+    /// completes. Shown only at [`Level::Normal`] (at [`Level::Verbose`] the per-file
+    /// detail lines already narrate it; [`Level::Quiet`] silences it).
+    ///
+    /// On a terminal it rewrites one line in place with a carriage return and a small
+    /// bar; off a terminal (a redirected stderr) that would litter the stream, so it
+    /// falls back to a periodic full line — roughly ten updates plus the final one —
+    /// and never uses a carriage return.
+    pub(crate) fn bulk_progress(&self, done: usize, total: usize) {
+        if self.level != Level::Normal || total == 0 {
+            return;
+        }
+        if term::stderr_is_terminal() {
+            counter(&bulk_bar(done, total));
+        } else {
+            let step = (total / 10).max(1);
+            if done == total || done.is_multiple_of(step) {
+                line(&format!("converting {done}/{total}"));
+            }
+        }
+    }
+
+    /// Finish the in-place bulk counter by moving off its line (a no-op off a
+    /// terminal, where the counter printed full lines already). Call once after the
+    /// bulk run before the summary line.
+    pub(crate) fn bulk_progress_finish(&self) {
+        if self.level == Level::Normal && term::stderr_is_terminal() {
+            line("");
+        }
+    }
+}
+
+/// A compact `[####----] done/total` progress bar for the live bulk counter.
+fn bulk_bar(done: usize, total: usize) -> String {
+    const WIDTH: usize = 20;
+    let filled = (done * WIDTH).checked_div(total).unwrap_or(0);
+    let mut bar = String::with_capacity(WIDTH + 24);
+    bar.push_str("converting [");
+    for i in 0..WIDTH {
+        bar.push(if i < filled { '#' } else { '-' });
+    }
+    let _ = write!(bar, "] {done}/{total}");
+    bar
 }
 
 /// Render a diagnostic to stderr, rustc-style: an `error:` headline, an optional
@@ -187,6 +263,23 @@ fn labeled(style: Style, label: &str, message: &str) {
 fn line(message: &str) {
     use anstream::eprintln;
     eprintln!("{message}");
+}
+
+/// Rewrite the current stderr line in place: a leading carriage return, the
+/// `message`, and a flush — no newline, so the next call overwrites it. Terminal-only
+/// (the caller gates on [`term::stderr_is_terminal`]); a `\r` on a redirected stream
+/// would corrupt it.
+#[allow(
+    clippy::print_stderr,
+    reason = "this module is the CLI's one stderr writer; anstream::eprint shadows \
+              the std macro, so the lint fires here and only here"
+)]
+fn counter(message: &str) {
+    use std::io::Write as _;
+
+    use anstream::eprint;
+    eprint!("\r{message}");
+    let _ = anstream::stderr().flush();
 }
 
 /// Print a pre-assembled multi-line block to stderr.

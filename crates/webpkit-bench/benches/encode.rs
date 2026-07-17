@@ -1,10 +1,11 @@
 //! Criterion throughput benchmarks for the `lossless` VP8L encoder.
 //!
 //! One `encode` group sweeps the shared [`webpkit_samples`] matrix (every
-//! [`Content`] archetype x [`SIZES`]) crossed with the effort [`Effort`]s. `Fast`
-//! exercises the literal + subtract-green path; `Balanced` runs the full Tier2
-//! LZ77 + color-cache cost model; `Best` additionally searches the Tier3
-//! forward-transform families (predictor / cross-color / palette). Throughput is
+//! [`Content`] archetype x [`SIZES`]) crossed with three representative efforts:
+//! the fastest fixed level (`l0`), the adaptive default (`auto`), and the deepest
+//! search (`l9`). Every effort now runs the forward-transform families (predictor /
+//! cross-color / palette / subtract-green); the deeper the level, the wider the
+//! tile / cross-color / optimal-parse sweep. Throughput is
 //! reported in **input MB/s** via
 //! `Throughput::Bytes(edge * edge * 4)` (a method-independent basis: the raw RGBA
 //! byte count the encoder consumes), and each [`ImageRef`] is built **once** per
@@ -42,9 +43,9 @@ use webpkit_samples::{Content, SIZES, render};
 /// The effort methods timed, with their stable id fragment. `Best` is filtered by
 /// size below; `Fast`/`Balanced` run at every edge.
 const METHODS: [(&str, Effort); 3] = [
-    ("fast", Effort::Fast),
-    ("balanced", Effort::Balanced),
-    ("best", Effort::Best),
+    ("l0", Effort::level(0)),
+    ("auto", Effort::AUTO),
+    ("l9", Effort::level(9)),
 ];
 
 fn encode_benchmark(c: &mut Criterion) {
@@ -65,7 +66,7 @@ fn encode_benchmark(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(u64::from(edge) * u64::from(edge) * 4));
             for (name, method) in METHODS {
                 // Best's Tier3 search at 512 is too slow to iterate; cap it.
-                if method == Effort::Best && edge > 256 {
+                if method == Effort::level(9) && edge > 256 {
                     continue;
                 }
                 let config = EncoderConfig::new().with_effort(method);

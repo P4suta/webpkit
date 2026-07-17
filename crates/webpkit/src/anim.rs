@@ -111,7 +111,8 @@ impl CompositedFrame {
 /// A lazy iterator over an animation's frames.
 ///
 /// Each [`Iterator::next`] locates the next `ANMF` chunk and decodes only that
-/// frame's `VP8L` payload, so frames are decoded on demand. The whole file is
+/// frame's payload (`VP8L`, or lossy `VP8` + `ALPH`, via the injected
+/// [`FrameDecoder`]), so frames are decoded on demand. The whole file is
 /// held (borrowed for `decode_frames`, owned for `Decoder::into_frames`)
 /// via [`Cow`], but no frame's pixels are decoded until requested.
 #[derive(Clone, Debug)]
@@ -242,7 +243,7 @@ impl<'a, D: FrameDecoder + Clone> Frames<'a, D> {
         }
     }
 
-    /// Decode the next `ANMF` frame into its header, the VP8L declared-alpha bit,
+    /// Decode the next `ANMF` frame into its header, the frame's declared-alpha bit,
     /// and native-ARGB pixels, advancing the cursor past it. Skips any interleaved
     /// metadata/unknown chunks.
     fn next_raw(&mut self) -> Option<Result<(AnmfHeader, bool, Vec<u32>)>> {
@@ -421,6 +422,15 @@ impl Compositor {
         }
     }
 
+    /// The persistent canvas as native ARGB (`0xAARRGGBB`), reflecting every frame
+    /// painted so far *including* the last one's deferred disposal — i.e. the exact
+    /// state the next frame composites onto. The animation optimizer reads this to
+    /// diff each source frame against the true canvas the decoder would see.
+    #[must_use]
+    pub(crate) fn canvas_argb(&self) -> &[u32] {
+        &self.canvas
+    }
+
     /// Composite one frame onto the canvas and snapshot it, then defer this
     /// frame's disposal. Mirrors `WebPAnimDecoderGetNext`.
     ///
@@ -442,10 +452,11 @@ impl Compositor {
         }
         // The decoded frame buffer must be exactly `w * h` long — every per-row
         // slice below indexes `argb` on that assumption. Enforce it here so a short
-        // (or oversized) buffer from *any* `FrameDecoder` — the trait is public, so
-        // a caller can supply their own — is a clean error rather than an
-        // out-of-bounds panic in the row loop. The built-in decoders already reject
-        // a dimension mismatch upstream; this makes the compositor safe on its own.
+        // (or oversized) buffer from any of the crate's own `FrameDecoder`s
+        // (`WebpFrameDecoder`/`Vp8lFrameDecoder`, plus the in-crate test decoders)
+        // is a clean error rather than an out-of-bounds panic in the row loop. The
+        // built-in decoders already reject a dimension mismatch upstream; this makes
+        // the compositor safe on its own.
         if argb.len() as u64 != header.dims.pixel_count() {
             return Err(Error::InvalidContainer);
         }

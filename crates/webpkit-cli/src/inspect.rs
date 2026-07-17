@@ -73,6 +73,31 @@ pub(crate) struct AnimationInfo {
     pub(crate) loop_count: u16,
     /// Sum of every frame's duration.
     pub(crate) duration_ms: u32,
+    /// The advisory background color as RGBA bytes (from the `ANIM` chunk).
+    pub(crate) background: [u8; 4],
+}
+
+/// One animation frame's header facts, read without decoding a pixel.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct FrameInfo {
+    /// 0-based frame index.
+    pub(crate) index: usize,
+    /// Frame X offset in canvas pixels.
+    pub(crate) x: u32,
+    /// Frame Y offset in canvas pixels.
+    pub(crate) y: u32,
+    /// Frame width.
+    pub(crate) width: u32,
+    /// Frame height.
+    pub(crate) height: u32,
+    /// Display duration in milliseconds.
+    pub(crate) duration_ms: u32,
+    /// `blend` or `overwrite`.
+    pub(crate) blend: &'static str,
+    /// `keep` or `background`.
+    pub(crate) dispose: &'static str,
+    /// `lossless` or `lossy`.
+    pub(crate) codec: &'static str,
 }
 
 /// Everything `webp info` knows about a file.
@@ -98,6 +123,8 @@ pub(crate) struct Report {
     pub(crate) metadata: MetadataInfo,
     /// Animation facts, or `null` for a still.
     pub(crate) animation: Option<AnimationInfo>,
+    /// Per-frame header facts (empty for a still, or when a frame walk fails).
+    pub(crate) frames: Vec<FrameInfo>,
     /// Every chunk, in file order.
     pub(crate) chunks: Vec<ChunkInfo>,
 }
@@ -117,7 +144,7 @@ pub(crate) fn report(bytes: &[u8], label: String) -> Result<Report, CliError> {
     let animated = chunk_list.iter().any(|c| c.fourcc == "ANIM");
 
     Ok(Report {
-        schema: 1,
+        schema: 2,
         path: label,
         bytes: bytes.len(),
         container: container_of(&chunk_list, animated),
@@ -127,6 +154,11 @@ pub(crate) fn report(bytes: &[u8], label: String) -> Result<Report, CliError> {
         alpha: info.has_alpha,
         metadata: metadata_of(&chunk_list),
         animation: animated.then(|| animation_of(bytes)).flatten(),
+        frames: if animated {
+            frame_table(bytes)
+        } else {
+            Vec::new()
+        },
         chunks: chunk_list,
     })
 }
@@ -244,5 +276,41 @@ fn animation_of(bytes: &[u8]) -> Option<AnimationInfo> {
         frames: anim.frame_count,
         loop_count: anim.loop_count,
         duration_ms: anim.total_duration_ms,
+        background: anim.background_rgba,
     })
+}
+
+/// The per-frame header table (index, offset, size, duration, blend, dispose,
+/// codec), read via a header-only demux. Best-effort: an unreadable container
+/// yields an empty table rather than failing the whole report, and a truncated
+/// animation lists the frames that survive — the same tolerance `info` gives every
+/// other line.
+fn frame_table(bytes: &[u8]) -> Vec<FrameInfo> {
+    let Ok(mux) = webpkit::AnimationMux::read(bytes) else {
+        return Vec::new();
+    };
+    mux.frames()
+        .iter()
+        .enumerate()
+        .map(|(index, frame)| FrameInfo {
+            index,
+            x: frame.x(),
+            y: frame.y(),
+            width: frame.dimensions().width(),
+            height: frame.dimensions().height(),
+            duration_ms: frame.duration_ms(),
+            blend: match frame.blend() {
+                webpkit::BlendMode::Blend => "blend",
+                webpkit::BlendMode::Overwrite => "overwrite",
+            },
+            dispose: match frame.dispose() {
+                webpkit::DisposalMode::Keep => "keep",
+                webpkit::DisposalMode::Background => "background",
+            },
+            codec: match frame.codec() {
+                webpkit::Codec::Lossless => "lossless",
+                webpkit::Codec::Lossy => "lossy",
+            },
+        })
+        .collect()
 }

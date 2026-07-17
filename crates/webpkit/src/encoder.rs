@@ -17,7 +17,7 @@ use crate::container::writer::{push_chunk, riff_envelope};
 use crate::image;
 use crate::lossless::EncoderConfig;
 use crate::lossless::encoder::encode_payload;
-use crate::lossy::{LossyConfig, Quality};
+use crate::lossy::{LossyConfig, LossyParams, LossyTuning, Quality};
 use crate::{
     BlendMode, Dimensions, DisposalMode, Effort, Error, FrameMeta, Image, ImageRef, Metadata,
     MetadataPolicy, PixelLayout, Result,
@@ -57,11 +57,14 @@ pub struct Encoder<C> {
     /// Only consulted by the lossless terminal; the type-state hides its setter on
     /// the lossy builder (near-lossless is a VP8L-only preprocessing step).
     near_lossless: Option<u8>,
+    /// Only consulted by the lossy terminal; the type-state hides its setter on the
+    /// lossless builder (the psychovisual knobs are VP8-only).
+    tuning: LossyTuning,
     _codec: PhantomData<C>,
 }
 
 impl<C: sealed::Codec> Encoder<C> {
-    /// The shared default: [`Effort::Balanced`], no metadata override, the default
+    /// The shared default: [`Effort::AUTO`], no metadata override, the default
     /// [`MetadataPolicy`], and (for lossy) [`Quality`]'s default.
     fn new() -> Self {
         Self {
@@ -70,6 +73,7 @@ impl<C: sealed::Codec> Encoder<C> {
             policy: MetadataPolicy::default(),
             quality: Quality::default(),
             near_lossless: None,
+            tuning: LossyTuning::new(),
             _codec: PhantomData,
         }
     }
@@ -101,7 +105,7 @@ impl<C: sealed::Codec> Encoder<C> {
 }
 
 impl Encoder<Lossless> {
-    /// Start a lossless (`VP8L`) encoder at [`Effort::Balanced`].
+    /// Start a lossless (`VP8L`) encoder at [`Effort::AUTO`].
     #[must_use]
     pub fn lossless() -> Self {
         Self::new()
@@ -180,7 +184,7 @@ impl Encoder<Lossless> {
 }
 
 impl Encoder<Lossy> {
-    /// Start a lossy (`VP8 `) encoder at [`Effort::Balanced`] and the default quality.
+    /// Start a lossy (`VP8 `) encoder at [`Effort::AUTO`] and the default quality.
     #[must_use]
     pub fn lossy() -> Self {
         Self::new()
@@ -197,6 +201,32 @@ impl Encoder<Lossy> {
     #[must_use]
     pub const fn quality(mut self, quality: u8) -> Self {
         self.quality = Quality::new(quality);
+        self
+    }
+
+    /// Set the psychovisual [`LossyTuning`] knobs (SNS strength, segment count, filter
+    /// strength/sharpness). **Lossy only** — this method does not exist on the
+    /// lossless builder. Defaults to [`LossyTuning::default`], the near-best
+    /// `cwebp`-parity baseline.
+    ///
+    /// ```compile_fail
+    /// // tuning() is not available on a lossless encoder:
+    /// let _ = webpkit::Encoder::lossless().tuning(webpkit::LossyTuning::new());
+    /// ```
+    #[must_use]
+    pub const fn tuning(mut self, tuning: LossyTuning) -> Self {
+        self.tuning = tuning;
+        self
+    }
+
+    /// Set both the quality and the [`LossyTuning`] from a single validated
+    /// [`LossyParams`] — the same surface [`AnimCodec::Lossy`] carries. Equivalent to
+    /// calling [`quality`](Self::quality) and [`tuning`](Self::tuning) together, so one
+    /// validation story flows from the params to the encode.
+    #[must_use]
+    pub const fn params(mut self, params: LossyParams) -> Self {
+        self.quality = params.quality();
+        self.tuning = params.tuning();
         self
     }
 
@@ -236,6 +266,56 @@ impl Encoder<Lossy> {
         Ok(())
     }
 
+    /// Search encode quality to meet a byte / PSNR [`RateTarget`](crate::RateTarget), returning the best
+    /// encode and how the search reached it ([`RateSearch`](crate::RateSearch)).
+    ///
+    /// Rate control is the inverse of a plain encode — "which quality fits this
+    /// budget / clears this floor?" — so it is a deterministic integer bisection over
+    /// `0..=100` at this builder's fixed [`effort`](Self::effort) and
+    /// [`tuning`](Self::tuning) (the builder's own `quality` is ignored, since quality
+    /// is the axis being searched). A [`tuning`](Self::tuning) with a higher
+    /// [`pass`](LossyTuning::pass) sharpens each probe's size, so a multi-pass encode
+    /// converges the search too. Metadata is preserved exactly as in
+    /// [`encode`](Self::encode).
+    ///
+    /// # Errors
+    ///
+    /// Any error from the underlying encode or decode, or [`Error::InvalidDimensions`]
+    /// when `target` sets no bound.
+    #[cfg(feature = "alloc")]
+    pub fn rate_control(
+        &self,
+        image: &Image,
+        target: crate::RateTarget,
+    ) -> Result<crate::RateSearch> {
+        crate::lossy::rate::search(image, &self.config(), target)
+    }
+
+    /// Search quality for the largest quality whose encode fits within `max_bytes`
+    /// (convenience over [`rate_control`](Self::rate_control) with a
+    /// [`RateTarget::size`](crate::RateTarget::size)).
+    ///
+    /// # Errors
+    ///
+    /// As [`rate_control`](Self::rate_control).
+    #[cfg(feature = "alloc")]
+    pub fn target_size(&self, image: &Image, max_bytes: usize) -> Result<crate::RateSearch> {
+        self.rate_control(image, crate::RateTarget::size(max_bytes))
+    }
+
+    /// Search quality for the smallest quality whose reconstruction PSNR meets
+    /// `min_psnr_centidb` (dB × 100 — a fixed-point centidecibel floor, so `42.5 dB`
+    /// is `4250`). Convenience over [`rate_control`](Self::rate_control) with a
+    /// [`RateTarget::psnr`](crate::RateTarget::psnr).
+    ///
+    /// # Errors
+    ///
+    /// As [`rate_control`](Self::rate_control).
+    #[cfg(feature = "alloc")]
+    pub fn target_psnr(&self, image: &Image, min_psnr_centidb: u32) -> Result<crate::RateSearch> {
+        self.rate_control(image, crate::RateTarget::psnr(min_psnr_centidb))
+    }
+
     /// The internal lossy config this builder folds into.
     fn config(&self) -> LossyConfig {
         LossyConfig::new()
@@ -243,6 +323,7 @@ impl Encoder<Lossy> {
             .with_effort(self.effort)
             .with_metadata(self.metadata.clone())
             .with_metadata_policy(self.policy)
+            .with_tuning(self.tuning)
     }
 }
 
@@ -250,13 +331,63 @@ impl Encoder<Lossy> {
 /// this is both the encoder-level default and a per-frame override
 /// ([`AnimationEncoder::add_frame_with`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[non_exhaustive]
 pub enum AnimCodec {
     /// Lossless `VP8L` frame (default), carrying its own alpha.
     #[default]
     Lossless,
-    /// Lossy `VP8 ` key-frame at the given quality (`0..=100`, clamped); a
-    /// non-opaque frame also gets a sibling lossless `ALPH` alpha chunk.
-    Lossy(u8),
+    /// Lossy `VP8 ` key-frame at the given [`LossyParams`] (quality + tuning); a
+    /// non-opaque frame also gets a sibling `ALPH` alpha chunk (lossless unless the
+    /// params lower `alpha_q`).
+    Lossy {
+        /// The validated lossy quality and psychovisual/RD tuning for this frame.
+        params: LossyParams,
+    },
+}
+
+/// Encode one animation frame's sub-chunk bytes — the bare chunk sequence that
+/// follows the 16-byte `ANMF` header (an optional `ALPH`, then the `VP8L`/`VP8 `
+/// image chunk) — for a `dims`-sized native-ARGB frame under `codec`.
+///
+/// The single home of a frame's payload layout, shared by
+/// [`AnimationEncoder::add_frame_with`] and the animation optimizer
+/// ([`AnimationOptimizer`](crate::AnimationOptimizer)), which measures both codecs'
+/// bytes here to keep the smaller. Sub-chunk order follows the still extended order
+/// (`ALPH` before the image chunk): our decoder is order-independent, but libwebp's
+/// demux expects `ALPH` first.
+pub(crate) fn encode_frame_payload(
+    effort: Effort,
+    dims: Dimensions,
+    argb: &[u32],
+    codec: AnimCodec,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    match codec {
+        AnimCodec::Lossless => {
+            let payload = encode_payload(effort, dims.width(), dims.height(), argb);
+            push_chunk(&mut body, FourCc::VP8L, &payload);
+        },
+        AnimCodec::Lossy { params } => {
+            let tuning = params.tuning();
+            let cfg = LossyConfig::new()
+                .with_quality(params.quality().get())
+                .with_effort(effort)
+                .with_tuning(tuning);
+            let vp8 = crate::lossy::encoder::encode_vp8_argb(argb, dims, &cfg);
+            // The frame's ALPH search follows the params' alpha knobs; the default
+            // params keep the always-lossless, exhaustive search (byte-identical).
+            let alpha_tuning = crate::lossy::alpha::AlphaTuning {
+                quality: tuning.alpha_q(),
+                method: tuning.alpha_method(),
+                filter: tuning.alpha_filter(),
+            };
+            if let Some(alph) = crate::lossy::alpha::alph_chunk(argb, dims, alpha_tuning) {
+                push_chunk(&mut body, FourCc::ALPH, &alph);
+            }
+            push_chunk(&mut body, FourCc::VP8, &vp8);
+        },
+    }
+    body
 }
 
 /// Type-state marker: an [`AnimationEncoder`] with no frames yet. `finish` is not
@@ -295,12 +426,12 @@ pub enum HasFrames {}
 /// The same builder encodes lossy frames — `webpkit::decode_frames` reads both:
 ///
 /// ```
-/// use webpkit::{AnimCodec, AnimationEncoder, BlendMode, DisposalMode, Dimensions, FrameMeta, ImageRef, PixelLayout};
+/// use webpkit::{AnimCodec, AnimationEncoder, BlendMode, DisposalMode, Dimensions, FrameMeta, ImageRef, LossyParams, PixelLayout};
 /// let canvas = Dimensions::new(2, 2).unwrap();
 /// let rgba = [10u8, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255];
 /// let meta = FrameMeta::new(0, 0, canvas, 100, BlendMode::Blend, DisposalMode::Keep);
 /// let bytes = AnimationEncoder::new(canvas)
-///     .codec(AnimCodec::Lossy(80))
+///     .codec(AnimCodec::Lossy { params: LossyParams::new(80) })
 ///     .add_frame(ImageRef::new(canvas, PixelLayout::Rgba8, &rgba).unwrap(), meta)
 ///     .unwrap()
 ///     .finish();
@@ -343,7 +474,7 @@ impl<S> core::fmt::Debug for AnimationEncoder<S> {
 
 impl AnimationEncoder<Empty> {
     /// Start building an animation with the given canvas size. Defaults:
-    /// transparent background, infinite loop, [`Effort::Balanced`], lossless
+    /// transparent background, infinite loop, [`Effort::AUTO`], lossless
     /// frames, no metadata.
     #[must_use]
     pub const fn new(canvas: Dimensions) -> Self {
@@ -351,7 +482,7 @@ impl AnimationEncoder<Empty> {
             canvas,
             background: 0,
             loop_count: 0,
-            effort: Effort::Balanced,
+            effort: Effort::AUTO,
             codec: AnimCodec::Lossless,
             metadata: Metadata::none(),
             frames: Vec::new(),
@@ -466,26 +597,7 @@ impl<S> AnimationEncoder<S> {
             flags,
         };
         let mut frame_body = header.build().to_vec();
-
-        // Sub-chunk order within an ANMF frame follows the still extended order:
-        // ALPH before the image chunk (our decoder is order-independent, but
-        // libwebp's demux expects ALPH first).
-        match codec {
-            AnimCodec::Lossless => {
-                let payload = encode_payload(self.effort, dims.width(), dims.height(), &argb);
-                push_chunk(&mut frame_body, FourCc::VP8L, &payload);
-            },
-            AnimCodec::Lossy(quality) => {
-                let cfg = LossyConfig::new()
-                    .with_quality(quality)
-                    .with_effort(self.effort);
-                let vp8 = crate::lossy::encoder::encode_vp8_argb(&argb, dims, &cfg);
-                if let Some(alph) = crate::lossy::alpha::alph_chunk(&argb, dims) {
-                    push_chunk(&mut frame_body, FourCc::ALPH, &alph);
-                }
-                push_chunk(&mut frame_body, FourCc::VP8, &vp8);
-            },
-        }
+        frame_body.extend_from_slice(&encode_frame_payload(self.effort, dims, &argb, codec));
 
         let mut frames = self.frames;
         push_chunk(&mut frames, FourCc::ANMF, &frame_body);
@@ -552,7 +664,7 @@ impl AnimationEncoder<HasFrames> {
 
 #[cfg(test)]
 mod anim_tests {
-    use super::{AnimCodec, AnimationEncoder};
+    use super::{AnimCodec, AnimationEncoder, LossyParams};
     use crate::container::vp8x::Vp8xInfo;
     use crate::image::{self, Dimensions, ImageRef, Metadata, PixelLayout};
     use crate::{BlendMode, DisposalMode, Effort, Error, FrameMeta, decode_frames};
@@ -661,7 +773,9 @@ mod anim_tests {
         let rgba0 = frame_bytes(canvas, 0xFF20_4060);
         let rgba1 = frame_bytes(canvas, 0xFF80_A0C0);
         let file = AnimationEncoder::new(canvas)
-            .codec(AnimCodec::Lossy(90))
+            .codec(AnimCodec::Lossy {
+                params: LossyParams::new(90),
+            })
             .add_frame(image_ref(canvas, &rgba0), meta(canvas, 0, 0, 40))
             .unwrap()
             .add_frame(image_ref(canvas, &rgba1), meta(canvas, 0, 0, 60))
@@ -706,7 +820,9 @@ mod anim_tests {
         let argb: Vec<u32> = (0..16u32).map(|i| ((i * 15) << 24) | 0x0011_2233).collect();
         let rgba = image::pack_pixels(PixelLayout::Rgba8, &argb);
         let file = AnimationEncoder::new(canvas)
-            .codec(AnimCodec::Lossy(90))
+            .codec(AnimCodec::Lossy {
+                params: LossyParams::new(90),
+            })
             .add_frame(image_ref(canvas, &rgba), meta(canvas, 0, 0, 40))
             .unwrap()
             .finish();
@@ -783,7 +899,9 @@ mod anim_tests {
             xmp: Some(vec![6, 7, 8]),
         };
         let file = AnimationEncoder::new(canvas)
-            .codec(AnimCodec::Lossy(80))
+            .codec(AnimCodec::Lossy {
+                params: LossyParams::new(80),
+            })
             .loop_count(2)
             .metadata(metadata)
             .add_frame(image_ref(canvas, &rgba0), meta(canvas, 0, 0, 30))
@@ -810,7 +928,9 @@ mod anim_tests {
             .add_frame_with(
                 image_ref(canvas, &rgba1),
                 meta(canvas, 0, 0, 40),
-                AnimCodec::Lossy(80),
+                AnimCodec::Lossy {
+                    params: LossyParams::new(80),
+                },
             )
             .unwrap()
             .finish();
@@ -833,7 +953,9 @@ mod anim_tests {
         let canvas = Dimensions::new(8, 8).unwrap();
         let rgba = frame_bytes(canvas, 0xFF30_6090);
         let file = AnimationEncoder::new(canvas)
-            .codec(AnimCodec::Lossy(75))
+            .codec(AnimCodec::Lossy {
+                params: LossyParams::new(75),
+            })
             .add_frame(image_ref(canvas, &rgba), meta(canvas, 0, 0, 40))
             .unwrap()
             .add_frame(image_ref(canvas, &rgba), meta(canvas, 0, 0, 40))
@@ -952,14 +1074,16 @@ mod anim_tests {
         let canvas = Dimensions::new(4, 4).unwrap();
         let enc = AnimationEncoder::new(canvas)
             .loop_count(7)
-            .effort(Effort::Fast)
-            .codec(AnimCodec::Lossy(80));
+            .effort(Effort::level(0))
+            .codec(AnimCodec::Lossy {
+                params: LossyParams::new(80),
+            });
         let rendered = format!("{enc:?}");
         assert!(rendered.contains("AnimationEncoder"), "got: {rendered}");
         assert!(rendered.contains("canvas"), "got: {rendered}");
         assert!(rendered.contains("frame_count"), "got: {rendered}");
         assert!(rendered.contains("loop_count: 7"), "got: {rendered}");
-        assert!(rendered.contains("Fast"), "got: {rendered}");
+        assert!(rendered.contains("Level(0)"), "got: {rendered}");
         assert!(rendered.contains("codec"), "got: {rendered}");
         assert!(rendered.contains("Lossy"), "got: {rendered}");
     }

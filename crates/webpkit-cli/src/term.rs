@@ -159,6 +159,14 @@ pub(crate) fn install(choice: ColorChoice) {
     global.write_global();
 }
 
+/// Whether stderr is a terminal — the reference stream for every human-readable
+/// line. A live, carriage-return-updated progress counter is only safe on a TTY; a
+/// redirected stderr gets periodic full lines instead (see [`crate::report`]).
+#[must_use]
+pub(crate) fn stderr_is_terminal() -> bool {
+    std::io::stderr().is_terminal()
+}
+
 /// The style for an `error:` label.
 pub(crate) const fn error() -> Style {
     Style::new()

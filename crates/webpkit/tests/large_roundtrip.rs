@@ -102,8 +102,7 @@ fn large_images_round_trip_exactly() {
         ("tiled", tiled(EDGE)),
         ("scatter", scatter(EDGE)),
     ] {
-        let webp =
-            encode(EDGE, &rgba, Effort::Balanced).expect("encode is infallible for valid input");
+        let webp = encode(EDGE, &rgba, Effort::AUTO).expect("encode is infallible for valid input");
         let decoded = decode_rgba(&webp).expect("must decode our own output");
         assert_eq!(decoded.0, dims, "{name}: dimensions changed");
         assert!(decoded.1 == rgba, "{name}: round-trip was not lossless");
@@ -117,7 +116,7 @@ fn large_images_round_trip_exactly() {
 #[ignore = "heavy: large-image streaming roundtrip"]
 fn large_image_streams_row_by_row() {
     let rgba = gradient(EDGE);
-    let webp = encode(EDGE, &rgba, Effort::Balanced).expect("encode is infallible for valid input");
+    let webp = encode(EDGE, &rgba, Effort::AUTO).expect("encode is infallible for valid input");
 
     let mut decoder = IncrementalDecoder::new();
     let mut drained: Vec<u8> = Vec::with_capacity(rgba.len());

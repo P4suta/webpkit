@@ -7,7 +7,9 @@
 //! `tests/oracle.rs` behind the `oracle` feature.
 
 use proptest::prelude::*;
-use webpkit::lossy::{Dimensions, Effort, ImageRef, LossyConfig, PixelLayout, decode, encode_vp8};
+use webpkit::lossy::{
+    Dimensions, Effort, ImageRef, LossyConfig, LossyTuning, PixelLayout, decode, encode_vp8,
+};
 use webpkit_lossy_proptest::{arbitrary_bytes, arbitrary_lossy_rgb, psnr_rgb};
 
 /// Expand interleaved RGB (`w*h*3`) to opaque RGBA for the encoder.
@@ -111,6 +113,46 @@ proptest! {
 }
 
 proptest! {
+    // The knob space is large and every encode is heavy, so a small case budget:
+    // each case draws one random LossyTuning together with one quality and method.
+    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+
+    /// Every psychovisual [`LossyTuning`] in range stays **decode-safe**: an encode
+    /// under any SNS strength (`0..=100`), segment count (`1..=4`) and filter
+    /// strength/sharpness decodes back — never panics — to a frame of the source
+    /// dimensions. The encoder emits per-segment quantizer and filter-strength deltas
+    /// the decoder re-derives, so a malformed knob mapping would desync the stream and
+    /// surface here as a decode failure or a size mismatch.
+    #[test]
+    fn every_tuning_is_decode_safe(
+        (w, h, rgb) in arbitrary_lossy_rgb(),
+        quality in 0u8..=100,
+        sns in 0u8..=100,
+        segments in 1u8..=4,
+        filter_strength in 0u8..=100,
+        filter_sharpness in 0u8..=7,
+        method_idx in 0usize..3,
+    ) {
+        let rgba = rgb_to_rgba(&rgb);
+        let dims = Dimensions::new(w, h).unwrap();
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        let method = [Effort::level(0), Effort::AUTO, Effort::level(9)][method_idx];
+        let tuning = LossyTuning::new()
+            .with_sns_strength(sns)
+            .with_segments(segments)
+            .with_filter_strength(filter_strength)
+            .with_filter_sharpness(filter_sharpness);
+        let cfg = LossyConfig::new()
+            .with_quality(quality)
+            .with_effort(method)
+            .with_tuning(tuning);
+        let (_dims, payload) = encode_vp8(img, &cfg).unwrap();
+        let decoded = decode(&payload).unwrap();
+        prop_assert_eq!((decoded.width(), decoded.height()), (w, h));
+    }
+}
+
+proptest! {
     // Encode is heavy (trellis/mode search at Best), so this fidelity property runs
     // a small case budget; each case picks one quality and one method rather than
     // looping the whole grid.
@@ -127,7 +169,7 @@ proptest! {
         quality in 0u8..=100,
         method_idx in 0usize..3,
     ) {
-        let method = [Effort::Fast, Effort::Balanced, Effort::Best][method_idx];
+        let method = [Effort::level(0), Effort::AUTO, Effort::level(9)][method_idx];
         let dims = Dimensions::new(w, h).unwrap();
         let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
         let cfg = LossyConfig::new().with_quality(quality).with_effort(method);

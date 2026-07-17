@@ -28,8 +28,8 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects lossy')
             [CompletionResult]::new('--quality', '--quality', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects lossy')
             [CompletionResult]::new('--near-lossless', '--near-lossless', [CompletionResultType]::ParameterName, 'Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)')
-            [CompletionResult]::new('-m', '-m', [CompletionResultType]::ParameterName, 'Encoder effort [default: balanced, or from env/config]')
-            [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort [default: balanced, or from env/config]')
+            [CompletionResult]::new('-m', '-m', [CompletionResultType]::ParameterName, 'Encoder effort [default: auto, or from env/config]')
+            [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort [default: auto, or from env/config]')
             [CompletionResult]::new('--metadata', '--metadata', [CompletionResultType]::ParameterName, 'Metadata to embed: all,none,icc,exif,xmp (default: all)')
             [CompletionResult]::new('--crop', '--crop', [CompletionResultType]::ParameterName, 'Crop before encoding: `x,y,width,height` in pixels (applied before --resize)')
             [CompletionResult]::new('--resize', '--resize', [CompletionResultType]::ParameterName, 'Resize before encoding: `WxH` (use 0 on one axis to keep aspect)')
@@ -50,6 +50,8 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('decode', 'decode', [CompletionResultType]::ParameterValue, 'Decode a WebP file to PNG (default), PPM/PAM, or raw pixels')
             [CompletionResult]::new('encode', 'encode', [CompletionResultType]::ParameterValue, 'Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file')
             [CompletionResult]::new('convert', 'convert', [CompletionResultType]::ParameterValue, 'Batch-convert many images (or directories) to WebP, in parallel')
+            [CompletionResult]::new('animate', 'animate', [CompletionResultType]::ParameterValue, 'Assemble still images into an animated WebP (surpasses img2webp/gif2webp)')
+            [CompletionResult]::new('mux', 'mux', [CompletionResultType]::ParameterValue, 'Edit an animated WebP without re-encoding frames (webpmux-parity muxing)')
             [CompletionResult]::new('info', 'info', [CompletionResultType]::ParameterValue, 'Print a summary of a WebP file (size, alpha, metadata, animation)')
             [CompletionResult]::new('meta', 'meta', [CompletionResultType]::ParameterValue, 'Read, set, or strip a WebP file''s metadata (ICC/Exif/XMP), without re-encoding the image')
             [CompletionResult]::new('diff', 'diff', [CompletionResultType]::ParameterValue, 'Compare two images: report PSNR and the largest per-channel difference')
@@ -86,8 +88,8 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--width', '--width', [CompletionResultType]::ParameterName, 'Raw-input width in pixels (required for raw input)')
             [CompletionResult]::new('--height', '--height', [CompletionResultType]::ParameterName, 'Raw-input height in pixels (required for raw input)')
             [CompletionResult]::new('--layout', '--layout', [CompletionResultType]::ParameterName, 'Byte order for raw input only')
-            [CompletionResult]::new('-m', '-m', [CompletionResultType]::ParameterName, 'Encoder effort [default: balanced, or from env/config]')
-            [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort [default: balanced, or from env/config]')
+            [CompletionResult]::new('-m', '-m', [CompletionResultType]::ParameterName, 'Encoder effort [default: auto, or from env/config]')
+            [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort [default: auto, or from env/config]')
             [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
             [CompletionResult]::new('--quality', '--quality', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
             [CompletionResult]::new('--near-lossless', '--near-lossless', [CompletionResultType]::ParameterName, 'Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)')
@@ -96,10 +98,15 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--target-size', '--target-size', [CompletionResultType]::ParameterName, 'Target output size, e.g. `200k` or `2M`, found by searching lossy quality')
             [CompletionResult]::new('--min-psnr', '--min-psnr', [CompletionResultType]::ParameterName, 'Target reconstruction PSNR floor in dB (lossy only; pairs with --target-size)')
             [CompletionResult]::new('--metadata', '--metadata', [CompletionResultType]::ParameterName, 'Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)')
+            [CompletionResult]::new('--kmax', '--kmax', [CompletionResultType]::ParameterName, 'With --optimize: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first)')
+            [CompletionResult]::new('--kmin', '--kmin', [CompletionResultType]::ParameterName, 'With --optimize: never place keyframes closer than N frames apart (gif2webp -kmin)')
             [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
             [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
             [CompletionResult]::new('--lossless', '--lossless', [CompletionResultType]::ParameterName, 'Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless')
             [CompletionResult]::new('--lossy', '--lossy', [CompletionResultType]::ParameterName, 'Encode lossily (VP8) instead of losslessly (VP8L)')
+            [CompletionResult]::new('--optimize', '--optimize', [CompletionResultType]::ParameterName, 'Inter-frame optimize a GIF animation: encode each frame as a minimal delta')
+            [CompletionResult]::new('--mixed', '--mixed', [CompletionResultType]::ParameterName, 'With --optimize: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed)')
+            [CompletionResult]::new('--min-size', '--min-size', [CompletionResultType]::ParameterName, 'With --optimize: exhaustively search each frame''s rect/blend/dispose/codec (gif2webp `-min_size`)')
             [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
             [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
@@ -111,8 +118,8 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
         'webp;convert' {
             [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output directory (created outputs are `<stem>.webp`); default: beside input')
             [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output directory (created outputs are `<stem>.webp`); default: beside input')
-            [CompletionResult]::new('-m', '-m', [CompletionResultType]::ParameterName, 'Encoder effort (ignored with --optimize) [default: balanced, or from env/config]')
-            [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort (ignored with --optimize) [default: balanced, or from env/config]')
+            [CompletionResult]::new('-m', '-m', [CompletionResultType]::ParameterName, 'Encoder effort (ignored with --optimize) [default: auto, or from env/config]')
+            [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort (ignored with --optimize) [default: auto, or from env/config]')
             [CompletionResult]::new('-q', '-q', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
             [CompletionResult]::new('--quality', '--quality', [CompletionResultType]::ParameterName, 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy')
             [CompletionResult]::new('--near-lossless', '--near-lossless', [CompletionResultType]::ParameterName, 'Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)')
@@ -132,6 +139,150 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
             [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;animate' {
+            [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--delay', '--delay', [CompletionResultType]::ParameterName, 'Per-frame delay in ms: one value for every frame, or a comma list (`40,40,80`)')
+            [CompletionResult]::new('--loop', '--loop', [CompletionResultType]::ParameterName, 'Loop count; `0` (the default) loops forever')
+            [CompletionResult]::new('--bgcolor', '--bgcolor', [CompletionResultType]::ParameterName, 'Advisory background color as `RRGGBBAA` hex (e.g. `ffffffff`)')
+            [CompletionResult]::new('--dispose', '--dispose', [CompletionResultType]::ParameterName, 'Disposal method applied to every frame')
+            [CompletionResult]::new('--blend', '--blend', [CompletionResultType]::ParameterName, 'Blend method applied to every frame')
+            [CompletionResult]::new('--lossy', '--lossy', [CompletionResultType]::ParameterName, 'Encode frames lossily (VP8) at this quality 0-100; the default is lossless')
+            [CompletionResult]::new('--canvas', '--canvas', [CompletionResultType]::ParameterName, 'Canvas size as `WxH`; defaults to the largest frame')
+            [CompletionResult]::new('-m', '-m', [CompletionResultType]::ParameterName, 'Encoder effort [default: auto, or from env/config]')
+            [CompletionResult]::new('--method', '--method', [CompletionResultType]::ParameterName, 'Encoder effort [default: auto, or from env/config]')
+            [CompletionResult]::new('--input-format', '--input-format', [CompletionResultType]::ParameterName, 'Force the input format instead of sniffing each file')
+            [CompletionResult]::new('--kmax', '--kmax', [CompletionResultType]::ParameterName, 'With --optimize: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first)')
+            [CompletionResult]::new('--kmin', '--kmin', [CompletionResultType]::ParameterName, 'With --optimize: never place keyframes closer than N frames apart (gif2webp -kmin)')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('--optimize', '--optimize', [CompletionResultType]::ParameterName, 'Inter-frame optimize: encode each frame as a minimal delta against the canvas')
+            [CompletionResult]::new('--mixed', '--mixed', [CompletionResultType]::ParameterName, 'With --optimize: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed)')
+            [CompletionResult]::new('--min-size', '--min-size', [CompletionResultType]::ParameterName, 'With --optimize: exhaustively search each frame''s rect/blend/dispose/codec (gif2webp `-min_size`)')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;mux' {
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('get-frame', 'get-frame', [CompletionResultType]::ParameterValue, 'Extract one frame as a standalone still WebP (bytes copied verbatim)')
+            [CompletionResult]::new('set', 'set', [CompletionResultType]::ParameterValue, 'Rewrite the loop count and/or background color')
+            [CompletionResult]::new('remove', 'remove', [CompletionResultType]::ParameterValue, 'Remove one frame, rebuilding the frame list')
+            [CompletionResult]::new('insert', 'insert', [CompletionResultType]::ParameterValue, 'Insert a still WebP as a new frame (its image bytes copied verbatim)')
+            [CompletionResult]::new('replace', 'replace', [CompletionResultType]::ParameterValue, 'Replace one frame''s image with a still WebP, keeping its placement/timing')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'webp;mux;get-frame' {
+            [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;mux;set' {
+            [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--loop', '--loop', [CompletionResultType]::ParameterName, 'New loop count (`0` loops forever)')
+            [CompletionResult]::new('--bgcolor', '--bgcolor', [CompletionResultType]::ParameterName, 'New background color as `RRGGBBAA` hex')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;mux;remove' {
+            [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;mux;insert' {
+            [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--at', '--at', [CompletionResultType]::ParameterName, '0-based index to insert at; defaults to appending at the end')
+            [CompletionResult]::new('--delay', '--delay', [CompletionResultType]::ParameterName, 'The new frame''s display duration in ms')
+            [CompletionResult]::new('--blend', '--blend', [CompletionResultType]::ParameterName, 'The new frame''s blend method')
+            [CompletionResult]::new('--dispose', '--dispose', [CompletionResultType]::ParameterName, 'The new frame''s disposal method')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;mux;replace' {
+            [CompletionResult]::new('-o', '-o', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--output', '--output', [CompletionResultType]::ParameterName, 'Output `.webp` file; `-` writes stdout')
+            [CompletionResult]::new('--at', '--at', [CompletionResultType]::ParameterName, '0-based index of the frame to replace')
+            [CompletionResult]::new('--color', '--color', [CompletionResultType]::ParameterName, 'auto, always, or never [default: auto, or from env/config]')
+            [CompletionResult]::new('--threads', '--threads', [CompletionResultType]::ParameterName, 'Worker threads for parallel work; 0 (the default) uses one per core')
+            [CompletionResult]::new('-v', '-v', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--verbose', '--verbose', [CompletionResultType]::ParameterName, 'Print per-stage detail on stderr')
+            [CompletionResult]::new('--quiet', '--quiet', [CompletionResultType]::ParameterName, 'Suppress all non-error output')
+            [CompletionResult]::new('--dry-run', '--dry-run', [CompletionResultType]::ParameterName, 'Report what would be written, without encoding or writing anything')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help (see more with ''--help'')')
+            break
+        }
+        'webp;mux;help' {
+            [CompletionResult]::new('get-frame', 'get-frame', [CompletionResultType]::ParameterValue, 'Extract one frame as a standalone still WebP (bytes copied verbatim)')
+            [CompletionResult]::new('set', 'set', [CompletionResultType]::ParameterValue, 'Rewrite the loop count and/or background color')
+            [CompletionResult]::new('remove', 'remove', [CompletionResultType]::ParameterValue, 'Remove one frame, rebuilding the frame list')
+            [CompletionResult]::new('insert', 'insert', [CompletionResultType]::ParameterValue, 'Insert a still WebP as a new frame (its image bytes copied verbatim)')
+            [CompletionResult]::new('replace', 'replace', [CompletionResultType]::ParameterValue, 'Replace one frame''s image with a still WebP, keeping its placement/timing')
+            [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
+            break
+        }
+        'webp;mux;help;get-frame' {
+            break
+        }
+        'webp;mux;help;set' {
+            break
+        }
+        'webp;mux;help;remove' {
+            break
+        }
+        'webp;mux;help;insert' {
+            break
+        }
+        'webp;mux;help;replace' {
+            break
+        }
+        'webp;mux;help;help' {
             break
         }
         'webp;info' {
@@ -323,6 +474,8 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             [CompletionResult]::new('decode', 'decode', [CompletionResultType]::ParameterValue, 'Decode a WebP file to PNG (default), PPM/PAM, or raw pixels')
             [CompletionResult]::new('encode', 'encode', [CompletionResultType]::ParameterValue, 'Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file')
             [CompletionResult]::new('convert', 'convert', [CompletionResultType]::ParameterValue, 'Batch-convert many images (or directories) to WebP, in parallel')
+            [CompletionResult]::new('animate', 'animate', [CompletionResultType]::ParameterValue, 'Assemble still images into an animated WebP (surpasses img2webp/gif2webp)')
+            [CompletionResult]::new('mux', 'mux', [CompletionResultType]::ParameterValue, 'Edit an animated WebP without re-encoding frames (webpmux-parity muxing)')
             [CompletionResult]::new('info', 'info', [CompletionResultType]::ParameterValue, 'Print a summary of a WebP file (size, alpha, metadata, animation)')
             [CompletionResult]::new('meta', 'meta', [CompletionResultType]::ParameterValue, 'Read, set, or strip a WebP file''s metadata (ICC/Exif/XMP), without re-encoding the image')
             [CompletionResult]::new('diff', 'diff', [CompletionResultType]::ParameterValue, 'Compare two images: report PSNR and the largest per-channel difference')
@@ -341,6 +494,32 @@ Register-ArgumentCompleter -Native -CommandName 'webp' -ScriptBlock {
             break
         }
         'webp;help;convert' {
+            break
+        }
+        'webp;help;animate' {
+            break
+        }
+        'webp;help;mux' {
+            [CompletionResult]::new('get-frame', 'get-frame', [CompletionResultType]::ParameterValue, 'Extract one frame as a standalone still WebP (bytes copied verbatim)')
+            [CompletionResult]::new('set', 'set', [CompletionResultType]::ParameterValue, 'Rewrite the loop count and/or background color')
+            [CompletionResult]::new('remove', 'remove', [CompletionResultType]::ParameterValue, 'Remove one frame, rebuilding the frame list')
+            [CompletionResult]::new('insert', 'insert', [CompletionResultType]::ParameterValue, 'Insert a still WebP as a new frame (its image bytes copied verbatim)')
+            [CompletionResult]::new('replace', 'replace', [CompletionResultType]::ParameterValue, 'Replace one frame''s image with a still WebP, keeping its placement/timing')
+            break
+        }
+        'webp;help;mux;get-frame' {
+            break
+        }
+        'webp;help;mux;set' {
+            break
+        }
+        'webp;help;mux;remove' {
+            break
+        }
+        'webp;help;mux;insert' {
+            break
+        }
+        'webp;help;mux;replace' {
             break
         }
         'webp;help;info' {

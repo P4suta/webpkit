@@ -8,17 +8,34 @@ cwebp (webpkit) — encode PNG/PPM/PAM to WebP (lossy by default)
 Usage: cwebp [options] <input> -o <output.webp>
 
 Options:
-  -o <file>        output file (`-` for stdout)
-  -q <float>       lossy quality 0-100 (default 75); effort in -lossless mode
-  -m <int>         method 0-6 (effort)
-  -lossless        encode losslessly (VP8L) instead of lossy (VP8)
-  -z <int>         lossless level 0-9 (implies -lossless)
-  -near_lossless <int>  near-lossless preprocessing 0-100, lower = stronger (implies -lossless)
-  -metadata <list> all,none,icc,exif,xmp (default: all)
-  -crop x y w h    crop before encoding (dimensions match libwebp; pixels differ)
-  -resize w h      resize before encoding (0 on one axis keeps aspect)
-  -size <int>      target output size in bytes (searches lossy quality)
-  -psnr <float>    target reconstruction PSNR floor in dB (lossy)
-  -quiet / -v      quieter / more verbose
-  -color <when>    auto (default), always, or never
-  -version         print version
+  -o <file>              output file (`-` for stdout)
+  -q <float>             lossy quality 0-100 (default 75); effort in -lossless mode
+  -m <int>               method 0-6 (effort)
+  -lossless              encode losslessly (VP8L) instead of lossy (VP8)
+  -z <int>               lossless level 0-9 (implies -lossless)
+  -near_lossless <int>   near-lossless preprocessing 0-100, lower = stronger (implies -lossless)
+  -metadata <list>       all,none,icc,exif,xmp (default: all)
+  -preset <name>         content preset: default, photo, picture, drawing, icon, text (a tuning base)
+  -crop x y w h          crop before encoding (dimensions match libwebp; pixels differ)
+  -resize w h            resize before encoding (0 on one axis keeps aspect)
+  -size <int>            target output size in bytes (searches lossy quality)
+  -psnr <float>          target reconstruction PSNR floor in dB (lossy)
+  -pass <int>            number of entropy-refinement passes 1-10 (1 = single pass)
+  -sns <int>             spatial noise shaping 0-100
+  -f <int>               in-loop filter strength 0-100
+  -sharpness <int>       in-loop filter sharpness 0-7
+  -segments <int>        number of quantizer segments 1-4
+  -partition_limit <int> first-partition rate cap 0-100 (0 = no limit)
+  -jpeg_like             bias quantization toward a JPEG-like size curve
+  -sharp_yuv             luminance-guided (sharp) chroma subsampling
+  -exact                 preserve the RGB under fully-transparent pixels (the default)
+  -alpha_q <int>         alpha quality 0-100 (100 = lossless, the default)
+  -alpha_method <int>    alpha compression: 0 raw, 1 lossless (default)
+  -alpha_filter <str>    alpha filter: none, fast, or best (default)
+  -noalpha               drop the alpha channel (encode opaque)
+  -quiet                 suppress the status line
+  -short                 concise output: print only the result size
+  -progress              report encoding progress by stage
+  -v                     verbose output (repeatable)
+  -color <when>          auto (default), always, or never
+  -version               print version

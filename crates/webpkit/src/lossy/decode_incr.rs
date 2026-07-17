@@ -53,13 +53,13 @@ pub(crate) enum Step {
         /// Picture height in pixels.
         height: u32,
     },
-    /// Output rows `first_row..first_row + count` were finalized this call and are
+    /// Output rows `first_row..first_row + rows` were finalized this call and are
     /// available (RGBA8, `width * 4` bytes each) via [`Vp8Stream::ready`].
     Rows {
         /// 0-based index of the first newly-finalized output row.
         first_row: u32,
         /// Number of newly-finalized output rows.
-        count: u32,
+        rows: u32,
     },
     /// Every pixel is decoded; retrieve them with [`Vp8Stream::into_pixels`].
     Done,
@@ -323,7 +323,7 @@ impl Vp8Stream {
                     self.state = Phase::Streaming(ss);
                     return Ok(Step::Rows {
                         first_row: rows_before,
-                        count: new,
+                        rows: new,
                     });
                 }
                 let pixels = core::mem::take(&mut ss.ready);
@@ -423,7 +423,7 @@ const fn rows_or_needmore(first_row: u32, new_rows: u32) -> Step {
     if new_rows > 0 {
         Step::Rows {
             first_row,
-            count: new_rows,
+            rows: new_rows,
         }
     } else {
         Step::NeedMore
@@ -553,9 +553,9 @@ fn stream_over_splits(payload: &[u8], cuts: &[usize]) -> Result<Vec<u8>> {
         loop {
             match stream.advance(&payload[..cut], final_input)? {
                 Step::Header { .. } => {},
-                Step::Rows { first_row, count } => {
+                Step::Rows { first_row, rows } => {
                     assert_eq!(first_row, rows_reported, "Rows payout is not contiguous");
-                    rows_reported += count;
+                    rows_reported += rows;
                 },
                 Step::NeedMore => break,
                 Step::Done => break 'outer,
@@ -720,16 +720,17 @@ mod tests {
 
     #[test]
     fn stream_matches_one_shot_on_a_filter_off_multi_row_frame() {
-        // `Effort::Fast` disables the in-loop filter, so every plane row is final the
-        // instant its macroblock row is reconstructed and `emit_finalized_rows` gates
-        // purely on the chroma-plane height. On a frame two-plus macroblock rows tall
-        // (32×48) with row-varying content, streaming is byte-identical to the one-shot
-        // decode only when the chroma-height bound is exact: an under-counted bound
-        // emits a bottom output row before the macroblock row supplying its upsampled
-        // chroma has been reconstructed, committing that row from unwritten planes.
+        // A low effort level (`Fast` tier) disables the in-loop filter, so every plane
+        // row is final the instant its macroblock row is reconstructed and
+        // `emit_finalized_rows` gates purely on the chroma-plane height. On a frame
+        // two-plus macroblock rows tall (32×48) with row-varying content, streaming is
+        // byte-identical to the one-shot decode only when the chroma-height bound is
+        // exact: an under-counted bound emits a bottom output row before the macroblock
+        // row supplying its upsampled chroma has been reconstructed, committing that row
+        // from unwritten planes.
         let (w, h) = (32u32, 48u32);
         let rgba = rgba_image(w, h, |x, y| [byte(y * 5), byte(x * 3), byte((x + y) * 2)]);
-        let payload = encode_payload(&rgba, w, h, Effort::Fast, 80);
+        let payload = encode_payload(&rgba, w, h, Effort::level(0), 80);
         assert_stream_equivalence(&payload);
     }
 
@@ -899,7 +900,7 @@ mod tests {
     #[test]
     fn streaming_a_skipped_macroblock_advances_the_column() {
         // A flat frame codes every macroblock with `mb_skip_coeff = 1` (all-zero
-        // residuals) under `Effort::Balanced` (`use_skip` on), so the streaming
+        // residuals) under a `Full`-tier effort (`use_skip` on), so the streaming
         // decoder takes the skip branch and must ADVANCE `mb_x` past it. Decrementing
         // instead underflows `mb_x` below 0. The frame is one macroblock wide
         // (`mb_w == 1`), so every skip is at column 0: a `-=` underflows `0usize`
@@ -908,7 +909,7 @@ mod tests {
         // an interior row predicts from its flat, already-reconstructed neighbor.
         let (w, h) = (16u32, 48u32);
         let rgba = rgba_image(w, h, |_, _| [128, 128, 128]);
-        let payload = encode_payload(&rgba, w, h, Effort::Balanced, 90);
+        let payload = encode_payload(&rgba, w, h, Effort::level(4), 90);
         assert_stream_equivalence(&payload);
     }
 

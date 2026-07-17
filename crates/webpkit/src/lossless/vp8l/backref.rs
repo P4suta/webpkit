@@ -572,8 +572,8 @@ pub(crate) fn parse_optimal(
     }
     // Backward pass: the `cost`/`chain`/`cands` scratch and the cost model exist
     // only to fill `choice`. Scope them so they drop before the forward
-    // reconstruction allocates the token list, keeping the `cost` (8·n bytes) and
-    // hash chain off the memory high-water mark during that final allocation. Only
+    // reconstruction allocates the token list, keeping the `cost` ring and hash
+    // chain off the memory high-water mark during that final allocation. Only
     // `choice` escapes, so the recorded decisions — and the emitted tokens — are
     // unchanged.
     let choice = {
@@ -590,8 +590,16 @@ pub(crate) fn parse_optimal(
         // map once rather than rescanning the 120-entry table for every candidate.
         let plane_map = PlaneCodeMap::new(width);
 
-        // cost[i] = minimal Q16 cost to code pixels[i..]; cost[n] = 0.
-        let mut cost = vec![0u64; n + 1];
+        // `cost[p]` = minimal Q16 cost to code `pixels[p..]`, with `cost[n] = 0`.
+        // Computing `cost[i]` reads only `cost[i + 1 ..= i + max_len]` and
+        // `max_len <= MAX_COPY_LENGTH`, so at most `MAX_COPY_LENGTH + 1` values are
+        // ever live at once. Storing them in a ring of that span (indexed `p % ring`)
+        // holds every value still needed and bounds this scratch to
+        // O(MAX_COPY_LENGTH) instead of O(n): the slot for `i` last held `i + ring`,
+        // which is outside the read span and therefore dead, so overwriting it after
+        // the reads yields the identical values a full `cost[0..=n]` array would.
+        let ring = (n + 1).min(MAX_COPY_LENGTH as usize + 1);
+        let mut cost = vec![0u64; ring];
         let mut choice = vec![Choice::Literal; n];
         let mut cands: Vec<(u32, u32)> = Vec::new();
         // Carries each position's per-distance match lengths to the next (`i - 1`)
@@ -604,7 +612,7 @@ pub(crate) fn parse_optimal(
             // tiebreak keeps ties -> literal, matching the greedy floor).
             let mut best = cost_model
                 .literal_cost(pixels[i])
-                .saturating_add(cost[i + 1]);
+                .saturating_add(cost[(i + 1) % ring]);
             let mut best_choice = Choice::Literal;
             chain.find_candidates(pixels, i, &mut cands, &mut memo);
             for &(dist, len) in &cands {
@@ -613,13 +621,13 @@ pub(crate) fn parse_optimal(
                 let (dist_symbol, dist_bits, _) = prefix_encode(plane_code);
                 let c = cost_model
                     .copy_cost(length_symbol, length_bits, dist_symbol, dist_bits)
-                    .saturating_add(cost[i + len as usize]);
+                    .saturating_add(cost[(i + len as usize) % ring]);
                 if c < best {
                     best = c;
                     best_choice = Choice::Copy { len, dist };
                 }
             }
-            cost[i] = best;
+            cost[i % ring] = best;
             choice[i] = best_choice;
             // This position's records become the previous ones for `i - 1`.
             memo.advance();

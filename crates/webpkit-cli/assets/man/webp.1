@@ -46,18 +46,18 @@ Force lossy (VP8) encoding
 Near\-lossless preprocessing 0\-100 (lower = stronger; implies lossless)
 .TP
 \fB\-m\fR, \fB\-\-method\fR \fI<METHOD>\fR
-Encoder effort [default: balanced, or from env/config]
+Encoder effort [default: auto, or from env/config]
 .br
 
 .br
 \fIPossible values:\fR
 .RS 14
 .IP \(bu 2
-fast: Fastest: literal + subtract\-green only
+auto: Adapt the search depth to the image\*(Aqs content and size (the default)
 .IP \(bu 2
-balanced: Balanced (the default): LZ77 + color cache
+fast: Fastest: the shallowest fixed search
 .IP \(bu 2
-best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
+best: Smallest: the deepest fixed search
 .RE
 .TP
 \fB\-\-metadata\fR \fI<METADATA>\fR
@@ -112,6 +112,12 @@ Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .TP
 webp\-convert(1)
 Batch\-convert many images (or directories) to WebP, in parallel
+.TP
+webp\-animate(1)
+Assemble still images into an animated WebP (surpasses img2webp/gif2webp)
+.TP
+webp\-mux(1)
+Edit an animated WebP without re\-encoding frames (webpmux\-parity muxing)
 .TP
 webp\-info(1)
 Print a summary of a WebP file (size, alpha, metadata, animation)

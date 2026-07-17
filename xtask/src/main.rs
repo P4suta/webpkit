@@ -87,13 +87,13 @@ enum Task {
         /// Rewrite `corpus/metrics.json` instead of gating against it.
         #[arg(long)]
         bless: bool,
-        /// After the gate/bless, print a size comparison of our `Effort::Best`
+        /// After the gate/bless, print a size comparison of our deepest-effort (`l9`)
         /// encoder against libwebp `cwebp -m 6`. Printed only — it writes no
         /// file and never gates (it needs libwebp; it soft-skips when absent).
         #[arg(long)]
         vs_libwebp: bool,
-        /// Instead of the synthetic ledger, print a size comparison of our
-        /// `Effort::Best` encoder vs libwebp `cwebp -m 6` over the real images
+        /// Instead of the synthetic ledger, print a size comparison of our deepest-effort
+        /// (`l9`) encoder vs libwebp `cwebp -m 6` over the real images
         /// in this directory. Print-only: it writes no file and never gates, and
         /// the path is a pure runtime argument (no image path is baked into the
         /// tool). Soft-skips when libwebp is unavailable.
@@ -157,7 +157,7 @@ enum Task {
         #[arg(long, default_value_t = 5)]
         iters: u32,
         /// Benchmark only the first N images (in sorted name order) for a fast
-        /// smoke; `0` means all. The heavy `Effort::Best` timing makes a small
+        /// smoke; `0` means all. The heavy deep-effort (`l9`) timing makes a small
         /// `--limit` the quick inner-loop signal.
         #[arg(long, default_value_t = 0)]
         limit: usize,

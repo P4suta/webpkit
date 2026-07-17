@@ -696,10 +696,10 @@ mod tests {
     #[test]
     fn paint_rejects_a_length_mismatched_frame_buffer() {
         // The compositor slices `argb` row by row on the assumption `argb.len() ==
-        // w*h`. `paint` is public and `FrameDecoder` is a public trait, so a caller
-        // can hand it a buffer that disagrees with the header. That must be a clean
-        // `InvalidContainer`, never an out-of-bounds panic in the row loop. Without
-        // the length guard, the short-buffer case below panics on the slice.
+        // w*h`. Any of the crate's own frame decoders could hand it a buffer that
+        // disagrees with the header. That must be a clean `InvalidContainer`, never
+        // an out-of-bounds panic in the row loop. Without the length guard, the
+        // short-buffer case below panics on the slice.
         let canvas = Dimensions::new(4, 4).unwrap();
         let fill = 0xFF00_FF00u32;
         // Header declares a 4x4 (16px) frame; buffers are deliberately wrong-sized.

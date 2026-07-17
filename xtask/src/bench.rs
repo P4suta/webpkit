@@ -119,7 +119,7 @@ fn throughput_mpps(units: f64, elapsed: Duration) -> String {
     if secs <= 0.0 {
         return "inf".to_owned();
     }
-    // Adaptive precision: the range spans the slow `Effort::Best` encode (~0.05)
+    // Adaptive precision: the range spans the slow deep-effort (`l9`) encode (~0.05)
     // to fast PNG-icon decode (~300+), so more decimals are kept for small values
     // where a single fixed decimal would collapse the serial-vs-rayon delta to 0.0.
     let v = units / secs / 1_000_000.0;
@@ -141,8 +141,9 @@ fn throughput_mpps(units: f64, elapsed: Duration) -> String {
 /// criterion plane (see `docs/benchmarking.md`), so this is never gated; it needs
 /// libwebp (`cwebp`) to read sources into ARGB and soft-skips when it is absent.
 ///
-/// Each image is encoded with `Effort::Balanced` and `Effort::Best` and decoded
-/// from our own Best stream (so the timed bytes are a real webpkit stream, not
+/// Each image is encoded at the adaptive `AUTO` effort and the deepest level
+/// (`l9`) and decoded from our own `l9` stream (so the timed bytes are a real
+/// webpkit stream, not
 /// cwebp's); every op is timed best-of-`iters`. Encode reports raw-RGBA MB/s and
 /// decode reports Mpixels/s, matching the criterion benches' throughput basis.
 /// Wall-clock / `f64` math is fine here: xtask is a CLI boundary, not the codec.
@@ -166,7 +167,7 @@ pub(crate) fn bench_real(real: &Path, max_edge: u32, iters: u32, limit: usize) -
     );
     println!(
         "  {:<32} {:>11} {:>12} {:>12} {:>12}",
-        "file", "dims", "enc bal MB/s", "enc best MB/s", "dec MP/s"
+        "file", "dims", "enc auto MB/s", "enc l9 MB/s", "dec MP/s"
     );
 
     let mut prepared = prepare_real_images(&cwebp, real, max_edge)?;
@@ -174,9 +175,9 @@ pub(crate) fn bench_real(real: &Path, max_edge: u32, iters: u32, limit: usize) -
     if limit > 0 {
         prepared.truncate(limit);
     }
-    let balanced =
-        webpkit::lossless::EncoderConfig::new().with_effort(webpkit::lossless::Effort::Balanced);
-    let best = webpkit::lossless::EncoderConfig::new().with_effort(webpkit::lossless::Effort::Best);
+    let auto = webpkit::lossless::EncoderConfig::new().with_effort(webpkit::lossless::Effort::AUTO);
+    let best =
+        webpkit::lossless::EncoderConfig::new().with_effort(webpkit::lossless::Effort::level(9));
 
     let mut measured = 0usize;
     for item in &prepared {
@@ -206,7 +207,7 @@ pub(crate) fn bench_real(real: &Path, max_edge: u32, iters: u32, limit: usize) -
                 webpkit::lossless::PixelLayout::Rgba8,
                 rgba,
             )?;
-            Ok(webpkit::lossless::encode(image, &balanced)?.len())
+            Ok(webpkit::lossless::encode(image, &auto)?.len())
         })?;
         let enc_best = best_time(iters, || {
             let image = webpkit::lossless::ImageRef::new(

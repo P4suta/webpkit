@@ -41,7 +41,7 @@ fn encode_sample(content: Content, edge: u32) -> Option<Vec<u8>> {
     let sample = render(content, edge);
     let dims = Dimensions::new(edge, edge).ok()?;
     let image = ImageRef::new(dims, PixelLayout::Rgba8, &sample.rgba).ok()?;
-    let config = EncoderConfig::new().with_effort(Effort::Balanced);
+    let config = EncoderConfig::new().with_effort(Effort::AUTO);
     webpkit::lossless::encode(image, &config).ok()
 }
 

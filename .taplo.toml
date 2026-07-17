@@ -2,7 +2,18 @@
 # https://taplo.tamasfe.dev/configuration/file.html
 
 include = ["**/*.toml"]
-exclude = ["target/**", "artifacts/**", "node_modules/**"]
+# `mutants.out*` and the root-anchored `mutants-*` sweep dirs mirror the same
+# cargo-mutants scratch exclusion in `.gitignore`: an ad-hoc sweep writes exclude
+# fragments there that are not standalone TOML, and linting that ephemeral output
+# would false-fail after any local `just mutants` run.
+exclude = [
+    "target/**",
+    "artifacts/**",
+    "node_modules/**",
+    "mutants.out/**",
+    "mutants.out.old/**",
+    "mutants-*/**",
+]
 
 [formatting]
 align_entries = false

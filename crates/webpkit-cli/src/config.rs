@@ -272,9 +272,9 @@ settings! {
     /// Lossy quality, 0-100 (higher is larger and closer to the source).
     quality: Quality = Quality::DEFAULT, env "WEBP_QUALITY", key "quality",
         desc "quality: lossy quality 0-100 (higher is larger, closer to the source).";
-    /// Encoder effort: fast, balanced, or best.
-    effort: Effort = Effort::Balanced, env "WEBP_EFFORT", key "effort",
-        desc "effort: encoder effort — fast, balanced, or best.";
+    /// Encoder effort: `auto` (the default) or a fixed level `0..=9`.
+    effort: Effort = Effort::AUTO, env "WEBP_EFFORT", key "effort",
+        desc "effort: encoder effort — auto, or a fixed level 0-9.";
     /// Codec: lossless (VP8L) or lossy (VP8).
     codec: Codec = Codec::Lossless, env "WEBP_CODEC", key "codec",
         desc "codec: lossless or lossy.";

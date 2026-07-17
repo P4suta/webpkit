@@ -13,18 +13,18 @@ Batch\-convert many images (or directories) to WebP, in parallel
 Output directory (created outputs are `<stem>.webp`); default: beside input
 .TP
 \fB\-m\fR, \fB\-\-method\fR \fI<METHOD>\fR
-Encoder effort (ignored with \-\-optimize) [default: balanced, or from env/config]
+Encoder effort (ignored with \-\-optimize) [default: auto, or from env/config]
 .br
 
 .br
 \fIPossible values:\fR
 .RS 14
 .IP \(bu 2
-fast: Fastest: literal + subtract\-green only
+auto: Adapt the search depth to the image\*(Aqs content and size (the default)
 .IP \(bu 2
-balanced: Balanced (the default): LZ77 + color cache
+fast: Fastest: the shallowest fixed search
 .IP \(bu 2
-best: Smallest: adds Tier 3 forward transforms and meta\-Huffman on top of Balanced
+best: Smallest: the deepest fixed search
 .RE
 .TP
 \fB\-\-lossless\fR

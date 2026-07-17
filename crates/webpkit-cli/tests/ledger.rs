@@ -42,6 +42,8 @@ fn assets() -> Vec<(PathBuf, Vec<&'static str>)> {
         "encode",
         "decode",
         "convert",
+        "animate",
+        "mux",
         "info",
         "diff",
         "doctor",

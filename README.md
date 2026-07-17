@@ -192,7 +192,8 @@ animation carries no metadata (the animation encoder does not model it).
 pixels, exactly where libwebp's `cwebp` does them. Output **dimensions** match
 libwebp for the same arguments; **pixels do not** — crop is exact, but resize uses
 our own resampler, not libwebp's rescaler. `--target-size` bisects lossy quality
-(shown under `-v`) rather than libwebp's opaque internal multi-pass.
+(shown under `-v`), a transparent alternative to libwebp's opaque internal
+multi-pass; `-pass`/`--pass` additionally exposes the entropy-refinement passes directly.
 
 > **Breaking (0.2, pre-1.0).** For the `webp` tool: (1) **`-q` is now
 > `--quality`**, not `--quiet` — `--quiet` is long-only, and a non-numeric `-q`
@@ -213,10 +214,12 @@ our own resampler, not libwebp's rescaler. `--target-size` bisects lossy quality
 | `cwebp in.png -o out.webp -metadata none` | same | strip all |
 | `cwebp in.png -o out.webp -crop x y w h` | same | supported; output **dimensions** match libwebp, **pixels differ** (own crop) |
 | `cwebp in.png -o out.webp -resize w h` | same | supported; dimensions match libwebp, pixels differ (own resampler, not libwebp's); `0` on one axis keeps aspect |
-| `cwebp in.png -o out.webp -size 200000` | same | supported; CLI-side bisection over lossy quality to hit the byte budget (`-v` shows the search) |
+| `cwebp in.png -o out.webp -size 200000` | same | supported; a codec-native bisection over lossy quality to hit the byte budget (`-v` shows the search) |
 | `cwebp in.png -o out.webp -psnr 40` | same | supported; a PSNR floor for the quality search |
+| `cwebp in.png -o out.webp -pass 6` | same | supported; entropy-refinement passes (`1..=10`; `1` is byte-identical to a single pass) |
 | `cwebp in.png -o out.webp -near_lossless 60` | same | near-lossless preprocessing (`0..=100`, lower = stronger; implies lossless) |
-| `cwebp in.png -o out.webp -sns ...` / `-f` / `-sharpness` / `-segments` / `-pass` / `-jpeg_like` | *(error)* | internal encoder-tuning knobs webpkit does not expose (rejected, not ignored) |
+| `cwebp in.png -o out.webp -preset photo -sns ...` / `-f` / `-sharpness` / `-segments` / `-sharp_yuv` / `-alpha_q` / `-jpeg_like` / `-partition_limit` / `-exact` | same | supported; psychovisual/RD tuning knobs and content presets, each byte-neutral at its default |
+| `cwebp in.png -o out.webp -blend_alpha` / `-hint` / `-af` / `-pre` / `-map` | *(error)* | the true residue webpkit does not model (rejected, not silently ignored) |
 | `dwebp in.webp -o out.png` | same | decodes VP8L or VP8; default PNG |
 | `dwebp in.webp -o out.ppm -ppm` | same | netpbm output (also `-pam`) |
 | `dwebp in.webp -o out.bmp -bmp` / `-tiff` | same | via the `image` crate (`formats` feature; rejected under `--no-default-features`) |

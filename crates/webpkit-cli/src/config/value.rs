@@ -213,12 +213,14 @@ impl ConfigValue for MaxPixels {
 
 impl ConfigValue for webpkit::Effort {
     fn parse(text: &str) -> Result<Self, String> {
-        match text.trim().to_ascii_lowercase().as_str() {
-            "fast" => Ok(Self::Fast),
-            "balanced" => Ok(Self::Balanced),
-            "best" => Ok(Self::Best),
-            other => Err(format!(
-                "effort must be fast, balanced, or best, got `{other}`"
+        let text = text.trim().to_ascii_lowercase();
+        if text == "auto" {
+            return Ok(Self::AUTO);
+        }
+        match text.parse::<u8>() {
+            Ok(level) if level <= 9 => Ok(Self::level(level)),
+            _ => Err(format!(
+                "effort must be `auto` or a level 0-9, got `{text}`"
             )),
         }
     }
@@ -226,17 +228,20 @@ impl ConfigValue for webpkit::Effort {
     fn from_toml(value: &toml::Value) -> Result<Self, String> {
         let text = value
             .as_str()
-            .ok_or_else(|| "effort must be a string (fast, balanced, or best)".to_owned())?;
+            .ok_or_else(|| "effort must be a string (`auto` or a level 0-9)".to_owned())?;
         Self::parse(text)
     }
 
     fn render(&self) -> String {
-        match self {
-            Self::Fast => "fast",
-            Self::Balanced => "balanced",
-            Self::Best => "best",
+        // `Effort` exposes no level getter, so recover the label by probing the
+        // public constructors — the inverse of `parse`, exhaustive over the value
+        // space (`AUTO` or a `0..=9` level).
+        if *self == Self::AUTO {
+            return "auto".to_owned();
         }
-        .to_owned()
+        (0..=9u8)
+            .find(|&level| *self == Self::level(level))
+            .map_or_else(|| "auto".to_owned(), |level| level.to_string())
     }
 
     fn toml_literal(&self) -> String {

@@ -5,6 +5,7 @@
 //! keeps the smallest output.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rayon::prelude::*;
 
@@ -62,18 +63,34 @@ pub(crate) struct Outcome {
     pub(crate) lines: Vec<(bool, String)>,
 }
 
-/// Convert every input file (expanding directories) to WebP.
+/// Convert every input file (expanding directories) to WebP, calling `on_progress`
+/// with `(completed, total)` as each file finishes (from the rayon workers, so it
+/// must be `Sync`) so the caller can render a live counter.
 ///
 /// # Errors
 ///
 /// [`CliError`] only for a failure that prevents the whole run (e.g. a
 /// directory that cannot be read); per-file failures are recorded in the
 /// returned [`Outcome`].
-pub(crate) fn convert(inputs: &[PathBuf], options: &Options) -> Result<Outcome, CliError> {
+pub(crate) fn convert(
+    inputs: &[PathBuf],
+    options: &Options,
+    on_progress: impl Fn(usize, usize) + Sync,
+) -> Result<Outcome, CliError> {
     let files = io::collect_files(inputs, options.recursive, &is_image)?;
+    let total = files.len();
+    let done = AtomicUsize::new(0);
     let results: Vec<Result<Conversion, String>> = files
         .par_iter()
-        .map(|path| convert_one(path, options).map_err(|err| format!("{}: {err}", path.display())))
+        .map(|path| {
+            let result =
+                convert_one(path, options).map_err(|err| format!("{}: {err}", path.display()));
+            // Report completion order, not file order — the counter tracks progress,
+            // not which file; `fetch_add` returns the prior value, so `+ 1` is this
+            // file's 1-based position.
+            on_progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
+            result
+        })
         .collect();
 
     let mut outcome = Outcome::default();
@@ -136,7 +153,15 @@ fn convert_one(path: &Path, options: &Options) -> Result<Conversion, CliError> {
     // effort sweep, else a single encode. Resolving through `Strategy` is what makes
     // `--optimize --lossy` a usage error rather than a silently dropped flag.
     let webp = if format == InputFormat::Gif {
-        codec::encode_input(&bytes, format, mode, options.metadata, true)?.bytes
+        codec::encode_input(
+            &bytes,
+            format,
+            mode,
+            options.metadata,
+            true,
+            codec::AnimOptimize::default(),
+        )?
+        .bytes
     } else {
         let strategy = Strategy::resolve(mode, derived, options.optimize, None)?;
         let image = format::read_image(&bytes, format, None)?;

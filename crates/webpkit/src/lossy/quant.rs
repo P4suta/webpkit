@@ -160,6 +160,28 @@ pub(crate) fn quality_to_base_q(quality: u8) -> i32 {
     i32::from(QUALITY_TO_BASE_Q[usize::from(quality.min(100))])
 }
 
+/// The activity value that produces a zero SNS quant delta — the midpoint of the
+/// `0..=255` activity range, so a mid-activity block is neither coarsened nor refined.
+const SNS_NEUTRAL_ACTIVITY: i32 = 128;
+/// Divisor mapping the `activity × strength` product to quantizer-index units. Sized so
+/// the extreme (`|activity - 128| = 128`, `strength = 100`) delta stays a handful of
+/// index steps rather than swinging across the whole table.
+const SNS_QUANT_SCALE: i32 = 512;
+
+/// The zero-centered SNS quantizer-index delta for a macroblock of texture `activity`
+/// (`0..=255`, mid `128`) at spatial-noise-shaping `strength` (`0..=100`). A flat
+/// (low-activity) block is coded finer (negative delta, more bits where the eye sees
+/// error); a busy block is coarsened (positive delta, texture masks the loss). Anchored
+/// on the base quantizer curve rather than libwebp's `pow` law — no float, no LUT.
+///
+/// A mid activity or a zero strength returns exactly `0`, so a single-segment frame (and
+/// any frame encoded at strength `0`) is byte-identical to the pre-SNS quantizer.
+pub(crate) fn sns_quant_delta(activity: u8, strength: u8) -> i32 {
+    let centered = i32::from(activity) - SNS_NEUTRAL_ACTIVITY;
+    let strength = i32::from(strength.min(100));
+    centered * strength / SNS_QUANT_SCALE
+}
+
 /// Clamp a quantizer index into the luma/AC table range `0..=127` (mirrors
 /// `header.rs::clip_q`).
 fn clip_q(v: i32) -> i32 {
@@ -273,6 +295,23 @@ mod tests {
                 "sample {i}: got {got}, want ~{want}"
             );
         }
+    }
+
+    #[test]
+    fn sns_quant_delta_is_zero_centered_and_signed() {
+        use super::sns_quant_delta;
+        // Neutral activity or zero strength => exactly zero (the byte-identity anchor).
+        assert_eq!(sns_quant_delta(128, 100), 0, "mid activity => 0 delta");
+        assert_eq!(sns_quant_delta(0, 0), 0, "zero strength => 0 delta");
+        assert_eq!(sns_quant_delta(255, 0), 0, "zero strength => 0 delta");
+        // Flat (low activity) refines (negative); busy (high activity) coarsens (positive).
+        assert!(sns_quant_delta(0, 100) < 0, "flat block coded finer");
+        assert!(sns_quant_delta(255, 100) > 0, "busy block coarsened");
+        // Monotonic in strength and symmetric in magnitude about the midpoint.
+        assert!(sns_quant_delta(200, 100) > sns_quant_delta(200, 40));
+        assert_eq!(sns_quant_delta(64, 100), -sns_quant_delta(192, 100));
+        // Strength saturates at 100.
+        assert_eq!(sns_quant_delta(255, 200), sns_quant_delta(255, 100));
     }
 
     #[test]

@@ -85,27 +85,65 @@ use alloc::vec::Vec;
 // That feature is off on crates.io / docs.rs, so a downstream user never sees — and
 // can never depend on — the internals. (`encoder`/`interop`/`prelude` stay private
 // regardless: their public items are already re-exported through the facade.)
-macro_rules! internal_modules {
+//
+// The default-build declarations are literal `pub(crate) mod` items so the `syn`
+// source walk in cargo-mutants descends into every codec file — a macro-hidden mod
+// tree is invisible to the mutation gate and would silently leave the whole codec
+// unmutated. The `__internals` re-exposure is instead macro-generated: it is only
+// active under a feature the mutation sweep never builds, and routing it through a
+// macro keeps the walk from seeing a *second* declaration of each file (which would
+// double every codec mutant). So the sweep sees exactly one copy per module.
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod alpha;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod anim;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod container;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod effort;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod error;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod geometry;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod image;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod lossless;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod lossy;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod mux;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod optimize;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod stream;
+#[cfg(all(not(feature = "__internals"), feature = "work-count"))]
+pub(crate) mod work_count;
+#[cfg(not(feature = "__internals"))]
+pub(crate) mod yuv;
+
+#[cfg(feature = "__internals")]
+macro_rules! expose_internals {
     ($($(#[$attr:meta])* $name:ident),* $(,)?) => { $(
-        #[cfg(feature = "__internals")]
         #[doc(hidden)]
         $(#[$attr])*
         pub mod $name;
-        #[cfg(not(feature = "__internals"))]
-        $(#[$attr])*
-        pub(crate) mod $name;
     )* };
 }
 
-internal_modules! {
+#[cfg(feature = "__internals")]
+expose_internals! {
     alpha,
     anim,
     container,
     effort,
     error,
+    geometry,
     image,
     lossless,
     lossy,
+    mux,
+    optimize,
     stream,
     yuv,
     #[cfg(feature = "work-count")]
@@ -132,15 +170,24 @@ pub use crate::effort::Effort;
 #[cfg(feature = "std")]
 pub use crate::error::IoError;
 pub use crate::error::{Codec, Error, Result};
+pub use crate::geometry::Rect;
 pub use crate::image::{
     Dimensions, Image, ImageRef, MAX_DIMENSION, Metadata, MetadataPolicy, PixelLayout,
 };
+pub use crate::mux::{AnimationMux, MuxFrame};
+pub use crate::optimize::AnimationOptimizer;
 pub use crate::stream::{DEFAULT_MAX_PIXELS, DecodeOptions, ImageInfo, Progress, RowDrain};
 pub use crate::yuv::YuvImage;
 // Only the entry points and the codec selector reach the crate root; the type-state
 // markers (`Empty`/`HasFrames`/`Lossless`/`Lossy`) stay in `webpkit::encoder`, named
 // only in the rare code that spells out an encoder's type argument.
 pub use encoder::{AnimCodec, AnimationEncoder, Encoder};
+// The lossy psychovisual tuning surface, exposed at the crate root because it appears
+// in the facade `Encoder::<Lossy>::tuning` signature (the `lossy` module itself is
+// `pub(crate)` in a normal build).
+pub use crate::lossy::{
+    AlphaFilterMode, AlphaMethod, Attempt, LossyParams, LossyTuning, Preset, RateSearch, RateTarget,
+};
 
 // ---- imports used by the facade functions below -----------------------------
 use crate::alpha::{AlphaCompression, parse_header, unfilter};
@@ -736,7 +783,7 @@ impl crate::stream::FrameDecoder for WebpFrameDecoder {
         if let Some(limit) = options.max_pixels.filter(|&l| pixels > l) {
             return Err(Error::LimitExceeded { pixels, limit });
         }
-        let (dims, mut argb) = crate::lossy::decode_argb(payload)?;
+        let (dims, mut argb) = crate::lossy::decode_argb_with(payload, options)?;
         if dims != frame.dims {
             return Err(Error::InvalidContainer);
         }
@@ -915,10 +962,14 @@ pub fn read_metadata(input: &[u8]) -> Result<Metadata> {
     let mut metadata = Metadata::none();
     for chunk in crate::container::reader::chunks(input)? {
         let chunk = chunk?;
+        // First-wins, mirroring the `image.is_none()` VP8L guard: a duplicate
+        // `ICCP`/`EXIF`/`XMP ` must not silently override the earlier one.
         match chunk.id {
-            FourCc::ICCP => metadata.icc_profile = Some(chunk.data.to_vec()),
-            FourCc::EXIF => metadata.exif = Some(chunk.data.to_vec()),
-            FourCc::XMP => metadata.xmp = Some(chunk.data.to_vec()),
+            FourCc::ICCP if metadata.icc_profile.is_none() => {
+                metadata.icc_profile = Some(chunk.data.to_vec());
+            },
+            FourCc::EXIF if metadata.exif.is_none() => metadata.exif = Some(chunk.data.to_vec()),
+            FourCc::XMP if metadata.xmp.is_none() => metadata.xmp = Some(chunk.data.to_vec()),
             _ => {},
         }
     }
@@ -1569,7 +1620,7 @@ mod tests {
         }
         let dims = Dimensions::new(16, 16).unwrap();
         let img = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
-        for effort in [Effort::Fast, Effort::Balanced, Effort::Best] {
+        for effort in [Effort::level(0), Effort::AUTO, Effort::level(9)] {
             let file = Encoder::lossy()
                 .quality(90)
                 .effort(effort)

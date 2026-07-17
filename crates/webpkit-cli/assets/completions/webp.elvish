@@ -25,8 +25,8 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand -q 'Lossy quality 0-100 (higher = larger, closer to source); selects lossy'
             cand --quality 'Lossy quality 0-100 (higher = larger, closer to source); selects lossy'
             cand --near-lossless 'Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)'
-            cand -m 'Encoder effort [default: balanced, or from env/config]'
-            cand --method 'Encoder effort [default: balanced, or from env/config]'
+            cand -m 'Encoder effort [default: auto, or from env/config]'
+            cand --method 'Encoder effort [default: auto, or from env/config]'
             cand --metadata 'Metadata to embed: all,none,icc,exif,xmp (default: all)'
             cand --crop 'Crop before encoding: `x,y,width,height` in pixels (applied before --resize)'
             cand --resize 'Resize before encoding: `WxH` (use 0 on one axis to keep aspect)'
@@ -47,6 +47,8 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand decode 'Decode a WebP file to PNG (default), PPM/PAM, or raw pixels'
             cand encode 'Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file'
             cand convert 'Batch-convert many images (or directories) to WebP, in parallel'
+            cand animate 'Assemble still images into an animated WebP (surpasses img2webp/gif2webp)'
+            cand mux 'Edit an animated WebP without re-encoding frames (webpmux-parity muxing)'
             cand info 'Print a summary of a WebP file (size, alpha, metadata, animation)'
             cand meta 'Read, set, or strip a WebP file''s metadata (ICC/Exif/XMP), without re-encoding the image'
             cand diff 'Compare two images: report PSNR and the largest per-channel difference'
@@ -81,8 +83,8 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --width 'Raw-input width in pixels (required for raw input)'
             cand --height 'Raw-input height in pixels (required for raw input)'
             cand --layout 'Byte order for raw input only'
-            cand -m 'Encoder effort [default: balanced, or from env/config]'
-            cand --method 'Encoder effort [default: balanced, or from env/config]'
+            cand -m 'Encoder effort [default: auto, or from env/config]'
+            cand --method 'Encoder effort [default: auto, or from env/config]'
             cand -q 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy'
             cand --quality 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy'
             cand --near-lossless 'Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)'
@@ -91,10 +93,15 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --target-size 'Target output size, e.g. `200k` or `2M`, found by searching lossy quality'
             cand --min-psnr 'Target reconstruction PSNR floor in dB (lossy only; pairs with --target-size)'
             cand --metadata 'Metadata to embed: all,none,icc,exif,xmp (default: all — kinder than cwebp)'
+            cand --kmax 'With --optimize: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first)'
+            cand --kmin 'With --optimize: never place keyframes closer than N frames apart (gif2webp -kmin)'
             cand --color 'auto, always, or never [default: auto, or from env/config]'
             cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
             cand --lossless 'Force lossless (VP8L). The default is source-derived: JPEG → lossy, else lossless'
             cand --lossy 'Encode lossily (VP8) instead of losslessly (VP8L)'
+            cand --optimize 'Inter-frame optimize a GIF animation: encode each frame as a minimal delta'
+            cand --mixed 'With --optimize: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed)'
+            cand --min-size 'With --optimize: exhaustively search each frame''s rect/blend/dispose/codec (gif2webp `-min_size`)'
             cand -v 'Print per-stage detail on stderr'
             cand --verbose 'Print per-stage detail on stderr'
             cand --quiet 'Suppress all non-error output'
@@ -105,8 +112,8 @@ set edit:completion:arg-completer[webp] = {|@words|
         &'webp;convert'= {
             cand -o 'Output directory (created outputs are `<stem>.webp`); default: beside input'
             cand --output 'Output directory (created outputs are `<stem>.webp`); default: beside input'
-            cand -m 'Encoder effort (ignored with --optimize) [default: balanced, or from env/config]'
-            cand --method 'Encoder effort (ignored with --optimize) [default: balanced, or from env/config]'
+            cand -m 'Encoder effort (ignored with --optimize) [default: auto, or from env/config]'
+            cand --method 'Encoder effort (ignored with --optimize) [default: auto, or from env/config]'
             cand -q 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy'
             cand --quality 'Lossy quality 0-100 (higher = larger, closer to source); selects --lossy'
             cand --near-lossless 'Near-lossless preprocessing 0-100 (lower = stronger; implies lossless)'
@@ -126,6 +133,136 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand --dry-run 'Report what would be written, without encoding or writing anything'
             cand -h 'Print help (see more with ''--help'')'
             cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;animate'= {
+            cand -o 'Output `.webp` file; `-` writes stdout'
+            cand --output 'Output `.webp` file; `-` writes stdout'
+            cand --delay 'Per-frame delay in ms: one value for every frame, or a comma list (`40,40,80`)'
+            cand --loop 'Loop count; `0` (the default) loops forever'
+            cand --bgcolor 'Advisory background color as `RRGGBBAA` hex (e.g. `ffffffff`)'
+            cand --dispose 'Disposal method applied to every frame'
+            cand --blend 'Blend method applied to every frame'
+            cand --lossy 'Encode frames lossily (VP8) at this quality 0-100; the default is lossless'
+            cand --canvas 'Canvas size as `WxH`; defaults to the largest frame'
+            cand -m 'Encoder effort [default: auto, or from env/config]'
+            cand --method 'Encoder effort [default: auto, or from env/config]'
+            cand --input-format 'Force the input format instead of sniffing each file'
+            cand --kmax 'With --optimize: force a keyframe at least every N frames (gif2webp -kmax; 0 = only the first)'
+            cand --kmin 'With --optimize: never place keyframes closer than N frames apart (gif2webp -kmin)'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
+            cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
+            cand --optimize 'Inter-frame optimize: encode each frame as a minimal delta against the canvas'
+            cand --mixed 'With --optimize: trial each frame lossy and lossless, keep the smaller (gif2webp -mixed)'
+            cand --min-size 'With --optimize: exhaustively search each frame''s rect/blend/dispose/codec (gif2webp `-min_size`)'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand --quiet 'Suppress all non-error output'
+            cand --dry-run 'Report what would be written, without encoding or writing anything'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;mux'= {
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
+            cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand --quiet 'Suppress all non-error output'
+            cand --dry-run 'Report what would be written, without encoding or writing anything'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+            cand get-frame 'Extract one frame as a standalone still WebP (bytes copied verbatim)'
+            cand set 'Rewrite the loop count and/or background color'
+            cand remove 'Remove one frame, rebuilding the frame list'
+            cand insert 'Insert a still WebP as a new frame (its image bytes copied verbatim)'
+            cand replace 'Replace one frame''s image with a still WebP, keeping its placement/timing'
+            cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'webp;mux;get-frame'= {
+            cand -o 'Output `.webp` file; `-` writes stdout'
+            cand --output 'Output `.webp` file; `-` writes stdout'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
+            cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand --quiet 'Suppress all non-error output'
+            cand --dry-run 'Report what would be written, without encoding or writing anything'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;mux;set'= {
+            cand -o 'Output `.webp` file; `-` writes stdout'
+            cand --output 'Output `.webp` file; `-` writes stdout'
+            cand --loop 'New loop count (`0` loops forever)'
+            cand --bgcolor 'New background color as `RRGGBBAA` hex'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
+            cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand --quiet 'Suppress all non-error output'
+            cand --dry-run 'Report what would be written, without encoding or writing anything'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;mux;remove'= {
+            cand -o 'Output `.webp` file; `-` writes stdout'
+            cand --output 'Output `.webp` file; `-` writes stdout'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
+            cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand --quiet 'Suppress all non-error output'
+            cand --dry-run 'Report what would be written, without encoding or writing anything'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;mux;insert'= {
+            cand -o 'Output `.webp` file; `-` writes stdout'
+            cand --output 'Output `.webp` file; `-` writes stdout'
+            cand --at '0-based index to insert at; defaults to appending at the end'
+            cand --delay 'The new frame''s display duration in ms'
+            cand --blend 'The new frame''s blend method'
+            cand --dispose 'The new frame''s disposal method'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
+            cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand --quiet 'Suppress all non-error output'
+            cand --dry-run 'Report what would be written, without encoding or writing anything'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;mux;replace'= {
+            cand -o 'Output `.webp` file; `-` writes stdout'
+            cand --output 'Output `.webp` file; `-` writes stdout'
+            cand --at '0-based index of the frame to replace'
+            cand --color 'auto, always, or never [default: auto, or from env/config]'
+            cand --threads 'Worker threads for parallel work; 0 (the default) uses one per core'
+            cand -v 'Print per-stage detail on stderr'
+            cand --verbose 'Print per-stage detail on stderr'
+            cand --quiet 'Suppress all non-error output'
+            cand --dry-run 'Report what would be written, without encoding or writing anything'
+            cand -h 'Print help (see more with ''--help'')'
+            cand --help 'Print help (see more with ''--help'')'
+        }
+        &'webp;mux;help'= {
+            cand get-frame 'Extract one frame as a standalone still WebP (bytes copied verbatim)'
+            cand set 'Rewrite the loop count and/or background color'
+            cand remove 'Remove one frame, rebuilding the frame list'
+            cand insert 'Insert a still WebP as a new frame (its image bytes copied verbatim)'
+            cand replace 'Replace one frame''s image with a still WebP, keeping its placement/timing'
+            cand help 'Print this message or the help of the given subcommand(s)'
+        }
+        &'webp;mux;help;get-frame'= {
+        }
+        &'webp;mux;help;set'= {
+        }
+        &'webp;mux;help;remove'= {
+        }
+        &'webp;mux;help;insert'= {
+        }
+        &'webp;mux;help;replace'= {
+        }
+        &'webp;mux;help;help'= {
         }
         &'webp;info'= {
             cand --color 'auto, always, or never [default: auto, or from env/config]'
@@ -296,6 +433,8 @@ set edit:completion:arg-completer[webp] = {|@words|
             cand decode 'Decode a WebP file to PNG (default), PPM/PAM, or raw pixels'
             cand encode 'Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file'
             cand convert 'Batch-convert many images (or directories) to WebP, in parallel'
+            cand animate 'Assemble still images into an animated WebP (surpasses img2webp/gif2webp)'
+            cand mux 'Edit an animated WebP without re-encoding frames (webpmux-parity muxing)'
             cand info 'Print a summary of a WebP file (size, alpha, metadata, animation)'
             cand meta 'Read, set, or strip a WebP file''s metadata (ICC/Exif/XMP), without re-encoding the image'
             cand diff 'Compare two images: report PSNR and the largest per-channel difference'
@@ -311,6 +450,25 @@ set edit:completion:arg-completer[webp] = {|@words|
         &'webp;help;encode'= {
         }
         &'webp;help;convert'= {
+        }
+        &'webp;help;animate'= {
+        }
+        &'webp;help;mux'= {
+            cand get-frame 'Extract one frame as a standalone still WebP (bytes copied verbatim)'
+            cand set 'Rewrite the loop count and/or background color'
+            cand remove 'Remove one frame, rebuilding the frame list'
+            cand insert 'Insert a still WebP as a new frame (its image bytes copied verbatim)'
+            cand replace 'Replace one frame''s image with a still WebP, keeping its placement/timing'
+        }
+        &'webp;help;mux;get-frame'= {
+        }
+        &'webp;help;mux;set'= {
+        }
+        &'webp;help;mux;remove'= {
+        }
+        &'webp;help;mux;insert'= {
+        }
+        &'webp;help;mux;replace'= {
         }
         &'webp;help;info'= {
         }

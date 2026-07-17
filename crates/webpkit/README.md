@@ -29,7 +29,7 @@ use webpkit::{decode, Effort, Encoder};
 
 fn reencode(bytes: &[u8]) -> webpkit::Result<()> {
     let img = decode(bytes)?; // -> Image (keeps ICC/Exif/XMP metadata)
-    let _lossless = Encoder::lossless().effort(Effort::Best).encode(&img)?;
+    let _lossless = Encoder::lossless().effort(Effort::level(9)).encode(&img)?;
     let _lossy = Encoder::lossy().quality(90).encode(&img)?;
     Ok(())
 }

@@ -13,15 +13,11 @@
 //! [`Strategy::resolve`] is the one place flags become a strategy, and it turns the
 //! contradiction into a usage error instead of quietly ignoring `--optimize`.
 
-use std::collections::BTreeMap;
-
-use webpkit::{Effort, Image, Metadata, PixelLayout};
+use webpkit::{Effort, Image, LossyTuning, Metadata, RateTarget};
 
 use crate::{
     codec::{self, EncodeMode},
-    diff,
     error::CliError,
-    format,
 };
 
 /// A target for the lossy quality search: a byte budget, a PSNR floor, or both.
@@ -45,6 +41,28 @@ impl Target {
             min_psnr,
         })
     }
+
+    /// Project this CLI target onto the library's integer [`RateTarget`]: the byte
+    /// budget narrows to `usize`, and the dB PSNR floor becomes fixed-point
+    /// centidecibels (dB × 100, rounded) — the codec forbids floating point, so the
+    /// conversion happens here, CLI-side.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "centidb is rounded and clamped into 0..=u32::MAX before the cast, so \
+                  the narrowing to u32 is lossless"
+    )]
+    fn to_rate_target(self) -> RateTarget {
+        let mut target = RateTarget::default();
+        if let Some(max) = self.max_bytes {
+            target = target.with_size(usize::try_from(max).unwrap_or(usize::MAX));
+        }
+        if let Some(db) = self.min_psnr {
+            let centidb = (db * 100.0).round().clamp(0.0, f64::from(u32::MAX)) as u32;
+            target = target.with_psnr(centidb);
+        }
+        target
+    }
 }
 
 /// How to turn one image into WebP bytes.
@@ -52,16 +70,18 @@ impl Target {
 pub(crate) enum Strategy {
     /// A single encode with a fixed mode.
     Once(EncodeMode),
-    /// Sweep the three lossless efforts and keep the smallest output, carrying any
-    /// near-lossless level through every effort.
+    /// Encode losslessly at the deepest effort level — provably the smallest output
+    /// — carrying any near-lossless level through.
     OptimizeLossless {
-        /// Near-lossless level applied at each effort, or `None` for plain lossless.
+        /// Near-lossless level applied to the encode, or `None` for plain lossless.
         near_lossless: Option<u8>,
     },
-    /// Bisect lossy quality to meet a [`Target`], at a fixed effort.
+    /// Bisect lossy quality to meet a [`Target`], at a fixed effort and tuning.
     Search {
         /// Encoder effort held constant across the quality search.
         effort: Effort,
+        /// Psychovisual tuning held constant across the quality search.
+        tuning: LossyTuning,
         /// The byte / PSNR target being hunted.
         target: Target,
     },
@@ -107,8 +127,9 @@ impl Strategy {
                 EncodeMode::Lossy { .. } => Ok(Self::Once(mode)),
             },
             (false, Some(target)) => match mode {
-                EncodeMode::Lossy { method, .. } => Ok(Self::Search {
+                EncodeMode::Lossy { method, tuning, .. } => Ok(Self::Search {
                     effort: method,
+                    tuning,
                     target,
                 }),
                 EncodeMode::Lossless { .. } => Err(CliError::Usage(
@@ -136,9 +157,56 @@ impl Strategy {
             Self::OptimizeLossless { near_lossless } => {
                 optimize_lossless(image, metadata, near_lossless)
             },
-            Self::Search { effort, target } => Searcher::new(image, metadata, effort).run(target),
+            Self::Search {
+                effort,
+                tuning,
+                target,
+            } => search(image, metadata, effort, tuning, target),
         }
     }
+}
+
+/// Delegate a `-size`/`-psnr` quality search to the codec-native rate control
+/// ([`webpkit::Encoder::<Lossy>::rate_control`]), then map its result onto the CLI's
+/// [`EncodeReport`]. The bisection lives in the library; this only carries the
+/// resolved metadata onto the encode and narrates the probes.
+///
+/// The metadata is folded onto a copy of the image (the encoder then embeds exactly
+/// it, no inheritance beyond it), so the searched encode matches the single-encode
+/// path's `-metadata` handling byte-for-byte.
+fn search(
+    image: &Image,
+    metadata: &Metadata,
+    effort: Effort,
+    tuning: LossyTuning,
+    target: Target,
+) -> Result<EncodeReport, CliError> {
+    let image = image.clone().with_metadata(metadata.clone());
+    let result = webpkit::Encoder::lossy()
+        .effort(effort)
+        .tuning(tuning)
+        .rate_control(&image, target.to_rate_target())?;
+    let chosen = result.quality();
+    let met = result.met();
+    let attempts = result
+        .attempts()
+        .iter()
+        .map(|a| Attempt {
+            quality: a.quality,
+            bytes: a.bytes,
+        })
+        .collect();
+    Ok(EncodeReport {
+        bytes: result.into_bytes(),
+        mode: EncodeMode::Lossy {
+            quality: chosen,
+            method: effort,
+            tuning,
+        },
+        attempts,
+        chosen_quality: Some(chosen),
+        met,
+    })
 }
 
 /// The outcome of running a [`Strategy`]: the bytes, the effective mode for the
@@ -206,174 +274,20 @@ pub(crate) struct Attempt {
     pub(crate) bytes: usize,
 }
 
-/// Sweep the three lossless efforts, keeping the smallest output. Any
-/// `near_lossless` level is held constant across the sweep.
+/// Encode at the deepest effort level, whose candidate set is a superset of every
+/// lower level's and is ranked by real emitted bytes, so its output is provably the
+/// smallest the lossless encoder can reach. Any `near_lossless` level is applied.
 fn optimize_lossless(
     image: &Image,
     metadata: &Metadata,
     near_lossless: Option<u8>,
 ) -> Result<EncodeReport, CliError> {
-    let mode = |effort| EncodeMode::Lossless {
-        effort,
+    let mode = EncodeMode::Lossless {
+        effort: Effort::level(9),
         near_lossless,
     };
-    let mut best_effort = Effort::Fast;
-    let mut bytes = codec::encode(image, mode(Effort::Fast), metadata.clone())?;
-    for effort in [Effort::Balanced, Effort::Best] {
-        let candidate = codec::encode(image, mode(effort), metadata.clone())?;
-        if candidate.len() < bytes.len() {
-            bytes = candidate;
-            best_effort = effort;
-        }
-    }
-    Ok(EncodeReport::single(mode(best_effort), bytes))
-}
-
-/// State for a lossy quality bisection: memoized encodes and recorded attempts.
-struct Searcher<'a> {
-    image: &'a Image,
-    metadata: &'a Metadata,
-    effort: Effort,
-    /// The source pixels, computed lazily only for a PSNR target.
-    source_rgba: Option<Vec<u8>>,
-    /// Encoded bytes per quality, so a bisection never re-encodes a quality.
-    cache: BTreeMap<u8, Vec<u8>>,
-    attempts: Vec<Attempt>,
-}
-
-impl<'a> Searcher<'a> {
-    const fn new(image: &'a Image, metadata: &'a Metadata, effort: Effort) -> Self {
-        Self {
-            image,
-            metadata,
-            effort,
-            source_rgba: None,
-            cache: BTreeMap::new(),
-            attempts: Vec::new(),
-        }
-    }
-
-    /// Encoded size at `quality`, encoding and recording it on first request.
-    fn size_at(&mut self, quality: u8) -> Result<u64, CliError> {
-        if let Some(bytes) = self.cache.get(&quality) {
-            return Ok(bytes.len() as u64);
-        }
-        let bytes = codec::encode(
-            self.image,
-            EncodeMode::Lossy {
-                quality,
-                method: self.effort,
-            },
-            self.metadata.clone(),
-        )?;
-        let len = bytes.len();
-        self.attempts.push(Attempt {
-            quality,
-            bytes: len,
-        });
-        self.cache.insert(quality, bytes);
-        Ok(len as u64)
-    }
-
-    /// Reconstruction PSNR at `quality` (vs the source); `f64::INFINITY` when the
-    /// re-decode is byte-identical to the source.
-    fn psnr_at(&mut self, quality: u8) -> Result<f64, CliError> {
-        self.size_at(quality)?;
-        let bytes = self
-            .cache
-            .get(&quality)
-            .cloned()
-            .ok_or_else(|| CliError::Format("target search lost an encode".to_owned()))?;
-        if self.source_rgba.is_none() {
-            self.source_rgba = Some(format::to_rgba8(self.image));
-        }
-        let decoded = codec::decode(&bytes, PixelLayout::Rgba8, None)?;
-        let candidate = format::to_rgba8(&decoded);
-        let source = self.source_rgba.as_deref().unwrap_or(&candidate);
-        Ok(diff::psnr_rgb(source, &candidate).unwrap_or(f64::INFINITY))
-    }
-
-    /// Bisect quality for the target and produce the report.
-    fn run(mut self, target: Target) -> Result<EncodeReport, CliError> {
-        // Largest quality within the byte budget (size rises with quality).
-        let q_size = match target.max_bytes {
-            Some(max) => Some(last_true(0, 100, |q| Ok(self.size_at(q)? <= max))?),
-            None => None,
-        };
-        // Smallest quality meeting the PSNR floor (PSNR rises with quality).
-        let q_psnr = match target.min_psnr {
-            Some(floor) => Some(first_true(0, 100, |q| Ok(self.psnr_at(q)? >= floor))?),
-            None => None,
-        };
-        // The floor wins over the budget: at least `q_psnr`, at most `q_size` when
-        // compatible. `max` yields exactly that.
-        let chosen = [q_size, q_psnr].into_iter().flatten().max().unwrap_or(75);
-
-        let met = target
-            .max_bytes
-            .is_none_or(|max| self.size_at(chosen).is_ok_and(|s| s <= max))
-            && target
-                .min_psnr
-                .is_none_or(|floor| self.psnr_at(chosen).is_ok_and(|p| p >= floor));
-
-        let bytes = self
-            .cache
-            .get(&chosen)
-            .cloned()
-            .ok_or_else(|| CliError::Format("target search produced no encode".to_owned()))?;
-        Ok(EncodeReport {
-            bytes,
-            mode: EncodeMode::Lossy {
-                quality: chosen,
-                method: self.effort,
-            },
-            attempts: self.attempts,
-            chosen_quality: Some(chosen),
-            met,
-        })
-    }
-}
-
-/// Largest `q` in `lo..=hi` for which `pred(q)` holds, assuming `pred` is true on
-/// an initial run of low values and false thereafter. Returns `lo` if none hold.
-fn last_true(
-    lo: u8,
-    hi: u8,
-    mut pred: impl FnMut(u8) -> Result<bool, CliError>,
-) -> Result<u8, CliError> {
-    let mut best: Option<u8> = None;
-    let (mut a, mut b) = (i16::from(lo), i16::from(hi));
-    while a <= b {
-        let mid = u8::try_from(i16::midpoint(a, b)).unwrap_or(lo);
-        if pred(mid)? {
-            best = Some(mid);
-            a = i16::from(mid) + 1;
-        } else {
-            b = i16::from(mid) - 1;
-        }
-    }
-    Ok(best.unwrap_or(lo))
-}
-
-/// Smallest `q` in `lo..=hi` for which `pred(q)` holds, assuming `pred` is false on
-/// an initial run of low values and true thereafter. Returns `hi` if none hold.
-fn first_true(
-    lo: u8,
-    hi: u8,
-    mut pred: impl FnMut(u8) -> Result<bool, CliError>,
-) -> Result<u8, CliError> {
-    let mut best: Option<u8> = None;
-    let (mut a, mut b) = (i16::from(lo), i16::from(hi));
-    while a <= b {
-        let mid = u8::try_from(i16::midpoint(a, b)).unwrap_or(lo);
-        if pred(mid)? {
-            best = Some(mid);
-            b = i16::from(mid) - 1;
-        } else {
-            a = i16::from(mid) + 1;
-        }
-    }
-    Ok(best.unwrap_or(hi))
+    let bytes = codec::encode(image, mode, metadata.clone())?;
+    Ok(EncodeReport::single(mode, bytes))
 }
 
 /// A byte count as a short human string: `412KB`, `1.5MB`, `900B`. Integer math so
@@ -388,50 +302,5 @@ fn human_size(bytes: usize) -> String {
         format!("{}KB", (b + (1 << 9)) >> 10)
     } else {
         format!("{b}B")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{first_true, last_true};
-
-    /// A synthetic monotone size(q) = q*q so the bisection is checked without any
-    /// encoder in the loop — the search logic bites on its own.
-    #[test]
-    fn last_true_finds_the_largest_passing_quality() {
-        // size(q) = q; budget 50 -> largest q with q <= 50 is 50.
-        let q = last_true(0, 100, |q| Ok(u64::from(q) <= 50)).unwrap();
-        assert_eq!(q, 50);
-    }
-
-    #[test]
-    fn last_true_falls_back_to_lo_when_none_pass() {
-        // Nothing is under budget: return the smallest quality (best effort).
-        let q = last_true(0, 100, |_| Ok(false)).unwrap();
-        assert_eq!(q, 0);
-    }
-
-    #[test]
-    fn first_true_finds_the_smallest_passing_quality() {
-        // psnr(q) >= floor first holds at q = 30.
-        let q = first_true(0, 100, |q| Ok(q >= 30)).unwrap();
-        assert_eq!(q, 30);
-    }
-
-    #[test]
-    fn first_true_falls_back_to_hi_when_none_pass() {
-        let q = first_true(0, 100, |_| Ok(false)).unwrap();
-        assert_eq!(q, 100);
-    }
-
-    #[test]
-    fn bisection_probes_a_logarithmic_number_of_qualities() {
-        let mut count = 0;
-        let _ = last_true(0, 100, |q| {
-            count += 1;
-            Ok(u64::from(q) <= 42)
-        });
-        // log2(101) ~ 7; certainly far fewer than a linear scan of 101.
-        assert!(count <= 8, "bisection probed {count} qualities");
     }
 }

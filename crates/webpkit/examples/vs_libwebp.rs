@@ -82,10 +82,10 @@ fn measure(content: Content) -> Row {
     let dims = Dimensions::new(EDGE, EDGE).unwrap();
     let image = ImageRef::new(dims, PixelLayout::Rgba8, rgba).unwrap();
 
-    // ---- lossy size + quality (ours Best vs libwebp method 6) ----
+    // ---- lossy size + quality (ours deepest effort vs libwebp method 6) ----
     let best = LossyConfig::new()
         .with_quality(QUALITY)
-        .with_effort(Effort::Best);
+        .with_effort(Effort::level(9));
     let (_d, ours_payload) = webpkit::lossy::encode_vp8(image, &best).unwrap();
     let ours_rgba = webpkit::lossy::decode(&ours_payload).unwrap().into_pixels();
     let lossy_ours_psnr = psnr_rgb(rgba, &ours_rgba);
@@ -94,17 +94,17 @@ fn measure(content: Content) -> Row {
     let (lw_rgba, _lww, _lwh) = libwebp_decode(&lw_container);
     let lossy_lw_psnr = psnr_rgb(rgba, &lw_rgba);
 
-    // ---- lossless size (ours Best vs libwebp lossless) ----
-    let ll_cfg =
-        webpkit::lossless::EncoderConfig::default().with_effort(webpkit::lossless::Effort::Best);
+    // ---- lossless size (ours deepest effort vs libwebp lossless) ----
+    let ll_cfg = webpkit::lossless::EncoderConfig::default()
+        .with_effort(webpkit::lossless::Effort::level(9));
     let ll_ours = webpkit::lossless::encode(image, &ll_cfg).unwrap();
     let ll_lw = libwebp_encode_lossless(rgba, EDGE, EDGE);
 
     // ---- speed: encode tiers (ours vs effort-matched libwebp method) ----
     let tiers = [
-        (Effort::Fast, 1i32),
-        (Effort::Balanced, 4),
-        (Effort::Best, 6),
+        (Effort::level(0), 1i32),
+        (Effort::AUTO, 4),
+        (Effort::level(9), 6),
     ];
     let mut enc_ours = [0.0; 3];
     let mut enc_lw = [0.0; 3];
@@ -117,10 +117,10 @@ fn measure(content: Content) -> Row {
     }
 
     // ---- speed: decode (each codec on its own output) ----
-    let balanced = LossyConfig::new()
+    let auto = LossyConfig::new()
         .with_quality(QUALITY)
-        .with_effort(Effort::Balanced);
-    let (_d, dec_payload) = webpkit::lossy::encode_vp8(image, &balanced).unwrap();
+        .with_effort(Effort::AUTO);
+    let (_d, dec_payload) = webpkit::lossy::encode_vp8(image, &auto).unwrap();
     let dec_container = libwebp_encode(&rgb, EDGE, EDGE, f32::from(QUALITY), 4);
     let dec_ours = median_ns(10, 400, || webpkit::lossy::decode(&dec_payload));
     let dec_lw = median_ns(10, 400, || libwebp_decode(&dec_container));

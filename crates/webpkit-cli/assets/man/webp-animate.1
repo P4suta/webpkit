@@ -1,0 +1,119 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH webp-animate 1  "animate " 
+.SH NAME
+animate \- Assemble still images into an animated WebP (surpasses img2webp/gif2webp)
+.SH SYNOPSIS
+\fBanimate\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-delay\fR] [\fB\-\-loop\fR] [\fB\-\-bgcolor\fR] [\fB\-\-dispose\fR] [\fB\-\-blend\fR] [\fB\-\-lossy\fR] [\fB\-\-canvas\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-input\-format\fR] [\fB\-\-optimize\fR] [\fB\-\-mixed\fR] [\fB\-\-min\-size\fR] [\fB\-\-kmax\fR] [\fB\-\-kmin\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIINPUTS\fR> 
+.SH DESCRIPTION
+Assemble still images into an animated WebP (surpasses img2webp/gif2webp).
+.PP
+Each input (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM) is decoded and added as one frame. `\-\-delay` sets the per\-frame duration (one value for all, or a comma list), `\-\-loop` the loop count, and `\-\-lossy Q` switches from the lossless default. The canvas defaults to the largest frame, or set it with `\-\-canvas WxH`.
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<OUTPUT>\fR
+Output `.webp` file; `\-` writes stdout
+.TP
+\fB\-\-delay\fR \fI<MS>\fR [default: 100]
+Per\-frame delay in ms: one value for every frame, or a comma list (`40,40,80`)
+.TP
+\fB\-\-loop\fR \fI<N>\fR [default: 0]
+Loop count; `0` (the default) loops forever
+.TP
+\fB\-\-bgcolor\fR \fI<RRGGBBAA>\fR
+Advisory background color as `RRGGBBAA` hex (e.g. `ffffffff`)
+.TP
+\fB\-\-dispose\fR \fI<DISPOSE>\fR [default: keep]
+Disposal method applied to every frame
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+keep: Leave the canvas as\-is for the next frame (the default)
+.IP \(bu 2
+background: Clear the frame\*(Aqs rectangle to transparent before the next frame
+.RE
+.TP
+\fB\-\-blend\fR \fI<BLEND>\fR [default: blend]
+Blend method applied to every frame
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+blend: Alpha\-blend the frame over the canvas (the default)
+.IP \(bu 2
+overwrite: Overwrite the frame\*(Aqs rectangle, ignoring what is underneath
+.RE
+.TP
+\fB\-\-lossy\fR \fI<Q>\fR
+Encode frames lossily (VP8) at this quality 0\-100; the default is lossless
+.TP
+\fB\-\-canvas\fR \fI<WxH>\fR
+Canvas size as `WxH`; defaults to the largest frame
+.TP
+\fB\-m\fR, \fB\-\-method\fR \fI<METHOD>\fR
+Encoder effort [default: auto, or from env/config]
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+auto: Adapt the search depth to the image\*(Aqs content and size (the default)
+.IP \(bu 2
+fast: Fastest: the shallowest fixed search
+.IP \(bu 2
+best: Smallest: the deepest fixed search
+.RE
+.TP
+\fB\-\-input\-format\fR \fI<INPUT_FORMAT>\fR
+Force the input format instead of sniffing each file
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+png: PNG (any color type; normalized to RGBA8)
+.IP \(bu 2
+ppm: Netpbm binary PPM (`P6`, RGB)
+.IP \(bu 2
+pam: Netpbm binary PAM (`P7`, RGBA)
+.IP \(bu 2
+jpeg: JPEG (decoded to RGBA8; needs the `formats` feature)
+.IP \(bu 2
+gif: GIF (first frame as a still; whole\-file animation is a separate path)
+.IP \(bu 2
+tiff: TIFF (decoded to RGBA8; needs the `formats` feature)
+.IP \(bu 2
+bmp: BMP (decoded to RGBA8; needs the `formats` feature)
+.IP \(bu 2
+raw: Raw row\-major pixels; requires `\-\-width`/`\-\-height`/`\-\-layout`
+.RE
+.TP
+\fB\-\-optimize\fR
+Inter\-frame optimize: encode each frame as a minimal delta against the canvas.
+
+The optimizer derives each frame\*(Aqs rectangle, blend, and dispose itself so the result composites pixel\-identically to the full\-frame animation, only smaller; `\-\-blend` and `\-\-dispose` are therefore ignored under `\-\-optimize`.
+.TP
+\fB\-\-mixed\fR
+With \-\-optimize: trial each frame lossy and lossless, keep the smaller (gif2webp \-mixed)
+.TP
+\fB\-\-min\-size\fR
+With \-\-optimize: exhaustively search each frame\*(Aqs rect/blend/dispose/codec (gif2webp `\-min_size`)
+.TP
+\fB\-\-kmax\fR \fI<N>\fR
+With \-\-optimize: force a keyframe at least every N frames (gif2webp \-kmax; 0 = only the first)
+.TP
+\fB\-\-kmin\fR \fI<N>\fR
+With \-\-optimize: never place keyframes closer than N frames apart (gif2webp \-kmin)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIINPUTS\fR>
+Still images, one per frame, in display order (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM)
