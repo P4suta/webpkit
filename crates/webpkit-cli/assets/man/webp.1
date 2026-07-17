@@ -4,7 +4,7 @@
 .SH NAME
 webp \- Command\-line tools for the webpkit WebP codec: libwebp\-style cwebp (lossy by default, \-lossless for VP8L) / dwebp and the webp brand tool.
 .SH SYNOPSIS
-\fBwebp\fR [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-quiet\fR] [\fB\-\-color\fR] [\fB\-\-threads\fR] [\fB\-\-dry\-run\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-metadata\fR] [\fB\-\-crop\fR] [\fB\-\-resize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIINPUTS\fR] [\fIsubcommands\fR]
+\fBwebp\fR [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-\-quiet\fR] [\fB\-\-color\fR] [\fB\-\-threads\fR] [\fB\-\-dry\-run\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-\-near\-lossless\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-metadata\fR] [\fB\-\-crop\fR] [\fB\-\-resize\fR] [\fB\-r\fR|\fB\-\-recursive\fR] [\fB\-\-force\fR] [\fB\-\-no\-clobber\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIINPUTS\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 Command\-line tools for the webpkit WebP codec: libwebp\-style cwebp (lossy by default, \-lossless for VP8L) / dwebp and the webp brand tool.
 .SH OPTIONS
@@ -41,6 +41,9 @@ Force lossless (VP8L) encoding
 .TP
 \fB\-\-lossy\fR
 Force lossy (VP8) encoding
+.TP
+\fB\-\-near\-lossless\fR \fI<N>\fR
+Near\-lossless preprocessing 0\-100 (lower = stronger; implies lossless)
 .TP
 \fB\-m\fR, \fB\-\-method\fR \fI<METHOD>\fR
 Encoder effort [default: balanced, or from env/config]
@@ -112,6 +115,9 @@ Batch\-convert many images (or directories) to WebP, in parallel
 .TP
 webp\-info(1)
 Print a summary of a WebP file (size, alpha, metadata, animation)
+.TP
+webp\-meta(1)
+Read, set, or strip a WebP file\*(Aqs metadata (ICC/Exif/XMP), without re\-encoding the image
 .TP
 webp\-diff(1)
 Compare two images: report PSNR and the largest per\-channel difference

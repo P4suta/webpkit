@@ -72,8 +72,8 @@ fn fill_borders(plane: &mut [u8], stride: usize, rows: usize) {
 
 /// Copy the real `w × h` top-left region of a padded `plane` (whose real `(0,0)`
 /// sits at `[stride + 1]`, after the 1-pixel top/left borders) into a packed,
-/// row-contiguous buffer. Used only by the Level-A YUV oracle.
-#[cfg(feature = "oracle")]
+/// row-contiguous buffer — the plane shape `decode_yuv` returns and the Level-A
+/// YUV oracle compares against libwebp.
 fn crop(plane: &[u8], stride: usize, w: usize, h: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(w * h);
     for y in 0..h {
@@ -83,19 +83,18 @@ fn crop(plane: &[u8], stride: usize, w: usize, h: usize) -> Vec<u8> {
     out
 }
 
-#[cfg(feature = "oracle")]
 impl Planes {
-    /// The reconstructed luma plane cropped to `w × h` (oracle Level A).
+    /// The reconstructed luma plane cropped to `w × h`.
     pub(crate) fn crop_y(&self, w: usize, h: usize) -> Vec<u8> {
         crop(&self.y, self.y_stride, w, h)
     }
 
-    /// The reconstructed U plane cropped to `w × h` (oracle Level A).
+    /// The reconstructed U plane cropped to `w × h`.
     pub(crate) fn crop_u(&self, w: usize, h: usize) -> Vec<u8> {
         crop(&self.u, self.uv_stride, w, h)
     }
 
-    /// The reconstructed V plane cropped to `w × h` (oracle Level A).
+    /// The reconstructed V plane cropped to `w × h`.
     pub(crate) fn crop_v(&self, w: usize, h: usize) -> Vec<u8> {
         crop(&self.v, self.uv_stride, w, h)
     }

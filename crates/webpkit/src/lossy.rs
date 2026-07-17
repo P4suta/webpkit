@@ -274,6 +274,35 @@ pub fn decode_argb_with(payload: &[u8], options: &DecodeOptions) -> Result<(Dime
     Ok((image.dimensions(), argb))
 }
 
+/// Reconstruct a VP8 key-frame `payload` into native **YUV 4:2:0** planes as a
+/// [`YuvImage`], stopping before the YUV→RGB conversion `decode` performs.
+///
+/// The luma plane is `width × height`; the chroma planes are
+/// `⌈width/2⌉ × ⌈height/2⌉`, all packed with no row padding. Checks
+/// `options.max_pixels` before the reconstruction planes are allocated, mirroring
+/// [`decode_with`]. This is the same bit-exact reconstruction the RGBA path
+/// consumes, exposed one step earlier through the crate facade's
+/// [`crate::decode_yuv`].
+///
+/// # Errors
+///
+/// The same errors as [`decode_with`].
+pub(crate) fn decode_yuv_with(payload: &[u8], options: &DecodeOptions) -> Result<crate::YuvImage> {
+    check_pixel_limit(payload, options)?;
+    let (planes, w, h) = decode::reconstruct_to_planes(payload)?;
+    let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+    let dims = Dimensions::new(
+        u32::try_from(w).map_err(|_| Error::InvalidDimensions)?,
+        u32::try_from(h).map_err(|_| Error::InvalidDimensions)?,
+    )?;
+    Ok(crate::YuvImage::from_planes(
+        dims,
+        planes.crop_y(w, h),
+        planes.crop_u(cw, ch),
+        planes.crop_v(cw, ch),
+    ))
+}
+
 /// Reject a key frame whose header dimensions exceed `options.max_pixels` *before*
 /// any reconstruction buffer is sized to it — mirroring the `lossless` codec's
 /// pre-allocation guard. A cheap header peek (no pixel decode) drives the check.
@@ -296,12 +325,6 @@ fn repack(image: Image, layout: PixelLayout) -> Image {
     let argb = crate::image::unpack_pixels(PixelLayout::Rgba8, image.as_bytes());
     let bytes = crate::image::pack_pixels(layout, &argb);
     Image::from_parts(dims, layout, bytes, has_alpha, Metadata::none())
-}
-
-/// The crate version, as reported by Cargo.
-#[must_use]
-pub const fn version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
 }
 
 /// `(width, height, Y, U, V)`: a reconstructed YUV 4:2:0 frame (Level-A oracle).
@@ -381,7 +404,7 @@ pub fn __frame_segment_count(payload: &[u8]) -> Option<usize> {
 mod tests {
     use super::{
         Codec, DecodeOptions, Dimensions, Error, ImageRef, LossyConfig, PixelLayout, decode,
-        decode_argb, decode_argb_with, decode_with, encode_vp8, peek_dimensions, version,
+        decode_argb, decode_argb_with, decode_with, encode_vp8, peek_dimensions,
     };
 
     /// Build a minimal valid 10-byte VP8 key-frame header for `width`×`height`.
@@ -514,14 +537,6 @@ mod tests {
                 codec: Codec::Lossy
             }
         );
-    }
-
-    #[test]
-    fn version_reports_the_cargo_package_version() {
-        // `version()` must surface the crate's real Cargo version verbatim — not a
-        // placeholder, and never the empty string.
-        assert_eq!(version(), env!("CARGO_PKG_VERSION"));
-        assert!(!version().is_empty(), "version must not be empty");
     }
 
     #[test]

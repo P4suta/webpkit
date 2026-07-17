@@ -41,7 +41,7 @@ path = "src/bin/webp.rs"
 # default (the `webp` tool is a product, and a product reads the formats people
 # have); `--no-default-features` falls back to the zero-image-dep PNG/PPM/PAM/raw core.
 default = ["formats"]
-formats = ["dep:image", "webpkit/image"]
+formats = ["dep:image", "dep:gif", "webpkit/image"]
 
 [dependencies]
 # Both arrive with clap already, so naming them directly costs no new crates.
@@ -58,6 +58,10 @@ clap_mangen = { workspace = true }
 # temp file's own cleanup does not run on a signal — the handler deletes in-flight
 # temps explicitly.
 ctrlc = { workspace = true }
+# GIF loop count, behind the default `formats` feature. The `image` crate decodes
+# the frames but never surfaces the Netscape loop extension, so the count is read
+# from the `gif` crate directly (already in the tree via `image`).
+gif = { workspace = true, optional = true }
 # Shells do not expand globs before launching a native binary, so `webp *.jpg`
 # reaches us as the literal `*.jpg` — silently a no-op on Windows without this. A
 # pattern is expanded only when it does not exist as a literal path, so a real

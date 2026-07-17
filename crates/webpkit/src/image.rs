@@ -18,10 +18,24 @@ use crate::prelude::*;
 pub const MAX_DIMENSION: u32 = 1 << 14;
 
 /// A validated image size: both sides lie in `1..=16384`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Dimensions {
     width: u32,
     height: u32,
+}
+
+impl TryFrom<(u32, u32)> for Dimensions {
+    type Error = Error;
+
+    /// Validate a `(width, height)` pair, the tuple companion to
+    /// [`Dimensions::new`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidDimensions`] if either side is `0` or exceeds `16384`.
+    fn try_from((width, height): (u32, u32)) -> Result<Self> {
+        Self::new(width, height)
+    }
 }
 
 impl Dimensions {
@@ -59,7 +73,14 @@ impl Dimensions {
 }
 
 /// The byte order of a pixel buffer at the API boundary.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+///
+/// `#[non_exhaustive]`: unlike [`Effort`](crate::Effort) or [`Codec`](crate::Codec),
+/// which are closed sets fixed by the WebP bitstream, this is an API-convenience
+/// type that may gain further orderings (e.g. `Rgb8` or a 16-bit layout), so an
+/// external `match` must carry a wildcard arm. The crate's own exhaustive matches
+/// are same-crate and unaffected.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[non_exhaustive]
 pub enum PixelLayout {
     /// `R, G, B, A` (the default).
     #[default]
@@ -134,8 +155,10 @@ pub fn argb_has_alpha(argb: &[u32]) -> bool {
 ///
 /// `#[non_exhaustive]`: WebP can carry further sidecar chunk kinds, so new fields
 /// can be added without a breaking change (the existing fields stay `pub` to
-/// read). Build one from [`Metadata::none`] and the `with_*` setters.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+/// read). Build one from [`Metadata::none`] and the `with_*` setters — these keep
+/// the `with_` prefix (unlike the other builders' bare setters) because each shares
+/// a name with the `pub` field it sets, which a bare method would shadow.
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 #[non_exhaustive]
 pub struct Metadata {
     /// ICC color profile (`ICCP` chunk).
@@ -235,7 +258,7 @@ pub enum MetadataPolicy {
 
 /// A decoded image: pixels in a chosen [`PixelLayout`] plus size, alpha, and
 /// sidecar [`Metadata`].
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Image {
     dims: Dimensions,
     layout: PixelLayout,

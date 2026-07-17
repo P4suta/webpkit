@@ -11,7 +11,7 @@
 use std::{fs, path::Path};
 
 use assert_cmd::Command;
-use image::{Delay, Frame, ImageFormat, Rgba, RgbaImage, codecs::gif::GifEncoder};
+use image::{Delay, Frame, ImageFormat, Rgba, RgbaImage, codecs::gif::GifEncoder, codecs::gif::Repeat};
 use predicates::str::contains;
 use tempfile::TempDir;
 
@@ -48,11 +48,21 @@ fn png_bytes() -> Vec<u8> {
     bytes
 }
 
-/// Encode a three-frame animated GIF.
+/// Encode a three-frame animated GIF that loops forever (no loop extension).
 fn gif_animation() -> Vec<u8> {
+    gif_with_repeat(None)
+}
+
+/// Encode a three-frame animated GIF, optionally stamping a finite loop count.
+fn gif_with_repeat(repeat: Option<u16>) -> Vec<u8> {
     let mut buf = Vec::new();
     {
         let mut encoder = GifEncoder::new(&mut buf);
+        if let Some(count) = repeat {
+            encoder
+                .set_repeat(Repeat::Finite(count))
+                .expect("set gif repeat");
+        }
         for _ in 0..3 {
             let frame = Frame::from_parts(sample(), 0, 0, Delay::from_numer_denom_ms(100, 1));
             encoder.encode_frame(frame).expect("encode gif frame");
@@ -173,6 +183,44 @@ fn a_gif_becomes_an_animated_webp() {
         .stdout(contains("Frames:     3"));
 }
 
+/// `--quality 80` reaches the GIF animation path: every frame is a lossy `VP8 `
+/// key-frame, not the lossless `VP8L` the path used to force. `info` reports the
+/// animation's codec as `lossy` only when no frame is lossless.
+#[test]
+fn a_gif_with_lossy_encodes_every_frame_as_vp8() {
+    let dir = TempDir::new().expect("tempdir");
+    let input = write(dir.path(), "loop.gif", &gif_animation());
+    webp()
+        .arg(&input)
+        .args(["--quality", "80"])
+        .assert()
+        .success()
+        .stderr(contains("animation (lossy q80)"));
+    let out = dir.path().join("loop.webp");
+    webp()
+        .args(["info"])
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(contains("WebP animation (lossy)"));
+}
+
+/// A finite-loop GIF's loop count survives into the animated WebP; the path used
+/// to hardcode a forever loop, discarding the source's intent.
+#[test]
+fn a_finite_loop_gif_preserves_its_loop_count() {
+    let dir = TempDir::new().expect("tempdir");
+    let input = write(dir.path(), "thrice.gif", &gif_with_repeat(Some(3)));
+    webp().arg(&input).assert().success();
+    let out = dir.path().join("thrice.webp");
+    webp()
+        .args(["info"])
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(contains("Loop:       3 time(s)"));
+}
+
 #[test]
 fn bare_png_encodes_and_bare_webp_decodes() {
     let dir = TempDir::new().expect("tempdir");
@@ -221,4 +269,45 @@ fn an_explicitly_named_output_overwrites_without_a_flag() {
         fs::read(&out).expect("read out").starts_with(b"RIFF"),
         "explicit -o must have been overwritten with a WebP"
     );
+}
+
+/// `dwebp -bmp` / `-tiff` write real BMP/TIFF files: the `image` crate reads each
+/// back to the exact pixels a lossless round-trip preserves. Without the `formats`
+/// feature these flags stay rejected (covered by the drop-in reject tests).
+#[test]
+fn dwebp_writes_bmp_and_tiff() {
+    let dir = TempDir::new().expect("tempdir");
+    let png = write(dir.path(), "pic.png", &png_bytes());
+    // A lossless WebP, so the decoded pixels are byte-exact.
+    let webp_file = dir.path().join("pic.webp");
+    Command::cargo_bin("cwebp")
+        .expect("cwebp builds")
+        .arg(&png)
+        .arg("-o")
+        .arg(&webp_file)
+        .arg("-lossless")
+        .arg("-m")
+        .arg("6")
+        .assert()
+        .success();
+
+    for (flag, name, format) in [
+        ("-bmp", "out.bmp", ImageFormat::Bmp),
+        ("-tiff", "out.tiff", ImageFormat::Tiff),
+    ] {
+        let out = dir.path().join(name);
+        Command::cargo_bin("dwebp")
+            .expect("dwebp builds")
+            .arg(&webp_file)
+            .arg("-o")
+            .arg(&out)
+            .arg(flag)
+            .assert()
+            .success();
+        let bytes = fs::read(&out).expect("read decoded output");
+        let decoded = image::load_from_memory_with_format(&bytes, format)
+            .expect("the image crate reads its own encoding back")
+            .to_rgba8();
+        assert_eq!(decoded, sample(), "{flag} must round-trip the pixels");
+    }
 }

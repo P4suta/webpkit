@@ -81,6 +81,7 @@ const SUBCOMMANDS: &[&str] = &[
     "encode",
     "convert",
     "info",
+    "meta",
     "diff",
     "doctor",
     "config",
@@ -138,6 +139,9 @@ struct AutoArgs {
     /// Force lossy (VP8) encoding.
     #[arg(long)]
     lossy: bool,
+    /// Near-lossless preprocessing 0-100 (lower = stronger; implies lossless).
+    #[arg(long, value_name = "N", conflicts_with = "lossy", value_parser = clap::value_parser!(u8).range(0..=100))]
+    near_lossless: Option<u8>,
     /// Encoder effort [default: balanced, or from env/config].
     #[arg(short, long, value_enum)]
     method: Option<Method>,
@@ -208,6 +212,14 @@ enum Command {
     Convert(ConvertArgs),
     /// Print a summary of a WebP file (size, alpha, metadata, animation).
     Info(InfoArgs),
+    /// Read, set, or strip a WebP file's metadata (ICC/Exif/XMP), without
+    /// re-encoding the image.
+    ///
+    /// `webp meta show <f>` prints the ICC/Exif/XMP a file carries; `webp meta set
+    /// <f> -o OUT --exif E.bin` writes a copy with a kind replaced from a file; and
+    /// `webp meta strip <f> -o OUT` writes a copy with all metadata removed. The
+    /// image bitstream is copied through byte-for-byte in every case.
+    Meta(MetaArgs),
     /// Compare two images: report PSNR and the largest per-channel difference.
     ///
     /// Both inputs are decoded to RGBA (a WebP, or any readable image), so a source
@@ -342,6 +354,9 @@ struct ConvertArgs {
     /// Lossy quality 0-100 (higher = larger, closer to source); selects --lossy.
     #[arg(short = 'q', long)]
     quality: Option<u8>,
+    /// Near-lossless preprocessing 0-100 (lower = stronger; implies lossless).
+    #[arg(long, value_name = "N", conflicts_with = "lossy", value_parser = clap::value_parser!(u8).range(0..=100))]
+    near_lossless: Option<u8>,
     /// Try every lossless effort level and keep the smallest output.
     #[arg(long)]
     optimize: bool,
@@ -386,6 +401,64 @@ struct InfoArgs {
     /// so this is cheap on any size of file.
     #[arg(long)]
     json: bool,
+}
+
+/// Arguments for `webp meta`.
+#[derive(Debug, clap::Args)]
+struct MetaArgs {
+    #[command(subcommand)]
+    action: MetaAction,
+}
+
+/// A `webp meta` action: inspect, replace, or strip the sidecar metadata.
+#[derive(Debug, Subcommand)]
+enum MetaAction {
+    /// Show the ICC/Exif/XMP a WebP carries (kinds and byte sizes).
+    Show(MetaShowArgs),
+    /// Write a copy with ICC/Exif/XMP set from files (unspecified kinds are kept).
+    Set(MetaSetArgs),
+    /// Write a copy with all sidecar metadata removed.
+    Strip(MetaStripArgs),
+}
+
+/// Arguments for `webp meta show`.
+#[derive(Debug, clap::Args)]
+struct MetaShowArgs {
+    /// Input `.webp` file; `-` (the default) reads stdin.
+    #[arg(default_value = "-")]
+    input: PathBuf,
+    /// Print the metadata as JSON instead of text.
+    #[arg(long)]
+    json: bool,
+}
+
+/// Arguments for `webp meta set`.
+#[derive(Debug, clap::Args)]
+struct MetaSetArgs {
+    /// Input `.webp` file; `-` reads stdin.
+    input: PathBuf,
+    /// Output `.webp` file; `-` writes stdout.
+    #[arg(short, long)]
+    output: PathBuf,
+    /// Set the ICC color profile from this file.
+    #[arg(long, value_name = "FILE")]
+    icc: Option<PathBuf>,
+    /// Set the Exif metadata from this file.
+    #[arg(long, value_name = "FILE")]
+    exif: Option<PathBuf>,
+    /// Set the XMP metadata from this file.
+    #[arg(long, value_name = "FILE")]
+    xmp: Option<PathBuf>,
+}
+
+/// Arguments for `webp meta strip`.
+#[derive(Debug, clap::Args)]
+struct MetaStripArgs {
+    /// Input `.webp` file; `-` reads stdin.
+    input: PathBuf,
+    /// Output `.webp` file; `-` writes stdout.
+    #[arg(short, long)]
+    output: PathBuf,
 }
 
 /// Which frames of an animation to emit.
@@ -457,6 +530,9 @@ struct EncodeArgs {
     /// Lossy quality 0-100 (higher = larger, closer to source); selects --lossy.
     #[arg(short = 'q', long)]
     quality: Option<u8>,
+    /// Near-lossless preprocessing 0-100 (lower = stronger; implies lossless).
+    #[arg(long, value_name = "N", conflicts_with = "lossy", value_parser = clap::value_parser!(u8).range(0..=100))]
+    near_lossless: Option<u8>,
     /// Crop before encoding: `x,y,width,height` in pixels (applied before --resize).
     #[arg(long, value_name = "X,Y,W,H")]
     crop: Option<String>,
@@ -562,11 +638,17 @@ fn resolved_color(flag: Option<ColorChoice>) -> ColorChoice {
 /// A codec or quality with a non-default origin (CLI, env, or file) selects the
 /// codec; when both are defaults, the flags stay empty so [`codec::resolve_mode`]
 /// applies the source-derived default (JPEG → lossy, else lossless). `force_lossy`
-/// covers a size/PSNR target, which selects lossy without being a config setting.
-fn flags_of(settings: &config::Settings, force_lossy: bool) -> codec::CodecFlags {
+/// covers a size/PSNR target, which selects lossy without being a config setting;
+/// `near_lossless` is a lossless-only preprocessing level that forces lossless.
+fn flags_of(
+    settings: &config::Settings,
+    force_lossy: bool,
+    near_lossless: Option<u8>,
+) -> codec::CodecFlags {
     let codec_set = !matches!(settings.codec.origin, config::Origin::Default);
     let quality_set = !matches!(settings.quality.origin, config::Origin::Default);
-    let lossless = codec_set && settings.codec.value == config::Codec::Lossless;
+    let lossless =
+        near_lossless.is_some() || (codec_set && settings.codec.value == config::Codec::Lossless);
     let lossy = force_lossy
         || (codec_set && settings.codec.value == config::Codec::Lossy)
         || (quality_set && !lossless);
@@ -578,19 +660,25 @@ fn flags_of(settings: &config::Settings, force_lossy: bool) -> codec::CodecFlags
         lossy,
         quality,
         effort: settings.effort.value,
+        near_lossless,
     }
 }
 
 /// A one-phrase description of the chosen codec for the status line, e.g.
 /// `lossless · from PNG source` or `lossy q75 · from JPEG source`.
 fn codec_note(mode: EncodeMode, format: InputFormat, animation: bool) -> String {
+    let base = match mode {
+        EncodeMode::Lossless {
+            near_lossless: Some(level),
+            ..
+        } => format!("near-lossless {level}"),
+        EncodeMode::Lossless { .. } => "lossless".to_owned(),
+        EncodeMode::Lossy { quality, .. } => format!("lossy q{quality}"),
+    };
     let codec = if animation {
-        "animation (lossless)".to_owned()
+        format!("animation ({base})")
     } else {
-        match mode {
-            EncodeMode::Lossless(_) => "lossless".to_owned(),
-            EncodeMode::Lossy { quality, .. } => format!("lossy q{quality}"),
-        }
+        base
     };
     format!("{codec} · from {format:?} source")
 }
@@ -702,6 +790,7 @@ fn run(command: &Command, reporter: &Reporter) -> Result<ExitCode, CliError> {
         Command::Encode(args) => encode(args, reporter).map(|()| ok),
         Command::Convert(args) => convert(args, reporter).map(|()| ok),
         Command::Info(args) => info(args, reporter).map(|()| ok),
+        Command::Meta(args) => meta(args, reporter).map(|()| ok),
         Command::Diff(args) => diff_cmd(args, reporter),
         Command::Doctor => Ok(crate::doctor::run()),
         Command::Config(args) => config_cmd(args).map(|()| ok),
@@ -882,7 +971,7 @@ fn convert(args: &ConvertArgs, reporter: &Reporter) -> Result<(), CliError> {
         &args.metadata,
     )?;
     let options = bulk::Options {
-        flags: flags_of(&settings, false),
+        flags: flags_of(&settings, false, args.near_lossless),
         metadata: settings.metadata.value,
         optimize: args.optimize,
         recursive: args.recursive,
@@ -1066,16 +1155,13 @@ fn auto_encode(
         args.method,
         &args.metadata,
     )?;
-    let flags = flags_of(&settings, false);
+    let flags = flags_of(&settings, false, args.near_lossless);
     let (mode, derived) = codec::resolve_mode(format, flags)?;
     let selection = settings.metadata.value;
     let pipeline = pipeline_of(args.crop.as_deref(), args.resize.as_deref())?;
 
     let produced = if pipeline.is_empty() {
         let encoded = codec::encode_input(bytes, format, mode, selection, true)?;
-        if encoded.animation && (flags.lossy || flags.quality.is_some()) {
-            report::warn("a GIF becomes a lossless animation; --lossy/--quality do not apply");
-        }
         Produced {
             bytes: encoded.bytes,
             width: encoded.width,
@@ -1290,7 +1376,7 @@ fn encode(args: &EncodeArgs, reporter: &Reporter) -> Result<(), CliError> {
         args.method,
         &args.metadata,
     )?;
-    let flags = flags_of(&settings, target.is_some());
+    let flags = flags_of(&settings, target.is_some(), args.near_lossless);
     let (mode, derived) = codec::resolve_mode(format, flags)?;
     if reporter.is_dry_run() {
         report::plan(&format!(
@@ -1478,6 +1564,116 @@ fn metadata_line(metadata: inspect::MetadataInfo) -> String {
 
 const fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
+}
+
+/// Read, set, or strip a WebP file's sidecar metadata, never touching the image
+/// bitstream — the `webpmux` half of the toolkit.
+fn meta(args: &MetaArgs, reporter: &Reporter) -> Result<(), CliError> {
+    match &args.action {
+        MetaAction::Show(args) => meta_show(args),
+        MetaAction::Set(args) => meta_set(args, reporter),
+        MetaAction::Strip(args) => meta_strip(args, reporter),
+    }
+}
+
+/// Print the ICC/Exif/XMP a WebP carries, as text or JSON. Decodes no pixels.
+fn meta_show(args: &MetaShowArgs) -> Result<(), CliError> {
+    let source = Source::from_arg(&args.input);
+    let bytes = source.read()?;
+    let metadata = webpkit::read_metadata(&bytes)?;
+    if args.json {
+        let json = serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "webp.meta/v1",
+            "icc": metadata.icc_profile.as_ref().map(Vec::len),
+            "exif": metadata.exif.as_ref().map(Vec::len),
+            "xmp": metadata.xmp.as_ref().map(Vec::len),
+        }))
+        .map_err(|err| CliError::Format(format!("serializing the metadata: {err}")))?;
+        report::out(&json);
+        return Ok(());
+    }
+    for line in meta_lines(&metadata) {
+        report::out(&line);
+    }
+    Ok(())
+}
+
+/// One `Kind: N bytes` / `Kind: none` line per metadata kind.
+fn meta_lines(metadata: &webpkit::Metadata) -> Vec<String> {
+    [
+        ("ICC", metadata.icc_profile.as_ref()),
+        ("Exif", metadata.exif.as_ref()),
+        ("XMP", metadata.xmp.as_ref()),
+    ]
+    .iter()
+    .map(|(name, field)| {
+        field.map_or_else(
+            || format!("{name}: none"),
+            |bytes| format!("{name}: {} bytes", bytes.len()),
+        )
+    })
+    .collect()
+}
+
+/// Write a copy of a WebP with selected metadata kinds replaced from files.
+///
+/// Starts from the input's existing metadata and overrides each kind a
+/// `--icc`/`--exif`/`--xmp` file was given for; unspecified kinds are carried
+/// through unchanged.
+fn meta_set(args: &MetaSetArgs, reporter: &Reporter) -> Result<(), CliError> {
+    let source = Source::from_arg(&args.input);
+    let bytes = source.read()?;
+    let mut metadata = webpkit::read_metadata(&bytes)?;
+    if let Some(path) = &args.icc {
+        metadata = metadata.with_icc_profile(read_field(path)?);
+    }
+    if let Some(path) = &args.exif {
+        metadata = metadata.with_exif(read_field(path)?);
+    }
+    if let Some(path) = &args.xmp {
+        metadata = metadata.with_xmp(read_field(path)?);
+    }
+    write_meta(&bytes, &metadata, &source, &args.output, reporter)
+}
+
+/// Write a copy of a WebP with all sidecar metadata removed.
+fn meta_strip(args: &MetaStripArgs, reporter: &Reporter) -> Result<(), CliError> {
+    let source = Source::from_arg(&args.input);
+    let bytes = source.read()?;
+    write_meta(&bytes, &webpkit::Metadata::none(), &source, &args.output, reporter)
+}
+
+/// Rewrite `input`'s metadata to `metadata` and write it to `output`, atomically.
+fn write_meta(
+    input: &[u8],
+    metadata: &webpkit::Metadata,
+    source: &Source,
+    output: &Path,
+    reporter: &Reporter,
+) -> Result<(), CliError> {
+    let sink = Sink::from_arg(output);
+    if reporter.is_dry_run() {
+        report::plan(&format!(
+            "rewrite metadata {} -> {}",
+            source.label(),
+            sink.label(),
+        ));
+        return Ok(());
+    }
+    let out = webpkit::write_metadata(input, metadata)?;
+    sink.write(&out)?;
+    reporter.status(&format!(
+        "wrote {} -> {} ({} bytes)",
+        source.label(),
+        sink.label(),
+        out.len(),
+    ));
+    Ok(())
+}
+
+/// Read a whole file into memory to use as a metadata field's value.
+fn read_field(path: &Path) -> Result<Vec<u8>, CliError> {
+    Source::File(path.to_path_buf()).read()
 }
 
 #[cfg(test)]

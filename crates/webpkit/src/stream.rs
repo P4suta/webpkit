@@ -163,7 +163,7 @@ impl DecodeOptions {
 ///
 /// `#[non_exhaustive]`: construct one with [`ImageInfo::new`] so future header
 /// fields can be added without a breaking change (the fields stay `pub` to read).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct ImageInfo {
     /// The image dimensions (for an animation, the canvas size).
@@ -251,7 +251,11 @@ pub enum Progress {
 /// bytes are freed on the next `push` to bound memory for a pure-streaming
 /// consumer, but the decoder's `into_image` still returns the complete image
 /// (re-decoding any freed rows from the buffer).
+///
+/// `#[non_exhaustive]`: construct one with [`RowDrain::new`] so further view fields
+/// can be added without a breaking change (the fields stay `pub` to read).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct RowDrain<'a> {
     /// 0-based output-row index of the first row in this batch.
     pub first_row: u32,

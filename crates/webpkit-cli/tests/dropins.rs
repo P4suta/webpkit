@@ -35,29 +35,37 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+/// `-near_lossless N` is implemented as an encode-side preprocessing step: it is
+/// accepted and, like libwebp's cwebp, implies lossless (VP8L) output. The pass is
+/// a no-op on this tiny image, but the codec path is what this asserts.
 #[test]
-fn cwebp_rejects_a_lossy_only_flag() {
+fn cwebp_near_lossless_implies_lossless() {
+    let mut ppm = b"P6\n2 2\n255\n".to_vec();
+    ppm.extend_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]);
+    let out = run("cwebp", &["-near_lossless", "60", "-", "-o", "-"], ppm);
+    assert!(out.status.success(), "cwebp -near_lossless failed: {out:?}");
+    assert_eq!(
+        image_fourcc(&out.stdout),
+        b"VP8L",
+        "-near_lossless must imply lossless"
+    );
+}
+
+/// A `-near_lossless` level outside `0..=100` is a usage error, not a silent clamp.
+#[test]
+fn cwebp_near_lossless_rejects_out_of_range() {
     let out = run(
         "cwebp",
-        &["-near_lossless", "60", "-", "-o", "-"],
+        &["-near_lossless", "150", "-", "-o", "-"],
         vec![0; 16],
     );
     assert_eq!(
         out.status.code(),
         Some(2),
-        "lossy knob must be a usage error"
+        "an out-of-range level must be a usage error"
     );
-    // Its own help, not the flat one-liner every rejected flag used to share.
     let err = stderr(&out);
-    assert!(
-        err.contains("-lossless"),
-        "should point at -lossless: {err:?}"
-    );
-    assert!(
-        err.contains("q 90"),
-        "should offer a lossy quality: {err:?}"
-    );
-    assert!(err.contains("cause:"), "should carry a cause: {err:?}");
+    assert!(err.contains("0-100"), "should state the range: {err:?}");
 }
 
 /// The distinctive win: a caret drawn under the offending token, at its real
@@ -103,15 +111,55 @@ fn cwebp_suggests_a_flag_for_a_typo() {
 }
 
 #[test]
-fn dwebp_rejects_yuv_output() {
-    let out = run("dwebp", &["-yuv", "-", "-o", "-"], vec![0; 16]);
-    assert_eq!(out.status.code(), Some(2));
+fn dwebp_emits_yuv_for_lossy_and_explains_for_lossless() {
+    // A 3x3 PPM; odd sides exercise the ceil-halved chroma dimensions.
+    let mut ppm = b"P6\n3 3\n255\n".to_vec();
+    ppm.extend((0u8..27).map(|i| i.wrapping_mul(9)));
+
+    // A lossy VP8 still: `-yuv` reconstructs its native 4:2:0 planes. Y = 3x3,
+    // U = V = 2x2 (ceil(3/2) each): 9 + 4 + 4 = 17 packed plane bytes.
+    let lossy = run("cwebp", &["-", "-o", "-", "-q", "80"], ppm.clone());
+    assert!(lossy.status.success(), "cwebp -q failed: {lossy:?}");
+    let yuv = run("dwebp", &["-", "-o", "-", "-yuv"], lossy.stdout);
+    assert!(yuv.status.success(), "dwebp -yuv failed: {yuv:?}");
+    assert_eq!(yuv.stdout.len(), 17, "planar YUV 4:2:0 plane bytes");
+
+    // A lossless VP8L still has no YUV form: a clear error naming the RGBA formats.
+    let lossless = run("cwebp", &["-", "-o", "-", "-lossless"], ppm);
+    assert!(lossless.status.success(), "cwebp -lossless failed");
+    let out = run("dwebp", &["-yuv", "-", "-o", "-"], lossless.stdout);
+    assert_eq!(out.status.code(), Some(2), "lossless -yuv is a usage error");
     let err = stderr(&out);
     assert!(
         err.contains("-png"),
         "should point at -png/-ppm/-pam: {err:?}"
     );
-    assert!(err.contains('^'), "should draw a caret: {err:?}");
+    assert!(
+        err.contains("lossy"),
+        "should say it needs a lossy WebP: {err:?}"
+    );
+}
+
+#[test]
+fn dwebp_rejects_rgba_transforms_on_the_yuv_path() {
+    // `-yuv`/`-pgm` emit the native YUV planes; `-flip`/`-alpha` are RGBA transforms
+    // with nothing to act on there. Rather than silently ignore them, dwebp rejects
+    // the combination with a message pointing at the RGBA formats.
+    let mut ppm = b"P6\n2 2\n255\n".to_vec();
+    ppm.extend((0u8..12).map(|i| i.wrapping_mul(20)));
+    let lossy = run("cwebp", &["-", "-o", "-", "-q", "80"], ppm);
+    assert!(lossy.status.success(), "cwebp -q failed: {lossy:?}");
+    for flag in ["-flip", "-alpha"] {
+        let out = run("dwebp", &["-", "-o", "-", "-yuv", flag], lossy.stdout.clone());
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`-yuv {flag}` must be a usage error"
+        );
+        let err = stderr(&out);
+        assert!(err.contains("-yuv"), "names the YUV flag: {err:?}");
+        assert!(err.contains(flag.trim_start_matches('-')), "names {flag}: {err:?}");
+    }
 }
 
 #[test]

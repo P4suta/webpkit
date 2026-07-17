@@ -1517,6 +1517,7 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "ctrlc",
+ "gif",
  "glob",
  "image",
  "insta",

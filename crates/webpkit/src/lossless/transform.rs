@@ -3,6 +3,7 @@
 //! transform; layer-1 primitives depending only on `crate::lossless::constants`.
 
 pub(crate) mod cross_color;
+pub(crate) mod near_lossless;
 pub(crate) mod palette;
 pub(crate) mod predictor;
 pub(crate) mod subtract_green;

@@ -52,8 +52,12 @@ impl Target {
 pub(crate) enum Strategy {
     /// A single encode with a fixed mode.
     Once(EncodeMode),
-    /// Sweep the three lossless efforts and keep the smallest output.
-    OptimizeLossless,
+    /// Sweep the three lossless efforts and keep the smallest output, carrying any
+    /// near-lossless level through every effort.
+    OptimizeLossless {
+        /// Near-lossless level applied at each effort, or `None` for plain lossless.
+        near_lossless: Option<u8>,
+    },
     /// Bisect lossy quality to meet a [`Target`], at a fixed effort.
     Search {
         /// Encoder effort held constant across the quality search.
@@ -90,7 +94,9 @@ impl Strategy {
                     .to_owned(),
             )),
             (true, None) => match mode {
-                EncodeMode::Lossless(_) => Ok(Self::OptimizeLossless),
+                EncodeMode::Lossless { near_lossless, .. } => {
+                    Ok(Self::OptimizeLossless { near_lossless })
+                },
                 EncodeMode::Lossy { .. } if explicit_lossy => Err(CliError::Usage(
                     "`--optimize` sweeps lossless effort; drop `--lossy`/`--quality`, or drop \
                      `--optimize`"
@@ -105,7 +111,7 @@ impl Strategy {
                     effort: method,
                     target,
                 }),
-                EncodeMode::Lossless(_) => Err(CliError::Usage(
+                EncodeMode::Lossless { .. } => Err(CliError::Usage(
                     "a size/quality target searches lossy quality; lossless output has no quality \
                      dial — remove the lossless request"
                         .to_owned(),
@@ -127,7 +133,9 @@ impl Strategy {
                 let bytes = codec::encode(image, mode, metadata.clone())?;
                 Ok(EncodeReport::single(mode, bytes))
             },
-            Self::OptimizeLossless => optimize_lossless(image, metadata),
+            Self::OptimizeLossless { near_lossless } => {
+                optimize_lossless(image, metadata, near_lossless)
+            },
             Self::Search { effort, target } => Searcher::new(image, metadata, effort).run(target),
         }
     }
@@ -198,21 +206,27 @@ pub(crate) struct Attempt {
     pub(crate) bytes: usize,
 }
 
-/// Sweep the three lossless efforts, keeping the smallest output.
-fn optimize_lossless(image: &Image, metadata: &Metadata) -> Result<EncodeReport, CliError> {
+/// Sweep the three lossless efforts, keeping the smallest output. Any
+/// `near_lossless` level is held constant across the sweep.
+fn optimize_lossless(
+    image: &Image,
+    metadata: &Metadata,
+    near_lossless: Option<u8>,
+) -> Result<EncodeReport, CliError> {
+    let mode = |effort| EncodeMode::Lossless {
+        effort,
+        near_lossless,
+    };
     let mut best_effort = Effort::Fast;
-    let mut bytes = codec::encode(image, EncodeMode::Lossless(Effort::Fast), metadata.clone())?;
+    let mut bytes = codec::encode(image, mode(Effort::Fast), metadata.clone())?;
     for effort in [Effort::Balanced, Effort::Best] {
-        let candidate = codec::encode(image, EncodeMode::Lossless(effort), metadata.clone())?;
+        let candidate = codec::encode(image, mode(effort), metadata.clone())?;
         if candidate.len() < bytes.len() {
             bytes = candidate;
             best_effort = effort;
         }
     }
-    Ok(EncodeReport::single(
-        EncodeMode::Lossless(best_effort),
-        bytes,
-    ))
+    Ok(EncodeReport::single(mode(best_effort), bytes))
 }
 
 /// State for a lossy quality bisection: memoized encodes and recorded attempts.

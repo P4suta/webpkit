@@ -13,6 +13,7 @@ Options:
   -m <int>         method 0-6 (effort)
   -lossless        encode losslessly (VP8L) instead of lossy (VP8)
   -z <int>         lossless level 0-9 (implies -lossless)
+  -near_lossless <int>  near-lossless preprocessing 0-100, lower = stronger (implies -lossless)
   -metadata <list> all,none,icc,exif,xmp (default: all)
   -crop x y w h    crop before encoding (dimensions match libwebp; pixels differ)
   -resize w h      resize before encoding (0 on one axis keeps aspect)

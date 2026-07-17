@@ -4,7 +4,7 @@
 .SH NAME
 encode \- Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .SH SYNOPSIS
-\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-crop\fR] [\fB\-\-resize\fR] [\fB\-\-target\-size\fR] [\fB\-\-min\-psnr\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
+\fBencode\fR <\fB\-o\fR|\fB\-\-output\fR> [\fB\-\-input\-format\fR] [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-layout\fR] [\fB\-m\fR|\fB\-\-method\fR] [\fB\-\-lossless\fR] [\fB\-\-lossy\fR] [\fB\-q\fR|\fB\-\-quality\fR] [\fB\-\-near\-lossless\fR] [\fB\-\-crop\fR] [\fB\-\-resize\fR] [\fB\-\-target\-size\fR] [\fB\-\-min\-psnr\fR] [\fB\-\-metadata\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIINPUT\fR] 
 .SH DESCRIPTION
 Encode an image (PNG/JPEG/GIF/TIFF/BMP/PPM/PAM/raw) into a WebP file
 .SH OPTIONS
@@ -81,6 +81,9 @@ Encode lossily (VP8) instead of losslessly (VP8L)
 .TP
 \fB\-q\fR, \fB\-\-quality\fR \fI<QUALITY>\fR
 Lossy quality 0\-100 (higher = larger, closer to source); selects \-\-lossy
+.TP
+\fB\-\-near\-lossless\fR \fI<N>\fR
+Near\-lossless preprocessing 0\-100 (lower = stronger; implies lossless)
 .TP
 \fB\-\-crop\fR \fI<X,Y,W,H>\fR
 Crop before encoding: `x,y,width,height` in pixels (applied before \-\-resize)

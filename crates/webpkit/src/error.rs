@@ -10,12 +10,21 @@
 ///
 /// A closed set: the WebP still-image format carries exactly VP8L (lossless) or
 /// VP8 (lossy), so this is deliberately *not* `#[non_exhaustive]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Codec {
     /// VP8L — the lossless codec.
     Lossless,
     /// VP8 — the lossy codec.
     Lossy,
+}
+
+impl core::fmt::Display for Codec {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::Lossless => "lossless (VP8L)",
+            Self::Lossy => "lossy (VP8)",
+        })
+    }
 }
 
 /// The retained shape of a [`std::io::Error`]: its [`ErrorKind`](std::io::ErrorKind)
@@ -78,6 +87,10 @@ pub enum Error {
     UnsupportedFeature,
     /// The extended (`VP8X`) container or one of its chunks is malformed.
     InvalidContainer,
+    /// An animation frame does not fit the canvas, has an odd offset, or exceeds
+    /// the `2^24 - 1` ms duration limit — distinct from a plain
+    /// [`InvalidDimensions`](Self::InvalidDimensions) size error.
+    InvalidFrame,
     /// The image's pixel count exceeds a caller-supplied decode limit; reported
     /// before any large allocation so a hostile header cannot exhaust memory.
     LimitExceeded {
@@ -110,6 +123,10 @@ impl core::fmt::Display for Error {
             },
             Self::UnsupportedFeature => f.write_str("unsupported WebP feature"),
             Self::InvalidContainer => f.write_str("malformed WebP extended (VP8X) container"),
+            Self::InvalidFrame => f.write_str(
+                "animation frame does not fit the canvas, has an odd offset, or exceeds the \
+                 2^24 ms duration limit",
+            ),
             Self::LimitExceeded { pixels, limit } => {
                 write!(
                     f,
@@ -165,6 +182,7 @@ mod tests {
             Error::PixelBufferMismatch,
             Error::UnsupportedFeature,
             Error::InvalidContainer,
+            Error::InvalidFrame,
             Error::LimitExceeded {
                 pixels: 100,
                 limit: 10,
@@ -173,6 +191,14 @@ mod tests {
         for variant in variants {
             assert!(!variant.to_string().is_empty());
         }
+    }
+
+    #[test]
+    fn codec_display_names_both_bitstreams() {
+        // Distinct, non-empty, and each names its bitstream — pins both match arms.
+        assert!(Codec::Lossless.to_string().contains("VP8L"));
+        assert!(Codec::Lossy.to_string().contains("VP8"));
+        assert_ne!(Codec::Lossless.to_string(), Codec::Lossy.to_string());
     }
 
     #[test]

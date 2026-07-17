@@ -131,10 +131,10 @@ fn convert_one(path: &Path, options: &Options) -> Result<Conversion, CliError> {
         ));
     }
     let (mode, derived) = codec::resolve_mode(format, options.flags)?;
-    // A GIF becomes a lossless animation, outside any still effort search. Every
-    // other input becomes a strategy: `--optimize` a lossless effort sweep, else a
-    // single encode. Resolving through `Strategy` is what makes `--optimize --lossy`
-    // a usage error rather than a silently dropped flag.
+    // A GIF becomes an animation honoring its resolved codec, outside any still
+    // effort search. Every other input becomes a strategy: `--optimize` a lossless
+    // effort sweep, else a single encode. Resolving through `Strategy` is what makes
+    // `--optimize --lossy` a usage error rather than a silently dropped flag.
     let webp = if format == InputFormat::Gif {
         codec::encode_input(&bytes, format, mode, options.metadata, true)?.bytes
     } else {
