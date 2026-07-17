@@ -2,9 +2,9 @@
 //!
 //! [`Error`] is `#[non_exhaustive]`, so new failure modes can be added without a
 //! breaking change. It stays `Clone + PartialEq + Eq` (handy in tests and
-//! matching) — the `std`-only [`Error::Io`] variant therefore carries a
-//! [`std::io::ErrorKind`] (which is `Copy + Eq`) rather than the un-cloneable
-//! [`std::io::Error`].
+//! matching) — the `std`-only [`Error::Io`] variant therefore carries an
+//! [`IoError`] (a cloneable snapshot of the [`std::io::ErrorKind`] and OS message)
+//! rather than the un-cloneable [`std::io::Error`] itself.
 
 /// Which of the two WebP bitstream codecs a bitstream error refers to.
 ///
@@ -17,6 +17,39 @@ pub enum Codec {
     /// VP8 — the lossy codec.
     Lossy,
 }
+
+/// The retained shape of a [`std::io::Error`]: its [`ErrorKind`](std::io::ErrorKind)
+/// and the original OS message.
+///
+/// [`Error`] stores this instead of the raw [`std::io::Error`] because the latter
+/// is neither [`Clone`] nor [`Eq`], which [`Error`] must remain. The message is
+/// preserved for [`Display`](core::fmt::Display) and this type is the value
+/// [`Error::source`](std::error::Error::source) returns for [`Error::Io`].
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IoError {
+    kind: std::io::ErrorKind,
+    message: alloc::string::String,
+}
+
+#[cfg(feature = "std")]
+impl IoError {
+    /// The [`ErrorKind`](std::io::ErrorKind) of the original I/O error.
+    #[must_use]
+    pub const fn kind(&self) -> std::io::ErrorKind {
+        self.kind
+    }
+}
+
+#[cfg(feature = "std")]
+impl core::fmt::Display for IoError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for IoError {}
 
 /// Errors returned by the WebP codecs (VP8L lossless, VP8 lossy) and this shell crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,10 +86,10 @@ pub enum Error {
         /// The configured maximum.
         limit: u64,
     },
-    /// An I/O error from a [`std::io::Read`]/[`std::io::Write`] source. The
-    /// [`std::io::ErrorKind`] is retained; the original message is not.
+    /// An I/O error from a [`std::io::Read`]/[`std::io::Write`] source, retaining
+    /// the original [`ErrorKind`](std::io::ErrorKind) and OS message (see [`IoError`]).
     #[cfg(feature = "std")]
-    Io(std::io::ErrorKind),
+    Io(IoError),
 }
 
 impl core::fmt::Display for Error {
@@ -84,18 +117,28 @@ impl core::fmt::Display for Error {
                 )
             },
             #[cfg(feature = "std")]
-            Self::Io(kind) => write!(f, "I/O error: {kind:?}"),
+            Self::Io(e) => write!(f, "I/O error: {e}"),
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
-        Self::Io(err.kind())
+        Self::Io(IoError {
+            kind: err.kind(),
+            message: err.to_string(),
+        })
     }
 }
 
@@ -143,9 +186,45 @@ mod tests {
     }
 
     #[test]
-    fn io_error_maps_to_its_kind() {
-        use std::io::{Error as IoError, ErrorKind};
-        let err: Error = IoError::from(ErrorKind::UnexpectedEof).into();
-        assert_eq!(err, Error::Io(ErrorKind::UnexpectedEof));
+    fn io_error_preserves_kind_and_message() {
+        let io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "disk on fire");
+        let err: Error = io.into();
+        let Error::Io(inner) = &err else {
+            panic!("expected Io");
+        };
+        assert_eq!(inner.kind(), std::io::ErrorKind::PermissionDenied);
+        // Display now carries the OS message, not just the ErrorKind debug.
+        assert!(err.to_string().contains("disk on fire"));
+    }
+
+    #[test]
+    fn io_error_source_chains() {
+        use std::error::Error as _;
+        let io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "disk on fire");
+        let err: Error = io.into();
+        let source = err.source().expect("Io has a source");
+        assert!(source.to_string().contains("disk on fire"));
+    }
+
+    #[test]
+    fn io_error_is_clone_and_eq() {
+        let make = || -> Error {
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "disk on fire").into()
+        };
+        let err = make();
+        assert_eq!(err.clone(), err);
+        assert_eq!(make(), err);
+        let other: Error =
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "different").into();
+        assert_ne!(other, err);
+    }
+
+    /// The `std`-gated `Io` arm needs its own Display coverage; the shared list
+    /// above is `no_std`-safe and cannot name it.
+    #[test]
+    fn io_display_is_non_empty() {
+        let err: Error =
+            std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof").into();
+        assert!(!err.to_string().is_empty());
     }
 }

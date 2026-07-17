@@ -17,10 +17,10 @@ Suppress all non\-error output.
 
 Long\-only: `\-q` is `\-\-quality`. A bare `webp \-q photo.png` therefore reads `photo.png` as a quality value and fails; use `\-\-quiet` to silence output.
 .TP
-\fB\-\-color\fR \fI<WHEN>\fR [default: auto]
-auto, always, or never
+\fB\-\-color\fR \fI<WHEN>\fR
+auto, always, or never [default: auto, or from env/config].
 
-`CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `\-\-color` outranks both. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
+`CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `\-\-color` outranks them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when stderr is a terminal — so a pipe or a log file never receives escape codes.
 .TP
 \fB\-\-threads\fR \fI<N>\fR
 Worker threads for parallel work; 0 (the default) uses one per core.

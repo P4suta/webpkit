@@ -1,6 +1,6 @@
 //! Raw row-major pixel I/O (the codec's native currency).
 
-use webpkit::{Dimensions, Image, Metadata, PixelLayout};
+use webpkit::{Dimensions, Image, PixelLayout};
 
 use crate::error::CliError;
 
@@ -32,16 +32,5 @@ pub(crate) fn read(bytes: &[u8], params: RawParams) -> Result<Image, CliError> {
             params.height,
         )));
     }
-    let alpha_offset = match params.layout {
-        PixelLayout::Argb8 => 0,
-        PixelLayout::Rgba8 | PixelLayout::Bgra8 => 3,
-    };
-    let has_alpha = bytes.chunks_exact(4).any(|px| px[alpha_offset] != 0xff);
-    Ok(Image::from_parts(
-        dims,
-        params.layout,
-        bytes.to_vec(),
-        has_alpha,
-        Metadata::none(),
-    ))
+    Ok(Image::new(dims, params.layout, bytes.to_vec())?)
 }

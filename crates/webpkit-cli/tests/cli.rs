@@ -7,9 +7,54 @@
 
 use assert_cmd::Command;
 use predicates::str::contains;
+use webpkit::{Dimensions, Encoder, ImageRef, Metadata, PixelLayout};
 
 fn webp() -> Command {
     Command::cargo_bin("webp").expect("binary builds")
+}
+
+/// An opaque 2x2 lossless WebP carrying an Exif payload, built via the `webpkit`
+/// facade so the bare-decode metadata behavior can be observed end to end.
+fn webp_with_exif() -> Vec<u8> {
+    let dims = Dimensions::new(2, 2).expect("dims");
+    let pixels = vec![0xff_u8; 16];
+    let img = ImageRef::new(dims, PixelLayout::Rgba8, &pixels).expect("ref");
+    Encoder::lossless()
+        .metadata(Metadata::none().with_exif(b"MM\0*exif-payload".to_vec()))
+        .encode_ref(img)
+        .expect("encode")
+}
+
+/// The bare direction-detected decode honors `--metadata`: it preserves Exif by
+/// default (PNG `eXIf`) and drops it under `--metadata none`. Before the fix the
+/// bare form hardcoded `Selection::all()`, so `--metadata none` was ignored.
+#[test]
+fn bare_decode_honors_metadata() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let input = dir.path().join("in.webp");
+    std::fs::write(&input, webp_with_exif()).expect("write webp");
+
+    let keep = dir.path().join("keep.png");
+    webp().arg(&input).arg("-o").arg(&keep).assert().success();
+    let keep_bytes = std::fs::read(&keep).expect("read keep");
+    assert!(
+        keep_bytes.windows(4).any(|w| w == b"eXIf"),
+        "default bare decode should preserve Exif as eXIf"
+    );
+
+    let strip = dir.path().join("strip.png");
+    webp()
+        .arg(&input)
+        .arg("-o")
+        .arg(&strip)
+        .args(["--metadata", "none"])
+        .assert()
+        .success();
+    let strip_bytes = std::fs::read(&strip).expect("read strip");
+    assert!(
+        !strip_bytes.windows(4).any(|w| w == b"eXIf"),
+        "--metadata none must drop Exif from the bare decode"
+    );
 }
 
 #[test]

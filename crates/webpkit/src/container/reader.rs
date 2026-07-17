@@ -16,6 +16,7 @@ pub struct Chunk<'a> {
 
 /// Iterator over the chunks in a RIFF body. Each item is a [`Chunk`] or the
 /// first (and only) [`Error::Truncated`] encountered, after which iteration ends.
+#[derive(Debug)]
 pub struct Chunks<'a> {
     rest: &'a [u8],
     done: bool,

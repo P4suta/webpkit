@@ -578,7 +578,7 @@ proptest! {
         // The type-state builder becomes `HasFrames` after the first frame, so
         // seed it once and then fold the remaining frames into the same state.
         let first = webpkit::lossless::ImageRef::new(canvas, webpkit::lossless::PixelLayout::Rgba8, &frames[0]).unwrap();
-        let mut encoder = webpkit::lossless::AnimationEncoder::new(canvas)
+        let mut encoder = webpkit::AnimationEncoder::new(canvas)
             .add_frame(first, frame_meta)
             .map_err(|e| TestCaseError::fail(format!("webpkit::lossless add_frame failed: {e}")))?;
         for frame in &frames[1..] {
@@ -640,7 +640,7 @@ proptest! {
         let first =
             webpkit::lossless::ImageRef::new(dims0, webpkit::lossless::PixelLayout::Rgba8, &frames[0].rgba)
                 .unwrap();
-        let mut encoder = webpkit::lossless::AnimationEncoder::new(canvas)
+        let mut encoder = webpkit::AnimationEncoder::new(canvas)
             .add_frame(first, to_meta(&frames[0]))
             .map_err(|e| TestCaseError::fail(format!("webpkit::lossless add_frame failed: {e}")))?;
         for f in &frames[1..] {
@@ -681,16 +681,15 @@ fn encode_image_metadata_survives_libwebp() {
     let icc = b"icc-bytes".to_vec(); // 9 bytes: odd -> RIFF pad
     let exif = b"exif-bytes".to_vec();
     let xmp = b"<x:xmpmeta/>".to_vec();
-    let img = webpkit::lossless::Image::from_parts(
-        dims,
-        webpkit::lossless::PixelLayout::Rgba8,
-        rgba.clone(),
-        false,
-        webpkit::lossless::Metadata::none()
-            .with_icc_profile(icc.clone())
-            .with_exif(exif.clone())
-            .with_xmp(xmp.clone()),
-    );
+    let img =
+        webpkit::lossless::Image::new(dims, webpkit::lossless::PixelLayout::Rgba8, rgba.clone())
+            .unwrap()
+            .with_metadata(
+                webpkit::lossless::Metadata::none()
+                    .with_icc_profile(icc.clone())
+                    .with_exif(exif.clone())
+                    .with_xmp(xmp.clone()),
+            );
 
     // Preserve (default): the reference decoder reproduces the pixels and every
     // metadata chunk survives byte-exact.

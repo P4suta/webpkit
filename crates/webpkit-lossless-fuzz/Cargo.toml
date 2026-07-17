@@ -52,7 +52,9 @@ fuzzing = ["dep:libfuzzer-sys"]
 
 [dependencies]
 libfuzzer-sys = { workspace = true, optional = true }
-webpkit = { path = "../webpkit" }
+# Reaches the codec module-first (`webpkit::lossless::…`), so it needs the
+# `__internals` tooling feature that exposes the internal module tree.
+webpkit = { path = "../webpkit", features = ["__internals"] }
 
 [lints]
 workspace = true

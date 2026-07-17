@@ -1,7 +1,7 @@
 //! Netpbm binary PPM (`P6`, RGB) and PAM (`P7`, RGBA) I/O — dependency-free, for
 //! `cwebp` PPM/PAM inputs and `dwebp -ppm`/`-pam` outputs.
 
-use webpkit::{Dimensions, Image, Metadata, PixelLayout};
+use webpkit::{Dimensions, Image, PixelLayout};
 
 use crate::{error::CliError, format::to_rgba8};
 
@@ -111,14 +111,7 @@ fn pack_rgba(data: &[u8], width: u32, height: u32, channels: usize) -> Result<Ve
 
 fn finish(width: u32, height: u32, rgba: Vec<u8>) -> Result<Image, CliError> {
     let dims = Dimensions::new(width, height)?;
-    let has_alpha = rgba.chunks_exact(4).any(|px| px[3] != 0xff);
-    Ok(Image::from_parts(
-        dims,
-        PixelLayout::Rgba8,
-        rgba,
-        has_alpha,
-        Metadata::none(),
-    ))
+    Ok(Image::new(dims, PixelLayout::Rgba8, rgba)?)
 }
 
 /// Read the next unsigned integer, skipping ASCII whitespace and `#` comments,

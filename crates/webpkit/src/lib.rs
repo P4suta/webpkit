@@ -1,8 +1,8 @@
 //! `webpkit` — a pure-Rust WebP codec: lossless (VP8L) and lossy (VP8) behind one API.
 //!
 //! This is the umbrella crate. [`decode`] reads any still WebP file, inspecting
-//! the container to route `VP8L` payloads to the [`crate::lossless`] (lossless) decoder and
-//! `VP8 ` payloads to the [`crate::lossy`] (lossy) decoder; both return the shared
+//! the container to route `VP8L` payloads to the lossless decoder and
+//! `VP8 ` payloads to the lossy decoder; both return the shared
 //! [`Image`] type. A lossy image's sibling `ALPH` alpha chunk is composited here,
 //! where both codecs are in scope. The type-state [`Encoder`] writes output with
 //! either codec — [`Encoder::lossless`] or [`Encoder::lossy`] — sharing the
@@ -15,15 +15,16 @@
 //!
 //! # Status
 //!
-//! Lossless decode/encode is complete (see [`crate::lossless`]). Lossy (VP8) decoding
-//! reconstructs baseline key frames (via [`crate::lossy`]), composites a separate
+//! Lossless decode/encode is complete. Lossy (VP8) decoding
+//! reconstructs baseline key frames, composites a separate
 //! `ALPH` alpha channel, and decodes lossy animations (frames dispatched into
-//! the `lossless` codec's compositor). The unified [`IncrementalDecoder`] streams any still or
-//! animation, row-streaming a bare lossy `VP8 ` still through [`crate::lossy`]. Lossy
+//! the lossless codec's compositor). The unified [`IncrementalDecoder`] streams any still or
+//! animation, row-streaming a bare lossy `VP8 ` still. Lossy
 //! **encoding** ([`Encoder::lossy`]) writes a baseline `VP8 ` key frame, carrying a
 //! lossless `ALPH` alpha plane for non-opaque images and ICC/Exif/XMP [`Metadata`]
 //! via the extended `VP8X` container ([`Encoder::encode`] preserves a source
 //! [`Image`]'s metadata by default).
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(
@@ -36,12 +37,31 @@
     reason = "pub(crate) is our honest internal visibility; this nursery lint conflicts \
               with the rustc unreachable_pub lint that we also enable"
 )]
+// Without the `__internals` tooling feature the internal module tree is `pub(crate)`
+// (see `internal_modules!` below). Its cross-module `pub` items are then no longer
+// reachable from the crate root (`unreachable_pub`), and the items that exist only
+// for the external tooling/test crates read as unused from webpkit's own side
+// (`dead_code`). Both are the intended shape of a published build: the curated
+// facade is the whole public API, and the tooling surface is exercised only under
+// `__internals` (by the bench/oracle/conformance crates), never from within the lib.
+#![cfg_attr(
+    not(feature = "__internals"),
+    allow(
+        unreachable_pub,
+        dead_code,
+        unused_imports,
+        reason = "internal modules are pub(crate) unless the `__internals` tooling \
+                  feature is on; their cross-module `pub` items (and the `pub use` \
+                  re-exports of them) are then unreachable externally and unused \
+                  internally by design"
+    )
+)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
 #[cfg(not(feature = "alloc"))]
-compile_error!("webp requires an allocator: enable the `alloc` feature (implied by `std`)");
+compile_error!("webpkit requires an allocator: enable the `alloc` feature (implied by `std`)");
 
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
@@ -54,45 +74,58 @@ use alloc::vec::Vec;
 // root so its `crate::`-relative code is unchanged. NOT named `core` — that would
 // shadow the `::core` std crate the no_std codecs use throughout.
 //
-// The shell and codec modules are `#[doc(hidden)] pub` so this workspace's own
-// test & tooling crates can still reach into them module-first (they used to be
-// separate public crates). They are NOT a stable, documented part of the public
-// API — the curated re-exports below are what external users depend on. (`prelude`
-// stays private: it was `pub(crate)` internal even as a separate crate.)
-#[doc(hidden)]
-pub mod alpha;
-#[doc(hidden)]
-pub mod anim;
-#[doc(hidden)]
-pub mod container;
-#[doc(hidden)]
-pub mod effort;
+// These shell and codec modules are `pub(crate)` in a normal build: the curated
+// re-exports below are the *entire* public API. Under the non-default `__internals`
+// feature they become `#[doc(hidden)] pub` so this workspace's own test & tooling
+// crates can reach into them module-first (they used to be separate public crates).
+// That feature is off on crates.io / docs.rs, so a downstream user never sees — and
+// can never depend on — the internals. (`encoder`/`interop`/`prelude` stay private
+// regardless: their public items are already re-exported through the facade.)
+macro_rules! internal_modules {
+    ($($(#[$attr:meta])* $name:ident),* $(,)?) => { $(
+        #[cfg(feature = "__internals")]
+        #[doc(hidden)]
+        $(#[$attr])*
+        pub mod $name;
+        #[cfg(not(feature = "__internals"))]
+        $(#[$attr])*
+        pub(crate) mod $name;
+    )* };
+}
+
+internal_modules! {
+    alpha,
+    anim,
+    container,
+    effort,
+    error,
+    image,
+    lossless,
+    lossy,
+    stream,
+    #[cfg(feature = "work-count")]
+    work_count,
+}
+
+// Public RIFF chunk-inspection facade (thin wrappers over `container::reader`).
+// The module stays private; its public items are re-exported at the crate root.
+mod chunk;
 mod encoder;
-#[doc(hidden)]
-pub mod error;
-#[doc(hidden)]
-pub mod image;
 // Optional `image`-crate interop (TryFrom conversions on `Image`). The impls attach
 // to the public types, so the module itself stays private.
 #[cfg(feature = "image")]
 mod interop;
-#[doc(hidden)]
-pub mod lossless;
-#[doc(hidden)]
-pub mod lossy;
 mod prelude;
-#[doc(hidden)]
-pub mod stream;
-#[cfg(feature = "work-count")]
-#[doc(hidden)]
-pub mod work_count;
 
 // ---- public facade re-exports ----------------------------------------------
 pub use crate::anim::{
     AnimInfo, BlendMode, CompositedFrame, DisposalMode, Frame, FrameMeta,
     decode_frames_with_decoder,
 };
+pub use crate::chunk::{Chunk, Chunks, chunks};
 pub use crate::effort::Effort;
+#[cfg(feature = "std")]
+pub use crate::error::IoError;
 pub use crate::error::{Codec, Error, Result};
 pub use crate::image::{
     Dimensions, Image, ImageRef, MAX_DIMENSION, Metadata, MetadataPolicy, PixelLayout,
@@ -101,10 +134,7 @@ pub use crate::stream::{
     DEFAULT_MAX_PIXELS, DecodeOptions, DecodedFrame, FrameDecoder, FramePayload, ImageInfo,
     Progress, RowDrain,
 };
-pub use encoder::{Encoder, Lossless, Lossy};
-// Surface animation construction from the facade (previously reachable only
-// through the lossless crate).
-pub use crate::lossless::AnimationEncoder;
+pub use encoder::{AnimCodec, AnimationEncoder, Empty, Encoder, HasFrames, Lossless, Lossy};
 
 // ---- imports used by the facade functions below -----------------------------
 use crate::alpha::{AlphaCompression, parse_header, unfilter};
@@ -118,7 +148,7 @@ use crate::container::vp8x::{VP8X_PAYLOAD_LEN, Vp8xInfo};
 #[cfg(feature = "alloc")]
 pub type Frames<'a> = crate::anim::Frames<'a, WebpFrameDecoder>;
 /// A compositing iterator that paints each animation frame onto the persistent
-/// canvas (see [`crate::anim::CompositedFrames`]).
+/// canvas.
 #[cfg(feature = "alloc")]
 pub type CompositedFrames<'a> = crate::anim::CompositedFrames<'a, WebpFrameDecoder>;
 
@@ -126,7 +156,7 @@ pub type CompositedFrames<'a> = crate::anim::CompositedFrames<'a, WebpFrameDecod
 /// [`Image`] (RGBA8 by default), dispatching on the container's image chunk.
 ///
 /// A lossy `VP8 ` image accompanied by a sibling `ALPH` chunk is composited: the
-/// opaque RGB is decoded by [`crate::lossy`], the alpha plane is decompressed (raw, or
+/// opaque RGB is decoded by the lossy decoder, the alpha plane is decompressed (raw, or
 /// a lossless `VP8L` stream) and spatially un-filtered, and the result is written
 /// into the image's alpha channel. Lossless (`VP8L`) images carry their own alpha.
 ///
@@ -312,8 +342,8 @@ fn alpha_plane_with(
 /// Decode an animated WebP into a lazy [`Frames`] iterator.
 ///
 /// Handles both lossless (`VP8L`) and lossy (`VP8 ` + optional `ALPH`) frames —
-/// the latter via [`crate::lossy`] with alpha compositing, injected into the `lossless`
-/// codec's animation walker.
+/// the latter via the lossy decoder with alpha compositing, injected into the
+/// lossless codec's animation walker.
 ///
 /// # Untrusted input
 ///
@@ -380,8 +410,8 @@ enum Decision {
 /// A push-based decoder for **any** still WebP or animation.
 ///
 /// Dispatches on the container kind: lossless stills and all animations stream
-/// through [`crate::lossless`], a bare lossy `VP8 ` still row-streams through [`crate::lossy`],
-/// and an extended lossy still (which may carry `ALPH` alpha) is buffered and
+/// through the lossless decoder, a bare lossy `VP8 ` still row-streams through the
+/// lossy decoder, and an extended lossy still (which may carry `ALPH` alpha) is buffered and
 /// finished with a one-shot [`decode`]. The pixels and error semantics match
 /// [`decode`] exactly; the only new streaming capability over the
 /// lossless/animation paths is the bare lossy still. `Read`-free, so it works on
@@ -617,11 +647,10 @@ fn first_composited_frame(input: &[u8], options: &DecodeOptions) -> Result<Image
 /// The umbrella's [`FrameDecoder`]: the seam that
 /// drives **both** codecs.
 ///
-/// It lets the `lossless` codec's codec-agnostic animation walker decode frames of
-/// either codec. A `VP8L` frame is decoded by the `lossless` codec (delegating to its
-/// [`Vp8lFrameDecoder`](crate::lossless::Vp8lFrameDecoder)); a lossy `VP8 ` (+
-/// optional sibling `ALPH`) frame is decoded by [`crate::lossy`], compositing the
-/// alpha plane into the pixels' top byte.
+/// It lets the lossless codec's codec-agnostic animation walker decode frames of
+/// either codec. A `VP8L` frame is decoded by the lossless codec (delegating to its
+/// own VP8L frame decoder); a lossy `VP8 ` (+ optional sibling `ALPH`) frame is
+/// decoded by the lossy codec, compositing the alpha plane into the pixels' top byte.
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WebpFrameDecoder;
@@ -1637,7 +1666,7 @@ mod tests {
             blend: BlendMode::Blend,
             dispose: DisposalMode::Keep,
         };
-        let anim = crate::lossless::AnimationEncoder::new(canvas)
+        let anim = crate::AnimationEncoder::new(canvas)
             .add_frame(
                 ImageRef::new(canvas, PixelLayout::Rgba8, &red).unwrap(),
                 meta,
@@ -1693,7 +1722,7 @@ mod tests {
             blend: BlendMode::Blend,
             dispose: DisposalMode::Keep,
         };
-        let file = crate::lossless::AnimationEncoder::new(canvas)
+        let file = crate::AnimationEncoder::new(canvas)
             .add_frame(
                 ImageRef::new(canvas, PixelLayout::Rgba8, &red).unwrap(),
                 meta(100),

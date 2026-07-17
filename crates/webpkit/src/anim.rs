@@ -57,7 +57,7 @@ pub struct AnimInfo {
 /// A decoded animation frame: its metadata plus its own (frame-sized) pixels.
 ///
 /// The image is the frame's raw rectangle, *not* the composited canvas — use
-/// [`Frames::composited`] for canvas-sized output.
+/// the frame iterator's `composited()` view for canvas-sized output.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Frame {
     meta: FrameMeta,
@@ -579,7 +579,7 @@ pub const fn frame_meta(header: AnmfHeader) -> FrameMeta {
     }
 }
 
-/// Decode an animated WebP into a lazy [`Frames`] iterator, decoding each frame
+/// Decode an animated WebP into a lazy frame iterator, decoding each frame
 /// through the caller-supplied [`FrameDecoder`].
 ///
 /// This is the codec-agnostic entry point: a codec crate wraps it with its own

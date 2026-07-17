@@ -18,12 +18,13 @@ fn convert(width: u32, height: u32, rgba: &[u8]) -> webpkit::Result<()> {
     let (_dims, _pixels) = decode_rgba(&lossless)?;
     Ok(())
 }
+# convert(4, 4, &vec![0u8; 4 * 4 * 4]).unwrap();
 ```
 
 For metadata preservation, effort tiers, non-RGBA layouts, or streaming, reach for
 the [`decode`] function and the type-state [`Encoder`] builder:
 
-```rust
+```rust,no_run
 use webpkit::{decode, Effort, Encoder};
 
 fn reencode(bytes: &[u8]) -> webpkit::Result<()> {
@@ -32,6 +33,8 @@ fn reencode(bytes: &[u8]) -> webpkit::Result<()> {
     let _lossy = Encoder::lossy().quality(90).encode(&img)?;
     Ok(())
 }
+# let webp = webpkit::encode_lossless_rgba(1, 1, &[0u8; 4]).unwrap();
+# reencode(&webp).unwrap();
 ```
 
 See [`examples/roundtrip.rs`](examples/roundtrip.rs) for a complete, runnable

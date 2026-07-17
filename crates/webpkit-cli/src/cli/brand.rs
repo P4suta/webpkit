@@ -17,7 +17,7 @@ use std::{
 };
 
 use clap::{CommandFactory as _, Parser, Subcommand};
-use webpkit::DecodeOptions;
+use webpkit::{DEFAULT_MAX_PIXELS, DecodeOptions};
 
 use crate::{
     bulk,
@@ -173,20 +173,19 @@ struct GlobalArgs {
     /// `photo.png` as a quality value and fails; use `--quiet` to silence output.
     #[arg(long, global = true, conflicts_with = "verbose")]
     quiet: bool,
-    /// auto, always, or never
+    /// auto, always, or never [default: auto, or from env/config].
     ///
-    /// `CLICOLOR_FORCE` and `NO_COLOR` are honored, and an explicit `--color`
-    /// outranks both. Left alone, messages are colored only when stderr is a
-    /// terminal — so a pipe or a log file never receives escape codes.
+    /// `CLICOLOR_FORCE` and `NO_COLOR` are honored; an explicit `--color` outranks
+    /// them and `WEBP_COLOR`/`webp.toml`. Left alone, messages are colored only when
+    /// stderr is a terminal — so a pipe or a log file never receives escape codes.
     #[arg(
         long,
         global = true,
         value_enum,
-        default_value_t,
         value_name = "WHEN",
         hide_possible_values = true
     )]
-    color: ColorChoice,
+    color: Option<ColorChoice>,
     /// Worker threads for parallel work; 0 (the default) uses one per core.
     ///
     /// One global thread pool is built, which the encoder's parallel `best`
@@ -352,6 +351,12 @@ struct ConvertArgs {
     /// Metadata to embed: all,none,icc,exif,xmp (default: all).
     #[arg(long, value_enum, value_delimiter = ',')]
     metadata: Vec<MetadataField>,
+    /// Overwrite an existing output.
+    #[arg(long)]
+    force: bool,
+    /// Skip an input whose `.webp` output exists (still exits 0).
+    #[arg(long, conflicts_with = "force")]
+    no_clobber: bool,
 }
 
 /// Arguments for `webp diff`.
@@ -522,6 +527,36 @@ fn resolved_threads(flag: Option<u16>) -> Option<u16> {
     config::resolve(layer).map_or(flag, |resolution| Some(resolution.settings.threads.value))
 }
 
+/// The decode pixel cap after folding `WEBP_MAX_PIXELS` and `webp.toml`. No CLI
+/// flag sets it outside `webp config`, so a real decode honors it only through the
+/// environment or a config file — exactly what `webp config` reports. `None` is
+/// unbounded; a resolution error keeps the built-in default cap.
+fn resolved_max_pixels() -> Option<u64> {
+    config::resolve(config::Partial::default()).map_or(Some(DEFAULT_MAX_PIXELS), |resolution| {
+        match resolution.settings.max_pixels.value {
+            config::MaxPixels::Limited(limit) => Some(limit),
+            config::MaxPixels::Unbounded => None,
+        }
+    })
+}
+
+/// The color choice after folding `--color` over `WEBP_COLOR` and `webp.toml`.
+///
+/// Without this, only the `--color` flag reached `term::install`, while `webp
+/// config` reported `WEBP_COLOR`/a `color = ...` file value as applied — the same
+/// lie the encode settings and thread count carried. Precedence: flag, then env,
+/// then file, then the `auto` default; a resolution error falls back to the flag.
+fn resolved_color(flag: Option<ColorChoice>) -> ColorChoice {
+    let mut layer = config::Partial::default();
+    if let Some(choice) = flag {
+        layer.color = Some(from_args(choice));
+    }
+    config::resolve(layer).map_or_else(
+        |_| flag.unwrap_or_default(),
+        |resolution| resolution.settings.color.value,
+    )
+}
+
 /// Translate resolved settings into codec flags, honoring provenance.
 ///
 /// A codec or quality with a non-default origin (CLI, env, or file) selects the
@@ -605,7 +640,7 @@ pub(crate) fn main() -> ExitCode {
             Ok(cli) => cli,
             Err(err) => return parse_error(&err),
         };
-        term::install(cli.global.color);
+        term::install(resolved_color(cli.global.color));
         codec::configure_threads(resolved_threads(cli.global.threads));
         let reporter = Reporter::new(cli.global.verbose, cli.global.quiet).dry(cli.global.dry_run);
         finish(run(&cli.command, &reporter))
@@ -614,7 +649,7 @@ pub(crate) fn main() -> ExitCode {
             Ok(cli) => cli,
             Err(err) => return parse_error(&err),
         };
-        term::install(cli.global.color);
+        term::install(resolved_color(cli.global.color));
         codec::configure_threads(resolved_threads(cli.global.threads));
         let reporter = Reporter::new(cli.global.verbose, cli.global.quiet).dry(cli.global.dry_run);
         let result = match &cli.command {
@@ -852,6 +887,8 @@ fn convert(args: &ConvertArgs, reporter: &Reporter) -> Result<(), CliError> {
         optimize: args.optimize,
         recursive: args.recursive,
         output_dir: args.output.clone(),
+        force: args.force,
+        no_clobber: args.no_clobber,
     };
     let outcome = bulk::convert(&args.inputs, &options)?;
     for (ok, text) in &outcome.lines {
@@ -862,8 +899,13 @@ fn convert(args: &ConvertArgs, reporter: &Reporter) -> Result<(), CliError> {
         }
     }
     reporter.status(&format!(
-        "converted {} file(s), {} -> {} bytes{}",
+        "converted {} file(s){}, {} -> {} bytes{}",
         outcome.converted,
+        if outcome.skipped > 0 {
+            format!(", {} skipped", outcome.skipped)
+        } else {
+            String::new()
+        },
         outcome.total_in,
         outcome.total_out,
         if outcome.failed > 0 {
@@ -1074,8 +1116,11 @@ fn auto_decode(
 ) -> Result<(), CliError> {
     let format = OutputFormat::resolve(None, io::extension_of(output).as_deref());
     let pipeline = pipeline_of(args.crop.as_deref(), args.resize.as_deref())?;
-    let image = pipeline.apply(codec::decode_still_or_first_frame(bytes)?)?;
-    let metadata = Selection::all().apply(image.metadata());
+    let image = pipeline.apply(codec::decode_still_or_first_frame(
+        bytes,
+        resolved_max_pixels(),
+    )?)?;
+    let metadata = Selection::from_fields(&args.metadata).apply(image.metadata());
     let out = format::write_image(&image, format, &metadata)?;
     Sink::File(output.to_path_buf()).write(&out)?;
     reporter.status(&format!(
@@ -1114,11 +1159,12 @@ fn decode(args: &DecodeArgs, reporter: &Reporter) -> Result<(), CliError> {
     // `--layout` came to be honored for stills and silently dropped for
     // animations: `decode_animation` took `format` but not `layout`, so nothing
     // could notice the omission.
-    let options = DecodeOptions::new().layout(layout);
+    let cap = resolved_max_pixels();
+    let options = codec::decode_options(layout, cap);
     if is_animated(&bytes)? {
         return decode_animation(args, &bytes, format, &options, &sink, reporter);
     }
-    let image = codec::decode(&bytes, layout)?;
+    let image = codec::decode(&bytes, layout, cap)?;
     let metadata = Selection::from_fields(&args.metadata).apply(image.metadata());
     let out = format::write_image(&image, format, &metadata)?;
     sink.write(&out)?;
@@ -1432,4 +1478,52 @@ fn metadata_line(metadata: inspect::MetadataInfo) -> String {
 
 const fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use clap::{ArgAction, CommandFactory as _};
+
+    use super::{Cli, SUBCOMMANDS};
+
+    /// `SUBCOMMANDS` (the first-positional dispatch list) must name exactly the
+    /// clap subcommands plus the built-in `help`. Add a `Command` variant without
+    /// listing it and the new command would silently route through the bare form;
+    /// this fails instead.
+    #[test]
+    fn subcommands_list_matches_the_command_enum() {
+        let mut expected: BTreeSet<String> = Cli::command()
+            .get_subcommands()
+            .map(|c| c.get_name().to_owned())
+            .collect();
+        expected.insert("help".to_owned());
+        let listed: BTreeSet<String> = SUBCOMMANDS.iter().map(|&s| s.to_owned()).collect();
+        assert_eq!(
+            listed, expected,
+            "SUBCOMMANDS drifted from the Command enum"
+        );
+    }
+
+    /// `first_positional_is_subcommand` skips the value-taking global flags by name
+    /// (`--color`, `--threads`). Add a value-taking global and forget the scan and a
+    /// `webp --new V encode` misparses; this pins the set so the scan is updated too.
+    #[test]
+    fn value_taking_globals_are_exactly_color_and_threads() {
+        let value_globals: BTreeSet<String> = Cli::command()
+            .get_arguments()
+            .filter(|a| a.is_global_set())
+            .filter(|a| matches!(a.get_action(), ArgAction::Set | ArgAction::Append))
+            .filter_map(|a| a.get_long().map(|l| format!("--{l}")))
+            .collect();
+        let expected: BTreeSet<String> = ["--color", "--threads"]
+            .iter()
+            .map(|&s| s.to_owned())
+            .collect();
+        assert_eq!(
+            value_globals, expected,
+            "update the takes_value scan in first_positional_is_subcommand"
+        );
+    }
 }

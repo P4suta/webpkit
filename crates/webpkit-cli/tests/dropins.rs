@@ -239,3 +239,163 @@ fn dwebp_flip_reverses_rows() {
     let body = &pam.stdout[pam.stdout.len() - 8..];
     assert_eq!(body, &raw[..]);
 }
+
+/// A 2x2 PAM (`P7`, `RGB_ALPHA`) with two non-opaque pixels.
+fn pam_2x2_with_alpha() -> Vec<u8> {
+    let mut p =
+        b"P7\nWIDTH 2\nHEIGHT 2\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n".to_vec();
+    p.extend_from_slice(&[
+        10, 20, 30, 255, 40, 50, 60, 128, 70, 80, 90, 255, 100, 110, 120, 0,
+    ]);
+    p
+}
+
+/// The 16-byte RGBA body a `dwebp -pam` of a 2x2 image ends with.
+fn pam_alpha_bytes(pam: &[u8]) -> [u8; 4] {
+    let body = &pam[pam.len() - 16..];
+    [body[3], body[7], body[11], body[15]]
+}
+
+/// `cwebp -noalpha` drops the alpha channel: every pixel becomes opaque. Before the
+/// fix `-noalpha` was an accepted no-op, so the alpha survived.
+#[test]
+fn cwebp_noalpha_makes_the_image_opaque() {
+    let webp = run(
+        "cwebp",
+        &["-", "-o", "-", "-lossless", "-noalpha"],
+        pam_2x2_with_alpha(),
+    );
+    assert!(webp.status.success(), "cwebp -noalpha failed: {webp:?}");
+    let pam = run("dwebp", &["-", "-o", "-", "-pam"], webp.stdout);
+    assert!(pam.status.success(), "dwebp failed: {pam:?}");
+    assert_eq!(
+        pam_alpha_bytes(&pam.stdout),
+        [255, 255, 255, 255],
+        "-noalpha must make every pixel opaque"
+    );
+}
+
+/// Without `-noalpha` the alpha channel survives, proving the flag is the cause.
+#[test]
+fn cwebp_keeps_alpha_without_noalpha() {
+    let webp = run(
+        "cwebp",
+        &["-", "-o", "-", "-lossless"],
+        pam_2x2_with_alpha(),
+    );
+    assert!(webp.status.success(), "cwebp failed: {webp:?}");
+    let pam = run("dwebp", &["-", "-o", "-", "-pam"], webp.stdout);
+    assert!(pam.status.success());
+    assert_eq!(
+        pam_alpha_bytes(&pam.stdout),
+        [255, 128, 255, 0],
+        "without -noalpha the alpha channel is preserved exactly"
+    );
+}
+
+/// The lossy-alpha tuning knobs are rejected: webpkit stores alpha losslessly, so
+/// there is nothing for them to tune. Before the audit they were accepted no-ops.
+#[test]
+fn cwebp_rejects_alpha_tuning_knobs() {
+    for flag in ["-alpha_q", "-alpha_method", "-alpha_filter"] {
+        let out = run("cwebp", &[flag, "90", "-", "-o", "-"], vec![0; 16]);
+        assert_eq!(out.status.code(), Some(2), "{flag} must be rejected");
+        let err = stderr(&out);
+        assert!(err.contains("losslessly"), "{flag}: {err:?}");
+        assert!(err.contains("-noalpha"), "{flag}: {err:?}");
+    }
+}
+
+/// `-blend_alpha` (background compositing) is rejected, pointing at `-noalpha`.
+#[test]
+fn cwebp_rejects_blend_alpha() {
+    let out = run(
+        "cwebp",
+        &["-blend_alpha", "0xffffff", "-", "-o", "-"],
+        vec![0; 16],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(err.contains("-noalpha"), "{err:?}");
+}
+
+/// `dwebp -dither` is rejected: this decoder reconstructs exact pixels, with no
+/// dither stage. Before the audit the strength value was silently consumed.
+#[test]
+fn dwebp_rejects_dither() {
+    let out = run("dwebp", &["-dither", "50", "-", "-o", "-"], vec![0; 16]);
+    assert_eq!(out.status.code(), Some(2));
+    let err = stderr(&out);
+    assert!(err.contains("exact"), "{err:?}");
+    assert!(err.contains('^'), "should draw a caret: {err:?}");
+}
+
+/// The `cwebp` drop-in ignores `WEBP_*` config: it must stay byte-for-byte
+/// libwebp-compatible for scripts, so an unrelated env var cannot change its output.
+#[test]
+fn cwebp_ignores_webp_env_config() {
+    let mut ppm = b"P6\n2 2\n255\n".to_vec();
+    ppm.extend_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]);
+
+    let with_env = Command::cargo_bin("cwebp")
+        .expect("binary builds")
+        .env("WEBP_CODEC", "lossless")
+        .env("WEBP_QUALITY", "10")
+        .args(["-", "-o", "-"])
+        .write_stdin(ppm.clone())
+        .output()
+        .expect("run binary");
+    assert!(with_env.status.success());
+    assert_eq!(
+        image_fourcc(&with_env.stdout),
+        b"VP8 ",
+        "cwebp must stay lossy-by-default, ignoring WEBP_CODEC"
+    );
+
+    let no_env = Command::cargo_bin("cwebp")
+        .expect("binary builds")
+        .env_remove("WEBP_CODEC")
+        .env_remove("WEBP_QUALITY")
+        .args(["-", "-o", "-"])
+        .write_stdin(ppm)
+        .output()
+        .expect("run binary");
+    assert_eq!(
+        with_env.stdout, no_env.stdout,
+        "env must not change the drop-in's output bytes"
+    );
+}
+
+/// The `dwebp` drop-in uses the fixed built-in decode cap, not `WEBP_MAX_PIXELS`, so
+/// a valid file still decodes even under a hostile env value.
+#[test]
+fn dwebp_ignores_webp_max_pixels() {
+    let webp = run(
+        "webp",
+        &[
+            "encode",
+            "-",
+            "-o",
+            "-",
+            "--input-format",
+            "raw",
+            "--width",
+            "2",
+            "--height",
+            "2",
+        ],
+        (0..16u8).collect(),
+    );
+    assert!(webp.status.success());
+    let out = Command::cargo_bin("dwebp")
+        .expect("binary builds")
+        .env("WEBP_MAX_PIXELS", "1")
+        .args(["-", "-o", "-", "-pam"])
+        .write_stdin(webp.stdout)
+        .output()
+        .expect("run binary");
+    assert!(
+        out.status.success(),
+        "dwebp must ignore WEBP_MAX_PIXELS: {out:?}"
+    );
+}

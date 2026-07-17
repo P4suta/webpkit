@@ -488,7 +488,7 @@ fn animation_frame(width: u32, height: u32, n: u32) -> Vec<u8> {
     buf
 }
 
-/// Build an animation from `frames` with our own [`webpkit::lossless::AnimationEncoder`], for
+/// Build an animation from `frames` with our own [`webpkit::AnimationEncoder`], for
 /// the encoder-side external gate.
 fn build_webpkit_animation(width: u32, height: u32, frames: &[Vec<u8>]) -> Result<Vec<u8>> {
     let canvas = webpkit::lossless::Dimensions::new(width, height)?;
@@ -505,7 +505,7 @@ fn build_webpkit_animation(width: u32, height: u32, frames: &[Vec<u8>]) -> Resul
     let (first, rest) = frames
         .split_first()
         .context("animation must have at least one frame")?;
-    let mut encoder = webpkit::lossless::AnimationEncoder::new(canvas).add_frame(
+    let mut encoder = webpkit::AnimationEncoder::new(canvas).add_frame(
         webpkit::lossless::ImageRef::new(canvas, webpkit::lossless::PixelLayout::Rgba8, first)?,
         make_meta(),
     )?;

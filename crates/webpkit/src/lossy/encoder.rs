@@ -10,7 +10,6 @@
 
 use crate::container::writer::{wrap_vp8, wrap_vp8_extended};
 use crate::image::{self, Image, Metadata, PixelLayout};
-use crate::lossy::alpha::compress_alpha;
 use crate::lossy::frame;
 use crate::lossy::prelude::*;
 use crate::lossy::quant::quality_to_base_q;
@@ -222,18 +221,13 @@ pub fn encode_image(image: &Image, config: &LossyConfig) -> Result<Vec<u8>> {
 fn assemble(argb: &[u32], dims: Dimensions, config: &LossyConfig, metadata: &Metadata) -> Vec<u8> {
     let vp8 = encode_vp8_argb(argb, dims, config);
     // Alpha is the top byte of each native-ARGB pixel; an all-opaque plane needs no
-    // ALPH chunk. Probe without allocating, and only materialize the plane when a
-    // non-opaque pixel means an ALPH chunk will actually be written (the common
-    // opaque case then allocates nothing here).
-    let has_alpha = image::argb_has_alpha(argb);
+    // ALPH chunk. `alph_chunk` probes without allocating and only materializes the
+    // plane when a non-opaque pixel means an ALPH chunk will actually be written.
+    let alph = crate::lossy::alpha::alph_chunk(argb, dims);
     // The byte-identical fast path: nothing to carry beyond the opaque image.
-    if !has_alpha && metadata.is_empty() {
+    if alph.is_none() && metadata.is_empty() {
         return wrap_vp8(&vp8);
     }
-    let alph = has_alpha.then(|| {
-        let alpha: Vec<u8> = argb.iter().map(|&p| (p >> 24) as u8).collect();
-        compress_alpha(&alpha, dims.width(), dims.height())
-    });
     wrap_vp8_extended(&vp8, alph.as_deref(), dims, metadata)
 }
 
@@ -255,7 +249,10 @@ pub fn encode_vp8(image: ImageRef<'_>, config: &LossyConfig) -> Result<(Dimensio
 
 /// Encode already-unpacked native-ARGB `pixels` into a raw `VP8 ` key-frame
 /// payload (the opaque RGB; alpha is handled separately by [`encode`]).
-fn encode_vp8_argb(argb: &[u32], dims: Dimensions, config: &LossyConfig) -> Vec<u8> {
+///
+/// The crate-internal seam the animation encoder ([`crate::AnimationEncoder`]) uses
+/// to encode a lossy `ANMF` frame's `VP8 ` sub-chunk.
+pub(crate) fn encode_vp8_argb(argb: &[u32], dims: Dimensions, config: &LossyConfig) -> Vec<u8> {
     let rgba = image::pack_pixels(PixelLayout::Rgba8, argb);
     let base_q = quality_to_base_q(config.quality.get());
     frame::encode_frame(
