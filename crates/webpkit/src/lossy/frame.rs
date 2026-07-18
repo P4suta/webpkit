@@ -353,6 +353,7 @@ fn encode_one_pass(
         mb_h,
         mut seg_params,
         seg_base_q,
+        seg_beta,
     } = plan_frame(
         rgba,
         width,
@@ -384,6 +385,7 @@ fn encode_one_pass(
             seg_base_q,
             effort.apply_filter(),
             tuning.filter_strength,
+            seg_beta,
         );
     }
     let header = HeaderParams {
@@ -500,6 +502,9 @@ struct Segmentation {
     seg_ids: Vec<u8>,
     /// Per-segment base quantizer index (all `base_q` when unsegmented).
     base_q: [i32; 4],
+    /// Per-segment complexity bias `beta_s` in `0..=255` (all `0` when unsegmented),
+    /// consumed by the loop-filter [`segment_filter_deltas`].
+    beta: [i32; 4],
     /// The emittable segment header, or `None` for a single-segment frame.
     params: Option<SegmentParams>,
 }
@@ -523,6 +528,7 @@ fn plan_segmentation(
     let single = || Segmentation {
         seg_ids: vec![0u8; n],
         base_q: [base_q; 4],
+        beta: [0; 4],
         params: None,
     };
     let nb = usize::from(tuning.segments.clamp(1, 4));
@@ -558,6 +564,7 @@ fn plan_segmentation(
     Segmentation {
         seg_ids,
         base_q: seg_base_q,
+        beta: segment_betas(count, seg_a),
         params: Some(SegmentParams {
             quantizer,
             filter_strength: [0; 4],
@@ -803,6 +810,9 @@ struct FramePlan {
     seg_params: Option<SegmentParams>,
     /// Per-segment base quantizer index (all `base_q` when unsegmented).
     seg_base_q: [i32; 4],
+    /// Per-segment complexity bias `beta_s` (all `0` when unsegmented), used to ease the
+    /// per-segment loop-filter deltas on busy segments.
+    seg_beta: [i32; 4],
 }
 
 /// Pass 1: predict, transform/quantize and reconstruct every macroblock, returning
@@ -869,6 +879,7 @@ fn plan_frame(
         mb_h,
         seg_params: seg.params,
         seg_base_q: seg.base_q,
+        seg_beta: seg.beta,
     }
 }
 
@@ -1580,24 +1591,52 @@ fn emit_intra_modes(
 /// index `q` under the `filter_strength` knob (`0..=100`), a fixed-point port of
 /// libwebp's `SetupFilterStrength`: `level0 = 5 * filter_strength`, the quantizer step
 /// `qstep = kAcTable[clip(q)] >> 2` stands in for the pixel-difference delta, and
-/// `f = level0 * qstep / 256`. A result below `2` disables the filter for that segment
-/// (`0`), else it clamps into `0..=63`. `filter_strength == 0` always yields `0`. The
-/// sharpness term is not folded in here — it rides in the emitted [`FilterHeader`] and
-/// is applied identically by `compute_fstrengths`/the decoder.
+/// `f = level0 * qstep / (256 + beta_s)`. A result below `2` disables the filter for
+/// that segment (`0`), else it clamps into `0..=63`. `filter_strength == 0` always yields
+/// `0`. The sharpness term is not folded in here — it rides in the emitted
+/// [`FilterHeader`] and is applied identically by `compute_fstrengths`/the decoder.
 ///
-/// (libwebp additionally divides by `256 + beta_s`, a per-segment SNS bias we do not
-/// model; `beta_s = 0` here. Byte-exact parity with `cwebp` filtering is not a goal —
-/// the derivation is self-consistent because the decoder re-derives from the emitted
-/// header — so the term is dropped.)
-fn segment_filter_level(q: i32, filter_strength: u8, apply_filter: bool) -> i32 {
+/// `beta_s` is libwebp's per-segment complexity bias (`SetSegmentAlphas`, `0..=255`): a
+/// busier segment carries a larger `beta_s`, which shrinks its filter level so textured
+/// regions are deblocked less. `beta_s = 0` (the base and every flat/lowest-activity
+/// segment) reduces to `f = level0 * qstep / 256`, so a single-segment or `Fast` frame
+/// is byte-identical to the pre-`beta_s` encoder. (The `qstep` stand-in for libwebp's
+/// pixel-difference base strength is kept; byte-exact parity with `cwebp` filtering is
+/// not a goal — the derivation is self-consistent because the decoder re-derives from the
+/// emitted header.)
+fn segment_filter_level(q: i32, filter_strength: u8, apply_filter: bool, beta_s: i32) -> i32 {
     if !apply_filter || filter_strength == 0 {
         return 0;
     }
     let level0 = 5 * i32::from(filter_strength);
     let idx = usize::try_from(q.clamp(0, 127)).unwrap_or(0);
     let qstep = i32::from(AC_TABLE[idx]) >> 2;
-    let f = level0 * qstep / 256;
+    // `beta_s >= 0`, so the divisor is in `256..=511` and never zero.
+    let f = level0 * qstep / (256 + beta_s.max(0));
     if f < 2 { 0 } else { f.min(63) }
+}
+
+/// Each segment's complexity bias `beta_s` in `0..=255` (libwebp `SetSegmentAlphas`):
+/// `beta_s[i] = 255 * (seg_a[i] - min) / (max - min)` over the `count` used segment
+/// activity means `seg_a`, with the `max == min` guard libwebp applies. The
+/// lowest-activity segment (and every unused slot) gets `0`, so the base filter level is
+/// never biased. Integer arithmetic only.
+fn segment_betas(count: usize, seg_a: [i64; 4]) -> [i32; 4] {
+    let mut beta = [0i32; 4];
+    if count <= 1 {
+        return beta;
+    }
+    let used = &seg_a[..count];
+    let min = used.iter().copied().min().unwrap_or(0);
+    let mut max = used.iter().copied().max().unwrap_or(0);
+    if max <= min {
+        max = min + 1; // libwebp's max == min guard keeps the divisor positive
+    }
+    let span = max - min;
+    for (b, &a) in beta.iter_mut().zip(used) {
+        *b = i32::try_from((255 * (a - min) / span).clamp(0, 255)).unwrap_or(0);
+    }
+    beta
 }
 
 /// Choose the frame's in-loop deblocking-filter parameters. The normal (non-simple)
@@ -1615,7 +1654,10 @@ fn choose_filter(
 ) -> FilterHeader {
     FilterHeader {
         simple: false,
-        level: segment_filter_level(base_q, filter_strength, apply_filter),
+        // The base level carries no per-segment complexity bias (`beta_s = 0`), matching
+        // libwebp's `filter_hdr.level_ = dqm_[0].fstrength_`, where segment 0 is the
+        // lowest-activity segment (`beta_s[0] == 0`). Per-segment deltas add the bias.
+        level: segment_filter_level(base_q, filter_strength, apply_filter, 0),
         sharpness: i32::from(filter_sharpness),
         ..FilterHeader::default()
     }
@@ -1623,17 +1665,20 @@ fn choose_filter(
 
 /// The per-segment loop-filter strength deltas emitted in the segment header, each
 /// relative to the base `filter.level` (the decoder adds `filter.level` back, since the
-/// deltas are coded `absolute_delta = false`). A busier segment (coarser quantizer)
-/// deblocks harder than a flat one. Unused segments (`count..4`) carry `0`.
+/// deltas are coded `absolute_delta = false`). A busier segment deblocks according to its
+/// coarser quantizer but is eased back by its complexity bias `beta_s[i]` (libwebp
+/// `SetSegmentAlphas`), so texture is not over-smoothed. Unused segments (`count..4`)
+/// carry `0`.
 fn segment_filter_deltas(
     base_level: i32,
     seg_base_q: [i32; 4],
     apply_filter: bool,
     filter_strength: u8,
+    beta_s: [i32; 4],
 ) -> [i32; 4] {
     let mut deltas = [0i32; 4];
-    for (delta, &q) in deltas.iter_mut().zip(&seg_base_q) {
-        *delta = segment_filter_level(q, filter_strength, apply_filter) - base_level;
+    for ((delta, &q), &beta) in deltas.iter_mut().zip(&seg_base_q).zip(&beta_s) {
+        *delta = segment_filter_level(q, filter_strength, apply_filter, beta) - base_level;
     }
     deltas
 }
@@ -3852,8 +3897,8 @@ gradient fast 190 fdbe0b6ce4ec645c
 gradient balanced 89 44cc4831e2b014b5
 gradient best 113 f507b9cd3a89366e
 noisy fast 7975 f970e253b081638d
-noisy balanced 3552 0fe948c3ed2a8dc4
-noisy best 3158 f86825f9ecc426ef
+noisy balanced 3551 01eb533d4d1d4989
+noisy best 3157 2a63efd863fa841d
 flat fast 40 66b6a4ee87e184a3
 flat balanced 39 2f5a1f125c0a5180
 flat best 39 2f5a1f125c0a5180
@@ -3864,14 +3909,14 @@ stripe fast 1680 145aef26907ace38
 stripe balanced 322 d0284fcbb5c77800
 stripe best 118 00cc0a30e8a48b20
 diagonal fast 415 46ac66199192122b
-diagonal balanced 274 3f18f25e15a3bdcb
-diagonal best 337 737aeebdcede7c37
+diagonal balanced 274 54c3293234733cd4
+diagonal best 337 462b55975bc359f2
 mixed fast 4363 13644d2cc4723cd5
-mixed balanced 1953 97d12de896339d85
-mixed best 2044 d741e377a717f630
+mixed balanced 1953 656fe4c084dd5c45
+mixed best 2044 c347fc85c019f5f0
 horizontal fast 667 81e58ac967acf023
-horizontal balanced 278 4dcd2a5c0b4cb156
-horizontal best 213 e58e54c32cc725bf";
+horizontal balanced 278 b98f0c9e1dfbcc25
+horizontal best 213 2e6a76a653010c3a";
 
     /// Golden exact-encode test — THE high-leverage encoder-decision net. Encodes a
     /// diverse set of fixed images (smooth gradient, AC-rich noise, flat blocks,
@@ -4410,10 +4455,10 @@ horizontal best 213 e58e54c32cc725bf";
     /// under each of those mutations. Regenerate by running this test (it prints the
     /// actual table on mismatch) and pasting the block.
     const RD_GOLDEN_EXPECTED: &str = "\
-rd_rx0_ry5_d0_q48 ec3e1d9169c5d34a
+rd_rx0_ry5_d0_q48 c03bd74b0b752939
 rd_rx1_ry0_d0_q8 2dbc60b6031d7af4
 rd_rx0_ry2_d0_q24 b6e5b4d5e6bc4ab2
-rd_rx0_ry5_d60_q24 ab1c536dec055d08";
+rd_rx0_ry5_d60_q24 a788b70bb1dfc28e";
 
     #[test]
     fn rd_cost_arithmetic_golden() {
@@ -4487,6 +4532,23 @@ rd_rx0_ry5_d60_q24 ab1c536dec055d08";
             "segment-map smoothing must change the stream on isolated-segment content"
         );
         assert_self_consistent_tuned(&rgba, w, h, 40, BALANCED, on);
+    }
+
+    #[test]
+    fn segment_betas_scale_activity_span_to_0_255() {
+        // libwebp `SetSegmentAlphas`: `255 * (a - min) / (max - min)`; the lowest-activity
+        // segment gets `0`, the highest `255`, so the base filter level is never biased.
+        assert_eq!(
+            super::segment_betas(4, [105, 1105, 2105, 3105]),
+            [0, 85, 170, 255]
+        );
+        // A single segment carries no bias (early return).
+        assert_eq!(super::segment_betas(1, [500, 0, 0, 0]), [0, 0, 0, 0]);
+        // The `max == min` guard: uniform activity forces the divisor to `1`, so every
+        // used segment still resolves to `0` rather than dividing by zero.
+        assert_eq!(super::segment_betas(3, [200, 200, 200, 0]), [0, 0, 0, 0]);
+        // Only the `count` used segments get a bias; unused slots stay `0`.
+        assert_eq!(super::segment_betas(2, [10, 110, 9999, 0]), [0, 255, 0, 0]);
     }
 
     #[test]
