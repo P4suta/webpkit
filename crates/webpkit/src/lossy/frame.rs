@@ -3785,14 +3785,14 @@ mod tests {
     /// (it prints the actual table on mismatch) and pasting the printed block here.
     const GOLDEN_EXPECTED: &str = "\
 gradient fast 190 fdbe0b6ce4ec645c
-gradient balanced 104 8ded861974c278bc
-gradient best 105 794ee2ab27bff891
+gradient balanced 89 44cc4831e2b014b5
+gradient best 113 f507b9cd3a89366e
 noisy fast 7975 f970e253b081638d
-noisy balanced 3928 6445bf58456e852a
-noisy best 3558 89dcb150ad8be9c1
+noisy balanced 3552 0fe948c3ed2a8dc4
+noisy best 3158 f86825f9ecc426ef
 flat fast 40 66b6a4ee87e184a3
-flat balanced 39 345288bf6a40e2d0
-flat best 39 345288bf6a40e2d0
+flat balanced 39 2f5a1f125c0a5180
+flat best 39 2f5a1f125c0a5180
 checker fast 65 a42deaf46567ecd9
 checker balanced 56 6b05842252d1046e
 checker best 56 6b05842252d1046e
@@ -3800,14 +3800,14 @@ stripe fast 1680 145aef26907ace38
 stripe balanced 322 d0284fcbb5c77800
 stripe best 118 00cc0a30e8a48b20
 diagonal fast 415 46ac66199192122b
-diagonal balanced 293 ce4f77901717f62c
-diagonal best 352 28ebd17e1489c006
+diagonal balanced 274 3f18f25e15a3bdcb
+diagonal best 337 737aeebdcede7c37
 mixed fast 4363 13644d2cc4723cd5
-mixed balanced 2194 68463b656f1c9df3
-mixed best 2251 88a14a71a9ad4b73
+mixed balanced 1953 97d12de896339d85
+mixed best 2044 d741e377a717f630
 horizontal fast 667 81e58ac967acf023
-horizontal balanced 282 0efb696deedf3513
-horizontal best 222 f827cced43febb3a";
+horizontal balanced 278 4dcd2a5c0b4cb156
+horizontal best 213 e58e54c32cc725bf";
 
     /// Golden exact-encode test — THE high-leverage encoder-decision net. Encodes a
     /// diverse set of fixed images (smooth gradient, AC-rich noise, flat blocks,
@@ -4117,8 +4117,8 @@ horizontal best 222 f827cced43febb3a";
         };
         let (_p0, _t, default_total, optimized_total, _probas) =
             emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
-        assert_eq!(default_total, 5784, "default candidate byte-length sum");
-        assert_eq!(optimized_total, 3914, "optimized candidate byte-length sum");
+        assert_eq!(default_total, 4979, "default candidate byte-length sum");
+        assert_eq!(optimized_total, 3538, "optimized candidate byte-length sum");
     }
 
     #[test]
@@ -4159,9 +4159,10 @@ horizontal best 222 f827cced43febb3a";
         // A macroblock with an empty Y2, empty chroma, and every luma block `last <= 1`
         // with at least one exactly 1 sits on that boundary: the strict `< 1` keeps it
         // NON-skippable; the `<= 1` mutant would wrongly mark it skippable. Scan a range
-        // of qualities over mixed content for such a witness (robust to which
-        // macroblock/quality the mode/quant choice lands it on).
-        let rgba = stripe_image(96, 96);
+        // of qualities over mixed flat-vs-noise content for such a witness (robust to
+        // which macroblock/quality the mode/quant choice lands it on — the boundary MB
+        // recurs across the whole q=107..=127 band under the tuned trellis lambda).
+        let rgba = mixed_image(96, 96);
         let witness = (2..=127)
             .find_map(|q| {
                 let FramePlan {
@@ -4183,7 +4184,7 @@ horizontal best 222 f827cced43febb3a";
                         && p.tokens.luma.iter().any(|b| b.last == 1)
                 })
             })
-            .expect("stripe content must contain a luma-last==1 boundary macroblock");
+            .expect("mixed content must contain a luma-last==1 boundary macroblock");
         assert!(
             !witness.skippable,
             "a luma last==1 block must not be skippable"
@@ -4202,7 +4203,7 @@ horizontal best 222 f827cced43febb3a";
         let payload = encode_frame(&rgba, 16, 16, 24, BALANCED);
         assert_eq!(
             golden_digest(&payload),
-            0x56cc_6d7b_a58f_d6dd,
+            0x6e07_e15d_6c4e_0924,
             "at a size tie the encoder must keep the default probability table"
         );
     }
@@ -4345,10 +4346,10 @@ horizontal best 222 f827cced43febb3a";
     /// under each of those mutations. Regenerate by running this test (it prints the
     /// actual table on mismatch) and pasting the block.
     const RD_GOLDEN_EXPECTED: &str = "\
-rd_rx0_ry5_d0_q48 8bf2cf76968f0a1d
-rd_rx1_ry0_d0_q8 af6becf29ccc028e
-rd_rx0_ry2_d0_q24 963cf5ce80e9d47e
-rd_rx0_ry5_d60_q24 f47a591a224ab56b";
+rd_rx0_ry5_d0_q48 ec3e1d9169c5d34a
+rd_rx1_ry0_d0_q8 2dbc60b6031d7af4
+rd_rx0_ry2_d0_q24 b6e5b4d5e6bc4ab2
+rd_rx0_ry5_d60_q24 ab1c536dec055d08";
 
     #[test]
     fn rd_cost_arithmetic_golden() {

@@ -58,20 +58,20 @@ pub(crate) const RD_DISTO_MULT: i64 = 256;
 const INF: i64 = i64::MAX / 4;
 
 /// Whether the trellis weights its coefficient-domain squared error by the
-/// per-frequency [`K_WEIGHT_TRELLIS`] table (libwebp's `kWeightTrellis`) and pairs it
-/// with the matching `>> 3` lambda base. When `true` the distortion is
-/// `kWeightTrellis[j] * err * err` (low frequencies count for more) scored against the
-/// rate with libwebp's `>> 3` lambda; when `false` it is the plain `err * err` with a
-/// `>> 6` lambda that stands in for the missing weight table.
+/// per-frequency [`K_WEIGHT_TRELLIS`] table (libwebp's `kWeightTrellis`). When `true`
+/// the distortion is `kWeightTrellis[j] * err * err` (low frequencies count for more)
+/// scored against the rate with the [`LAMBDA_SHIFT`] lambda base; when `false` it is
+/// the plain `err * err` with a larger `>> 6` shift standing in for the missing weight
+/// table.
 const TRELLIS_FREQ_WEIGHTING: bool = true;
 
-/// Right shift turning `7 * q_ac^2` into the trellis `lambda` (libwebp's
-/// `lambda_trellis` base is `(7 * q^2) >> 3`). With [`TRELLIS_FREQ_WEIGHTING`] on the
-/// per-frequency [`K_WEIGHT_TRELLIS`] weight carries the distortion shaping and the
-/// shift is libwebp's `>> 3`; with it off an *unweighted* squared error is balanced
-/// against the rate by a larger `>> 6` shift instead (a shift of 5 already costs >1 dB
-/// on smooth photo content).
-const LAMBDA_SHIFT: u32 = if TRELLIS_FREQ_WEIGHTING { 3 } else { 6 };
+/// Right shift turning `7 * q_ac^2` into the trellis `lambda`. libwebp's weighted base
+/// is `(7 * q^2) >> 3`; we use `>> 2` — double the lambda, so the trellis charges the
+/// rate more aggressively. That is a measured rate-distortion Pareto win over `cwebp`
+/// default shaping on a real-image corpus (smaller at matched quality, reconstruction
+/// still at or above `cwebp`). With [`TRELLIS_FREQ_WEIGHTING`] off an unweighted
+/// squared error is balanced against the rate by a larger `>> 6` shift instead.
+const LAMBDA_SHIFT: u32 = if TRELLIS_FREQ_WEIGHTING { 2 } else { 6 };
 
 /// Per-frequency trellis distortion weights (libwebp `kWeightTrellis`, the `USE_TDISTO`
 /// table) indexed by natural (row-major) coefficient position: low frequencies weigh
@@ -583,14 +583,14 @@ mod tests {
     /// diverge from `7 * q * q`), while the `q0/q4` clamp cases anchor the floor.
     #[test]
     fn trellis_lambda_is_exact() {
-        // With per-frequency weighting on, LAMBDA_SHIFT is libwebp's `>> 3`:
-        // (7*1*1)>>3 = 0 -> clamped to 1; (7*4*4)>>3 = 112>>3 = 14;
-        // (7*400)>>3 = 350; (7*10000)>>3 = 8750; (7*40000)>>3 = 35000.
+        // With per-frequency weighting on, LAMBDA_SHIFT is the tuned `>> 2`:
+        // (7*1*1)>>2 = 1 -> 1; (7*4*4)>>2 = 112>>2 = 28;
+        // (7*400)>>2 = 700; (7*10000)>>2 = 17500; (7*40000)>>2 = 70000.
         assert_eq!(trellis_lambda(1), 1);
-        assert_eq!(trellis_lambda(4), 14);
-        assert_eq!(trellis_lambda(20), 350);
-        assert_eq!(trellis_lambda(100), 8750);
-        assert_eq!(trellis_lambda(200), 35000);
+        assert_eq!(trellis_lambda(4), 28);
+        assert_eq!(trellis_lambda(20), 700);
+        assert_eq!(trellis_lambda(100), 17500);
+        assert_eq!(trellis_lambda(200), 70000);
     }
 
     /// The large-value probability array used by the exact-rate tests: every entry in
@@ -755,15 +755,17 @@ mod tests {
                 recon: block(&[(0, 189), (8, 136)]),
                 last: 3,
             },
-            // first > 0 and a non-zero entry context.
+            // first > 0 and a non-zero entry context. The doubled trellis lambda charges
+            // the marginal level-1 AC at zig-zag 3 (natural position 8) more rate than
+            // its distortion is worth, so it drops (verified RD-optimal by `brute_force`).
             Case {
                 q: 40,
                 coeffs: block(&[(1, 90), (4, -50), (8, 30)]),
                 first: 1,
                 ctx0: 2,
-                levels: block(&[(1, 2), (2, -1), (3, 1)]),
-                recon: block(&[(1, 88), (4, -44), (8, 44)]),
-                last: 3,
+                levels: block(&[(1, 2), (2, -1)]),
+                recon: block(&[(1, 88), (4, -44)]),
+                last: 2,
             },
             Case {
                 q: 40,
@@ -793,14 +795,17 @@ mod tests {
                 recon: [0; 16],
                 last: 0,
             },
+            // The doubled trellis lambda drops the marginal level-1 AC at zig-zag 6
+            // (natural position 3), leaving only DC and the zig-zag-1 AC (verified
+            // RD-optimal by `brute_force`).
             Case {
                 q: 52,
                 coeffs: block(&[(0, 200), (1, 55), (3, 48), (7, 40), (12, 35)]),
                 first: 0,
                 ctx0: 0,
-                levels: block(&[(0, 4), (1, 1), (6, 1)]),
-                recon: block(&[(0, 188), (1, 56), (3, 56)]),
-                last: 6,
+                levels: block(&[(0, 4), (1, 1)]),
+                recon: block(&[(0, 188), (1, 56)]),
+                last: 1,
             },
         ];
         for (i, c) in cases.iter().enumerate() {
@@ -811,19 +816,22 @@ mod tests {
         }
     }
 
-    /// A low-frequency-AC survival boundary. At `base_q = 17` (DC step 19, AC step 21)
-    /// the block `{coeff[0] = 33, coeff[3] = 20}` sits where dropping the AC coefficient
+    /// A low-frequency-AC survival boundary. At `base_q = 15` (DC step 17, AC step 19)
+    /// the block `{coeff[0] = 30, coeff[3] = 25}` sits where dropping the AC coefficient
     /// into the trailing-zero `suffix_dist` (DC-only, `last = 0`) trades against coding
     /// it as level 1 (`last = 6`, natural position 3 = zig-zag index 6). Because natural
-    /// position 3 carries a high per-frequency [`K_WEIGHT_TRELLIS`] weight, its weighted
-    /// distortion outweighs the extra rate, so the trellis keeps it — an exact golden
-    /// pinning the weighted objective at the boundary. (The strict-`<` tie-break
-    /// *ordering* is exercised across ties by [`trellis_matches_the_brute_force_optimum`],
-    /// whose odometer visits candidates in the same `l0 -> l0-1 -> 0` order.)
+    /// position 3 carries a per-frequency [`K_WEIGHT_TRELLIS`] weight of 11 (vs the plain
+    /// unit weight), its weighted distortion outweighs the extra rate at the tuned
+    /// doubled lambda, so the trellis keeps it — where an *unweighted* objective at the
+    /// same lambda would drop it. An exact golden pinning the weighted objective at the
+    /// boundary, cross-checked against the independent [`brute_force`] optimum. (The
+    /// strict-`<` tie-break *ordering* is exercised across ties by
+    /// [`trellis_matches_the_brute_force_optimum`], whose odometer visits candidates in
+    /// the same `l0 -> l0-1 -> 0` order.)
     #[test]
     fn trellis_low_frequency_ac_survives_the_weighted_objective() {
-        let coeffs = block(&[(0, 33), (3, 20)]);
-        let out = trellis(17, coeffs, 0, 0);
+        let coeffs = block(&[(0, 30), (3, 25)]);
+        let out = trellis(15, coeffs, 0, 0);
         assert_eq!(
             out.levels,
             block(&[(0, 2), (6, 1)]),
@@ -831,8 +839,8 @@ mod tests {
         );
         assert_eq!(
             out.recon,
-            block(&[(0, 38), (3, 21)]),
-            "recon: DC 2*19 and AC 1*21 at natural position 3"
+            block(&[(0, 34), (3, 19)]),
+            "recon: DC 2*17 and AC 1*19 at natural position 3"
         );
         assert_eq!(
             out.last, 6,
@@ -975,4 +983,5 @@ mod tests {
             assert_eq!(got.recon, want.recon, "trial {trial}: recon mismatch");
         }
     }
+
 }

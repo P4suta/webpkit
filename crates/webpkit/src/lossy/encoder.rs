@@ -141,13 +141,23 @@ const fn tier_for_level(level: u8) -> frame::Effort {
 
 /// Choose a frame search tier for an [`Effort::AUTO`] frame of `pixels`: the smaller
 /// the frame, the deeper the affordable search.
+///
+/// Up to ~1 MP the default runs the full [`Best`](frame::Effort::Best) search
+/// (intra-4×4 + trellis + segments), which measures as a clean rate-distortion win
+/// over `cwebp` default shaping — smaller at matched quality with the reconstruction
+/// staying at or above `cwebp`. Between ~1 MP and ~16 MP it steps down to
+/// [`Full`](frame::Effort::Full) (whole-block mode search + trellis + segments, no
+/// per-macroblock intra-4×4), so a full-resolution photo still gets real
+/// rate-distortion shaping rather than the round-to-nearest
+/// [`Fast`](frame::Effort::Fast) path; only genuinely huge scans fall back to `Fast`
+/// to bound encode time and working-set memory.
 const fn auto_tier(pixels: u64) -> frame::Effort {
-    if pixels <= 1 << 12 {
-        frame::Effort::Best // <= 64*64
-    } else if pixels <= 1 << 20 {
-        frame::Effort::Full // <= ~1 MP
+    if pixels <= 1 << 20 {
+        frame::Effort::Best // <= ~1 MP: deepest search, incl. intra-4x4
+    } else if pixels <= 1 << 24 {
+        frame::Effort::Full // <= ~16 MP: mode search + trellis + segments
     } else {
-        frame::Effort::Fast
+        frame::Effort::Fast // huge scans: bound encode time / memory
     }
 }
 
@@ -613,21 +623,21 @@ mod tests {
         // must change the output on AC-rich content and — being self-consistent by
         // construction — still decode. A noise field at a moderate quality gives the
         // trellis / mode search enough borderline decisions for the refined table to
-        // bite.
+        // bite (seed 4 at q70 crosses a boundary and shrinks the frame).
         let dims = Dimensions::new(32, 32).unwrap();
-        let pixels = noise(32, 32, 1);
+        let pixels = noise(32, 32, 4);
         let img = ImageRef::new(dims, PixelLayout::Rgba8, &pixels).unwrap();
         let at = |pass: u8| {
             encode_vp8(
                 img,
                 &LossyConfig::new()
-                    .with_quality(60)
+                    .with_quality(70)
                     .with_tuning(LossyTuning::new().with_pass(pass)),
             )
             .unwrap()
             .1
         };
-        let default = encode_vp8(img, &LossyConfig::new().with_quality(60))
+        let default = encode_vp8(img, &LossyConfig::new().with_quality(70))
             .unwrap()
             .1;
         assert_eq!(
@@ -840,10 +850,13 @@ mod tests {
         assert_eq!(effort_tier(Effort::level(3), px), FrameEffort::Full);
         assert_eq!(effort_tier(Effort::level(7), px), FrameEffort::Full);
         assert_eq!(effort_tier(Effort::level(9), px), FrameEffort::Best);
-        // AUTO by size: a small frame earns Best, ~mid earns Full, a large one Fast.
+        // AUTO by size: up to ~1 MP earns the deepest Best search, a full-resolution
+        // photo (~1-16 MP) earns Full, and only a genuinely huge scan falls to Fast.
         assert_eq!(effort_tier(Effort::AUTO, 64 * 64), FrameEffort::Best);
-        assert_eq!(effort_tier(Effort::AUTO, 512 * 512), FrameEffort::Full);
-        assert_eq!(effort_tier(Effort::AUTO, 4000 * 4000), FrameEffort::Fast);
+        assert_eq!(effort_tier(Effort::AUTO, 512 * 512), FrameEffort::Best);
+        assert_eq!(effort_tier(Effort::AUTO, 1024 * 1024), FrameEffort::Best);
+        assert_eq!(effort_tier(Effort::AUTO, 4000 * 4000), FrameEffort::Full);
+        assert_eq!(effort_tier(Effort::AUTO, 6000 * 6000), FrameEffort::Fast);
     }
 
     #[test]
