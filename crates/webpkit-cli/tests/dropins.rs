@@ -109,12 +109,23 @@ fn cwebp_pre_selects_segment_smoothing_and_rejects_dithering() {
     ppm.extend((0u8..192).map(|i| i.wrapping_mul(7)));
 
     // `-pre 1` (segment-map smoothing) is accepted and produces a decodable WebP.
-    let smoothed = run("cwebp", &["-", "-o", "-", "-q", "40", "-pre", "1"], ppm.clone());
-    assert!(smoothed.status.success(), "`-pre 1` must encode: {smoothed:?}");
+    let smoothed = run(
+        "cwebp",
+        &["-", "-o", "-", "-q", "40", "-pre", "1"],
+        ppm.clone(),
+    );
+    assert!(
+        smoothed.status.success(),
+        "`-pre 1` must encode: {smoothed:?}"
+    );
     assert_eq!(&smoothed.stdout[..4], b"RIFF", "emits a WebP container");
 
     // `-pre 0` (no preprocessing) is byte-identical to omitting the flag entirely.
-    let none = run("cwebp", &["-", "-o", "-", "-q", "40", "-pre", "0"], ppm.clone());
+    let none = run(
+        "cwebp",
+        &["-", "-o", "-", "-q", "40", "-pre", "0"],
+        ppm.clone(),
+    );
     let omitted = run("cwebp", &["-", "-o", "-", "-q", "40"], ppm.clone());
     assert!(none.status.success() && omitted.status.success());
     assert_eq!(
@@ -124,7 +135,11 @@ fn cwebp_pre_selects_segment_smoothing_and_rejects_dithering() {
 
     // The dithering bit (2) is not implemented; it is a clear usage error, not ignored.
     for pre in ["2", "3"] {
-        let out = run("cwebp", &["-", "-o", "-", "-q", "40", "-pre", pre], ppm.clone());
+        let out = run(
+            "cwebp",
+            &["-", "-o", "-", "-q", "40", "-pre", pre],
+            ppm.clone(),
+        );
         assert_eq!(out.status.code(), Some(2), "`-pre {pre}` must be rejected");
         let err = stderr(&out);
         assert!(
