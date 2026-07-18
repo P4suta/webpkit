@@ -42,7 +42,7 @@
               with the rustc unreachable_pub lint that we also enable"
 )]
 // Without the `__internals` tooling feature the internal module tree is `pub(crate)`
-// (see `internal_modules!` below). Its cross-module `pub` items are then no longer
+// (the literal `pub(crate) mod` declarations below). Its cross-module `pub` items are then no longer
 // reachable from the crate root (`unreachable_pub`), and the items that exist only
 // for the external tooling/test crates read as unused from webpkit's own side
 // (`dead_code`). Both are the intended shape of a published build: the curated

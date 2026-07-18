@@ -94,9 +94,11 @@ enum Task {
         vs_libwebp: bool,
         /// Instead of the synthetic ledger, print a size comparison of our deepest-effort
         /// (`l9`) encoder vs libwebp `cwebp -m 6` over the real images
-        /// in this directory. Print-only: it writes no file and never gates, and
-        /// the path is a pure runtime argument (no image path is baked into the
-        /// tool). Soft-skips when libwebp is unavailable.
+        /// in this directory. With `--lossy`, instead compares our zero-knob AUTO
+        /// encoder vs `cwebp -q Q` default shaping (size + PSNR + SSIM, rolled up by
+        /// pixel-derived content category, no filename recorded). Print-only: it writes
+        /// no file and never gates, and the path is a pure runtime argument (no image
+        /// path is baked into the tool). Soft-skips when libwebp is unavailable.
         #[arg(long)]
         real: Option<PathBuf>,
         /// With `--real`, cap each image's width via cwebp `-resize <max_edge> 0`
@@ -179,7 +181,8 @@ fn main() -> Result<()> {
         } => {
             // `--lossy` selects the lossy ledger; it is orthogonal to the action
             // (explain > bless > gate), so `--lossy --bless`, `--lossy --explain`
-            // etc. compose. `--real` is dispatched separately inside `metrics`.
+            // etc. compose. `--real` is dispatched separately inside each of
+            // `metrics` (lossless) / `metrics_lossy` (lossy AUTO vs cwebp default).
             let action = if explain {
                 MetricsAction::Explain
             } else if bless {
@@ -188,7 +191,7 @@ fn main() -> Result<()> {
                 MetricsAction::Gate
             };
             if lossy {
-                metrics::metrics_lossy(action, vs_libwebp)
+                metrics::metrics_lossy(action, vs_libwebp, real, max_edge)
             } else {
                 metrics::metrics(action, vs_libwebp, real, max_edge)
             }
