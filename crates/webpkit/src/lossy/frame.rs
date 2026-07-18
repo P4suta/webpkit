@@ -161,6 +161,10 @@ pub(crate) struct FrameTuning {
     /// are emitted (libwebp `SmoothSegmentMap`). `false` (the default) keeps the raw
     /// k-means map and every output byte; it only engages on the segmenting tiers.
     pub(crate) smooth_segments: bool,
+    /// Whether to apply the per-frequency luma quant sharpening bias (libwebp
+    /// `kFreqSharpening`) before quantization. `false` (the default) applies no bias and
+    /// keeps every output byte; when on it biases high-frequency luma AC to survive.
+    pub(crate) freq_sharpen: bool,
     /// Number of entropy-refinement passes (`1..=10`; libwebp's `StatLoop`). `1` (the
     /// default) is the single-pass, byte-identical encode; a higher count re-plans the
     /// frame against the previous pass's optimized coefficient probabilities, so the
@@ -184,6 +188,7 @@ impl FrameTuning {
         filter_sharpness: 0,
         sharp_yuv: false,
         smooth_segments: false,
+        freq_sharpen: false,
         passes: 1,
     };
 }
@@ -857,9 +862,17 @@ fn plan_frame(
     let (mb_w, mb_h) = (src.mb_w, src.mb_h);
     // Partition the macroblocks into up to four quantizer segments (Full/Best), then
     // build one forward quantizer per segment. A single-segment frame reuses
-    // `Quantizer::new(base_q)` for all four slots, so the fast path is unchanged.
+    // `Quantizer::new(base_q)` for all four slots, so the fast path is unchanged. The
+    // opt-in `freq_sharpen` knob swaps in the sharpened quantizer (a luma high-frequency
+    // bias); off (the default) it is `Quantizer::new`, so every byte is unchanged.
     let seg = plan_segmentation(&src, base_q, uses_segments, tuning);
-    let quants = seg.base_q.map(Quantizer::new);
+    let quants = seg.base_q.map(|q| {
+        if tuning.freq_sharpen {
+            Quantizer::freq_sharpened(q)
+        } else {
+            Quantizer::new(q)
+        }
+    });
 
     let mut planes = Planes::new(mb_w, mb_h);
     let mb_plans = run_mb_planning(
@@ -1804,7 +1817,7 @@ fn quantize_one(
         let lambda = trellis_lambda(pair.ac.q);
         trellis_quantize_block(coeffs, pair, first, 0, plane, probas, lambda)
     } else {
-        quantize_block(coeffs, pair.dc, pair.ac, first)
+        quantize_block(coeffs, pair, first)
     }
 }
 
@@ -2953,6 +2966,7 @@ mod tests {
             filter_sharpness: 7,
             sharp_yuv: true,
             smooth_segments: true,
+            freq_sharpen: true,
             passes: 1,
         });
         tunings.push(FrameTuning {
@@ -2962,6 +2976,7 @@ mod tests {
             filter_sharpness: 2,
             sharp_yuv: false,
             smooth_segments: false,
+            freq_sharpen: false,
             passes: 1,
         });
         for tuning in tunings {
@@ -4508,6 +4523,37 @@ rd_rx0_ry5_d60_q24 a788b70bb1dfc28e";
         assert_eq!(ids_b, vec![0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], "B ids");
         assert_eq!(cnt_b, 4, "B count");
         assert_eq!(seg_b, [1010, 1110, 1210, 1310], "B segment means");
+    }
+
+    #[test]
+    fn freq_sharpen_knob_changes_output_and_stays_self_consistent() {
+        // On AC-rich content the per-frequency sharpening bias pushes high-frequency luma
+        // coefficients to survive, so the opt-in knob must change the emitted bytes (it is
+        // wired through both the round-to-nearest and trellis quantizers) while staying
+        // decode-consistent (recon = level*q regardless of how the level was chosen).
+        let (w, h) = (96usize, 96usize);
+        let rgba = noisy96(w, h);
+        let off = FrameTuning {
+            freq_sharpen: false,
+            ..FrameTuning::AUTO
+        };
+        let on = FrameTuning {
+            freq_sharpen: true,
+            ..FrameTuning::AUTO
+        };
+        for &effort in &[Effort::Best, Effort::Full] {
+            let a = encode_frame_impl(&rgba, w, h, 40, effort, off).0;
+            let b = encode_frame_impl(&rgba, w, h, 40, effort, on).0;
+            assert_ne!(a, b, "freq_sharpen must change the stream on AC-rich content ({effort:?})");
+            assert!(
+                b.len() >= a.len(),
+                "sharpening keeps more high-frequency detail, so it never shrinks the frame \
+                 ({effort:?}): {} vs {}",
+                b.len(),
+                a.len()
+            );
+            assert_self_consistent_tuned(&rgba, w, h, 40, effort, on);
+        }
     }
 
     #[test]

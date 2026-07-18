@@ -317,7 +317,10 @@ pub(crate) fn trellis_quantize_block(
     let mut suffix_dist = [0i64; 17];
     for n in (first..16).rev() {
         let j = ZIGZAG[n];
-        let c = i64::from(coeffs[j]);
+        // Dropping a coefficient into the trailing zeros costs its (optionally sharpened)
+        // magnitude's squared error. `pair.sharpen` is `0` unless `freq_sharpen` is on, so
+        // this is the plain `coeff^2` on the default path.
+        let c = i64::from(i32::from(coeffs[j]).abs() + pair.sharpen[j]);
         suffix_dist[n] = suffix_dist[n + 1] + trellis_weight(j) * c * c;
     }
 
@@ -343,8 +346,13 @@ pub(crate) fn trellis_quantize_block(
     for n in first..16 {
         let j = ZIGZAG[n];
         let factor = if j == 0 { pair.dc } else { pair.ac };
+        let sharpen = pair.sharpen[j];
         let (q, abs_coeff) = (factor.q, i32::from(coeffs[j]).abs());
-        let l0 = factor.quantize(i32::from(coeffs[j])).abs(); // nearest magnitude.
+        // Seed from the sharpened nearest level; `sharpen == 0` (the default) gives the
+        // plain round-to-nearest magnitude, keeping the default trellis byte-identical.
+        let l0 = factor
+            .quantize_sharpened(i32::from(coeffs[j]), sharpen)
+            .abs();
         debug_assert!(
             l0 <= MAX_LEVEL,
             "quantize clamps the nearest level to MAX_LEVEL"
@@ -386,7 +394,9 @@ pub(crate) fn trellis_quantize_block(
             let extra = if n == first { first_extra } else { 0 };
             for &m in cands {
                 work!(TrellisEval);
-                let err = i64::from(abs_coeff - m * q);
+                // Bias the distortion target toward the sharpened coefficient (libwebp's
+                // `kFreqSharpening`); `sharpen == 0` is the plain reconstruction error.
+                let err = i64::from(abs_coeff + sharpen - m * q);
                 let rate = base + extra + value_rate(m, p);
                 let cand =
                     prev_cost[ci] + RD_DISTO_MULT * trellis_weight(j) * err * err + lambda * rate;
@@ -555,7 +565,7 @@ mod tests {
         coeffs[1] = 41;
         coeffs[2] = -39;
         coeffs[8] = 8;
-        let rn = quantize_block(coeffs, q.y1.dc, q.y1.ac, 0);
+        let rn = quantize_block(coeffs, q.y1, 0);
         let lambda = trellis_lambda(q.y1.ac.q);
         let a = trellis_quantize_block(coeffs, q.y1, 0, 0, 0, &COEFFS_PROBA_0, lambda);
         let b = trellis_quantize_block(coeffs, q.y1, 0, 0, 0, &COEFFS_PROBA_0, lambda);
@@ -870,7 +880,9 @@ mod tests {
             let n = first + k;
             let j = ZIGZAG[n];
             let factor = if j == 0 { pair.dc } else { pair.ac };
-            let l0 = factor.quantize(i32::from(coeffs[j])).abs();
+            let l0 = factor
+                .quantize_sharpened(i32::from(coeffs[j]), pair.sharpen[j])
+                .abs();
             let mut list = [l0, 0, 0];
             let mut c = 1usize;
             if l0 >= 1 {
@@ -903,7 +915,7 @@ mod tests {
                 let q = factor.q;
                 let mag = cand[k][idx[k]];
                 let abs_c = i32::from(coeffs[j]).abs();
-                let err = i64::from(abs_c - mag * q);
+                let err = i64::from(abs_c + pair.sharpen[j] - mag * q);
                 dist += super::trellis_weight(j) * err * err;
                 let signed = if coeffs[j] < 0 { -mag } else { mag };
                 levels[n] = signed as i16;

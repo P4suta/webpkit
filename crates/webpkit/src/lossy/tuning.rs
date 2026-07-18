@@ -164,6 +164,10 @@ pub struct LossyTuning {
     // 3×3 majority-vote smoothing of the per-macroblock segment map (libwebp
     // `SmoothSegmentMap`); default off = the raw k-means map, byte-identical.
     smooth_segments: bool,
+    // Per-frequency luma quant sharpening (libwebp `kFreqSharpening`); default off =
+    // no bias, byte-identical. Preserves high-freq detail at a larger-file / lower-PSNR
+    // cost, so it is off by default.
+    freq_sharpen: bool,
     // Preserve the RGB under fully-transparent pixels (default `true`); `false` clears it.
     exact: bool,
     // Active RD/rate knobs, neutral by default (bias the base quantizer when set).
@@ -187,6 +191,7 @@ impl LossyTuning {
         alpha_filter: AlphaFilterMode::Best,
         sharp_yuv: false,
         smooth_segments: false,
+        freq_sharpen: false,
         exact: true,
         jpeg_like: false,
         partition_limit: 0,
@@ -361,6 +366,23 @@ impl LossyTuning {
         self.smooth_segments
     }
 
+    /// Set the per-frequency luma sharpening flag (libwebp `kFreqSharpening`). `false`
+    /// (the default) applies no bias and is byte-identical; `true` adds a per-frequency
+    /// bias to luma AC coefficients before quantization, so high-frequency detail
+    /// survives coarser quantization — a larger file and (usually) lower PSNR, so it is a
+    /// detail-preserving opt-in, not a size/quality win.
+    #[must_use]
+    pub const fn with_freq_sharpen(mut self, freq_sharpen: bool) -> Self {
+        self.freq_sharpen = freq_sharpen;
+        self
+    }
+
+    /// The per-frequency luma sharpening flag; `false` applies no bias.
+    #[must_use]
+    pub const fn freq_sharpen(self) -> bool {
+        self.freq_sharpen
+    }
+
     /// The alpha-plane quality (`0..=100`); `100` keeps alpha lossless.
     #[must_use]
     pub const fn alpha_q(self) -> u8 {
@@ -434,6 +456,7 @@ mod tests {
         // Neutral RD-knob defaults leave every output byte unchanged.
         assert!(!t.sharp_yuv());
         assert!(!t.smooth_segments());
+        assert!(!t.freq_sharpen());
         assert!(t.exact(), "exact preserves hidden RGB by default");
         assert_eq!(t.pass(), 1);
         assert!(!t.jpeg_like());
@@ -493,12 +516,14 @@ mod tests {
         let t = LossyTuning::new()
             .with_sharp_yuv(true)
             .with_smooth_segments(true)
+            .with_freq_sharpen(true)
             .with_exact(false)
             .with_pass(50)
             .with_jpeg_like(true)
             .with_partition_limit(250);
         assert!(t.sharp_yuv());
         assert!(t.smooth_segments());
+        assert!(t.freq_sharpen());
         assert!(!t.exact());
         assert_eq!(t.pass(), 10, "pass clamps to 10");
         assert!(t.jpeg_like());

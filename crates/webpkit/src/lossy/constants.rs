@@ -89,6 +89,23 @@ pub(crate) const BANDS: [usize; 17] = [
 /// Natural → zig-zag coefficient order (RFC §13.3, libwebp `kZigzag`).
 pub(crate) const ZIGZAG: [usize; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
 
+/// Per-frequency luma quant sharpening weights (libwebp `kFreqSharpening`, natural /
+/// row-major coefficient order). Consumed only by the opt-in `freq_sharpen` knob, which
+/// adds `(FREQ_SHARPEN[j] * ac_step) >> SHARPEN_BITS` to a luma AC coefficient before
+/// quantization, biasing high frequencies to survive (preserving detail at the cost of
+/// a larger file / lower PSNR — off by default). `FREQ_SHARPEN[0] == 0`, so DC is never
+/// sharpened.
+pub(crate) const FREQ_SHARPEN: [i32; 16] = [
+    0, 30, 60, 90, //
+    30, 60, 90, 90, //
+    60, 90, 90, 90, //
+    90, 90, 90, 90, //
+];
+
+/// Right shift applied to `FREQ_SHARPEN[j] * ac_step` to form the sharpening bias
+/// (libwebp `SHARPEN_BITS`).
+pub(crate) const SHARPEN_BITS: u32 = 11;
+
 /// Extra-bit probabilities for the DCT-value categories 3–6 (RFC §13.2,
 /// libwebp `kCat3`/`kCat4`/`kCat5`/`kCat6`, minus the trailing `0` sentinel).
 pub(crate) const CAT_3456: [&[Prob]; 4] = [

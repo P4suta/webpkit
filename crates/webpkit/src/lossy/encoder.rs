@@ -439,6 +439,7 @@ const fn frame_tuning(tuning: LossyTuning) -> frame::FrameTuning {
         filter_sharpness: tuning.filter_sharpness(),
         sharp_yuv: tuning.sharp_yuv(),
         smooth_segments: tuning.smooth_segments(),
+        freq_sharpen: tuning.freq_sharpen(),
         passes: tuning.pass(),
     }
 }
@@ -711,6 +712,37 @@ mod tests {
                 "the biased stream must still decode"
             );
         }
+    }
+
+    #[test]
+    fn freq_sharpen_knob_flows_through_the_public_api() {
+        // The public `LossyTuning::with_freq_sharpen` flows through to the frame encoder:
+        // off (the default) is byte-identical, on changes the AC-rich stream (larger, since
+        // it preserves high-frequency detail) and the result still decodes.
+        let dims = Dimensions::new(48, 48).unwrap();
+        let pixels = noise(48, 48, 3);
+        let img = ImageRef::new(dims, PixelLayout::Rgba8, &pixels).unwrap();
+        let at = |t: LossyTuning| {
+            encode_vp8(img, &LossyConfig::new().with_quality(50).with_tuning(t))
+                .unwrap()
+                .1
+        };
+        let base = at(LossyTuning::new());
+        assert_eq!(
+            base,
+            at(LossyTuning::new().with_freq_sharpen(false)),
+            "freq_sharpen off is byte-identical to the default"
+        );
+        let sharpened = at(LossyTuning::new().with_freq_sharpen(true));
+        assert_ne!(base, sharpened, "freq_sharpen on must change the AC-rich stream");
+        assert!(
+            sharpened.len() >= base.len(),
+            "sharpening preserves detail, so it never shrinks the file"
+        );
+        assert!(
+            crate::lossy::decode(&sharpened).is_ok(),
+            "the sharpened stream must still decode"
+        );
     }
 
     #[test]
