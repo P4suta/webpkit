@@ -39,3 +39,4 @@ Options:
   -v                     verbose output (repeatable)
   -color <when>          auto (default), always, or never
   -version               print version
+  -pre <int>             preprocessing filter: 0=none, 1=segment-map smoothing (2=dithering unsupported)

@@ -21,7 +21,9 @@
               well within range and the casts reproduce the reference exactly"
 )]
 
-use crate::lossy::constants::{AC_TABLE, DC_TABLE, QUALITY_TO_BASE_Q, ZIGZAG};
+use crate::lossy::constants::{
+    AC_TABLE, DC_TABLE, FREQ_SHARPEN, QUALITY_TO_BASE_Q, SHARPEN_BITS, ZIGZAG,
+};
 
 /// Fixed-point precision of the reciprocal quantizer multiplier.
 const QFIX: u32 = 17;
@@ -48,10 +50,14 @@ impl QFactor {
         }
     }
 
-    /// Quantize a signed coefficient to a level (round to nearest, clamped to the
-    /// codable range).
-    pub(crate) fn quantize(self, coeff: i32) -> i32 {
-        let level = ((coeff.abs() * self.iq + QBIAS) >> QFIX).min(MAX_LEVEL);
+    /// Quantize a signed coefficient to a level (round to nearest, clamped to the codable
+    /// range), with an additive high-frequency `sharpen` bias on its magnitude (libwebp
+    /// `kFreqSharpening`): `level = ((|coeff| + sharpen) * iq + QBIAS) >> QFIX`, clamped,
+    /// with the sign of the original coefficient. `sharpen == 0` is the plain
+    /// round-to-nearest quantizer, so the default path is unchanged.
+    pub(crate) fn quantize_sharpened(self, coeff: i32, sharpen: i32) -> i32 {
+        let mag = coeff.abs() + sharpen.max(0);
+        let level = ((mag * self.iq + QBIAS) >> QFIX).min(MAX_LEVEL);
         if coeff < 0 { -level } else { level }
     }
 }
@@ -63,6 +69,10 @@ pub(crate) struct QPair {
     pub(crate) dc: QFactor,
     /// The AC (positions 1..16) factor.
     pub(crate) ac: QFactor,
+    /// Per-coefficient additive sharpening bias in **natural** order (libwebp
+    /// `kFreqSharpening`), all `0` unless the `freq_sharpen` knob is on (luma plane only).
+    /// Index `0` (DC) is always `0`.
+    pub(crate) sharpen: [i32; 16],
 }
 
 /// One segment's forward quantizers: luma AC/DC, second-order (Y2) and chroma —
@@ -86,22 +96,45 @@ impl Quantizer {
     /// max((AC[q]*101581)>>16, 8)]`, `uv = [DC[clip_uv(q)], AC[q]]`.
     #[must_use]
     pub(crate) fn new(base_q: i32) -> Self {
+        Self::build(base_q, false)
+    }
+
+    /// Like [`new`](Self::new), but with the luma per-frequency sharpening bias
+    /// (`kFreqSharpening`) baked into `y1.sharpen`. `y2`/`uv` are never sharpened.
+    #[must_use]
+    pub(crate) fn freq_sharpened(base_q: i32) -> Self {
+        Self::build(base_q, true)
+    }
+
+    fn build(base_q: i32, freq_sharpen: bool) -> Self {
         let q = clip_q(base_q);
         let dc = i32::from(DC_TABLE[q as usize]);
         let ac = i32::from(AC_TABLE[q as usize]);
         let uv_dc = i32::from(DC_TABLE[clip_uv(base_q) as usize]);
+        // Per-frequency luma AC sharpening: `(kFreqSharpening[j] * ac_step) >> SHARPEN_BITS`
+        // in natural order. `kFreqSharpening[0] == 0`, so DC is never biased. Zero when off,
+        // which makes the whole quantizer byte-identical to the pre-`freq_sharpen` path.
+        let mut sharpen = [0i32; 16];
+        if freq_sharpen {
+            for (s, &w) in sharpen.iter_mut().zip(&FREQ_SHARPEN) {
+                *s = (w * ac) >> SHARPEN_BITS;
+            }
+        }
         Self {
             y1: QPair {
                 dc: QFactor::new(dc),
                 ac: QFactor::new(ac),
+                sharpen,
             },
             y2: QPair {
                 dc: QFactor::new(dc * 2),
                 ac: QFactor::new(((ac * 101_581) >> 16).max(8)),
+                sharpen: [0; 16],
             },
             uv: QPair {
                 dc: QFactor::new(uv_dc),
                 ac: QFactor::new(ac),
+                sharpen: [0; 16],
             },
         }
     }
@@ -124,21 +157,18 @@ pub(crate) struct Quantized {
 
 /// Quantize a 4×4 coefficient block `coeffs` (natural order) starting at zig-zag
 /// position `first` (0 for a full block, 1 for a 16×16-luma AC block whose DC is
-/// carried by the Y2 block). `dc`/`ac` are the plane's factors.
+/// carried by the Y2 block). `pair` carries the plane's DC/AC factors and its
+/// per-frequency sharpening bias (all `0` unless `freq_sharpen` is on), so a default
+/// (unsharpened) block is byte-identical to the round-to-nearest quantizer.
 #[must_use]
-pub(crate) fn quantize_block(
-    coeffs: [i16; 16],
-    dc: QFactor,
-    ac: QFactor,
-    first: usize,
-) -> Quantized {
+pub(crate) fn quantize_block(coeffs: [i16; 16], pair: QPair, first: usize) -> Quantized {
     let mut levels = [0i16; 16];
     let mut recon = [0i16; 16];
     let mut last = first as i32 - 1;
     for n in first..16 {
         let j = ZIGZAG[n];
-        let factor = if j == 0 { dc } else { ac };
-        let level = factor.quantize(i32::from(coeffs[j]));
+        let factor = if j == 0 { pair.dc } else { pair.ac };
+        let level = factor.quantize_sharpened(i32::from(coeffs[j]), pair.sharpen[j]);
         if level != 0 {
             last = n as i32;
         }
@@ -196,10 +226,19 @@ fn clip_uv(v: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Quantizer, quality_to_base_q, quantize_block};
+    use super::{QFactor, QPair, Quantizer, quality_to_base_q, quantize_block};
     use crate::lossy::constants::ZIGZAG;
     use crate::lossy::fdct::fdct4x4;
     use crate::lossy::idct::transform_one;
+
+    /// A `QPair` with no sharpening — the round-to-nearest quantizer the tests pin.
+    fn pair(dc: QFactor, ac: QFactor) -> QPair {
+        QPair {
+            dc,
+            ac,
+            sharpen: [0; 16],
+        }
+    }
 
     #[test]
     fn dequant_factors_match_the_decoder_derivation() {
@@ -230,7 +269,7 @@ mod tests {
         coeffs[1] = -35;
         coeffs[4] = 9;
         coeffs[8] = 30;
-        let q = quantize_block(coeffs, dc, ac, 0);
+        let q = quantize_block(coeffs, pair(dc, ac), 0);
         // levels are in zig-zag order: ZIGZAG = [0,1,4,8,...].
         assert_eq!(q.levels[0], 2, "DC level");
         assert_eq!(q.levels[1], -2, "AC level at natural 1");
@@ -252,9 +291,9 @@ mod tests {
         let dc = super::QFactor::new(200);
         let ac = super::QFactor::new(200);
         let coeffs = [1i16; 16]; // every |coeff| < 100 -> rounds to 0
-        let q0 = quantize_block(coeffs, dc, ac, 0);
+        let q0 = quantize_block(coeffs, pair(dc, ac), 0);
         assert_eq!(q0.last, -1, "first=0 empty -> last -1 (nz 0)");
-        let q1 = quantize_block(coeffs, dc, ac, 1);
+        let q1 = quantize_block(coeffs, pair(dc, ac), 1);
         assert_eq!(q1.last, 0, "first=1 empty -> last 0 (nz 1)");
     }
 
@@ -284,7 +323,7 @@ mod tests {
             -40, 12, -5, 33, 7, -18, 22, -3, 15, -27, 9, 41, -11, 6, -30, 19,
         ];
         let coeffs = fdct4x4(residual);
-        let quantized = quantize_block(coeffs, q.y1.dc, q.y1.ac, 0);
+        let quantized = quantize_block(coeffs, q.y1, 0);
         let mut plane = [128u8; 16];
         transform_one(&quantized.recon, &mut plane, 0, 4);
         for (i, (&r, &p)) in residual.iter().zip(&plane).enumerate() {
@@ -323,7 +362,7 @@ mod tests {
         let mut coeffs = [0i16; 16];
         let nat = ZIGZAG[5];
         coeffs[nat] = 40;
-        let q = quantize_block(coeffs, dc, ac, 0);
+        let q = quantize_block(coeffs, pair(dc, ac), 0);
         assert_eq!(q.levels[5], 5, "level at zig-zag index 5");
         assert_eq!(q.last, 5);
         assert_eq!(q.recon[nat], 40, "recon at natural ZIGZAG[5]");

@@ -72,30 +72,81 @@ fn cwebp_near_lossless_rejects_out_of_range() {
 /// column in the reconstructed command line.
 #[test]
 fn cwebp_points_a_caret_at_the_rejected_flag() {
-    // `-pre` is a preprocessing knob that stays rejected (unlike `-sns`/`-crop`, now live).
-    let out = run("cwebp", &["-pre", "2", "-o", "-"], vec![]);
+    // `-map` is a preprocessing knob that stays rejected (unlike `-sns`/`-crop`/`-pre`,
+    // now live).
+    let out = run("cwebp", &["-map", "2", "-o", "-"], vec![]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
 
     // Find the echoed command line and the caret line beneath it, and check the
-    // carets sit *exactly* under `-pre`. A substring assertion would tolerate a
+    // carets sit *exactly* under `-map`. A substring assertion would tolerate a
     // caret shifted one column right (the actual column becomes a substring of a
     // wider run of spaces), so this compares real offsets.
     let lines: Vec<&str> = err.lines().collect();
     let command = lines
         .iter()
-        .position(|l| l.contains("cwebp -pre 2 -o -"))
+        .position(|l| l.contains("cwebp -map 2 -o -"))
         .expect("the command line is echoed");
     let caret_line = lines.get(command + 1).expect("a caret line follows");
 
-    let flag_col = lines[command].find("-pre").expect("`-pre` is in the echo");
+    let flag_col = lines[command].find("-map").expect("`-map` is in the echo");
     let caret_col = caret_line.find('^').expect("a caret is drawn");
-    assert_eq!(caret_col, flag_col, "the caret must start under `-pre`");
+    assert_eq!(caret_col, flag_col, "the caret must start under `-map`");
     assert_eq!(
         caret_line.trim(),
         "^^^^",
-        "exactly four carets, one per character of `-pre`: {caret_line:?}"
+        "exactly four carets, one per character of `-map`: {caret_line:?}"
     );
+}
+
+/// `-pre` (preprocessing) is live: bit 0 selects segment-map smoothing (an opt-in that
+/// stays a valid encode), while the unimplemented dithering bit is rejected rather than
+/// silently ignored.
+#[test]
+fn cwebp_pre_selects_segment_smoothing_and_rejects_dithering() {
+    // A small PPM so the encode actually runs.
+    let mut ppm = b"P6\n8 8\n255\n".to_vec();
+    ppm.extend((0u8..192).map(|i| i.wrapping_mul(7)));
+
+    // `-pre 1` (segment-map smoothing) is accepted and produces a decodable WebP.
+    let smoothed = run(
+        "cwebp",
+        &["-", "-o", "-", "-q", "40", "-pre", "1"],
+        ppm.clone(),
+    );
+    assert!(
+        smoothed.status.success(),
+        "`-pre 1` must encode: {smoothed:?}"
+    );
+    assert_eq!(&smoothed.stdout[..4], b"RIFF", "emits a WebP container");
+
+    // `-pre 0` (no preprocessing) is byte-identical to omitting the flag entirely.
+    let none = run(
+        "cwebp",
+        &["-", "-o", "-", "-q", "40", "-pre", "0"],
+        ppm.clone(),
+    );
+    let omitted = run("cwebp", &["-", "-o", "-", "-q", "40"], ppm.clone());
+    assert!(none.status.success() && omitted.status.success());
+    assert_eq!(
+        none.stdout, omitted.stdout,
+        "`-pre 0` must be byte-identical to no preprocessing"
+    );
+
+    // The dithering bit (2) is not implemented; it is a clear usage error, not ignored.
+    for pre in ["2", "3"] {
+        let out = run(
+            "cwebp",
+            &["-", "-o", "-", "-q", "40", "-pre", pre],
+            ppm.clone(),
+        );
+        assert_eq!(out.status.code(), Some(2), "`-pre {pre}` must be rejected");
+        let err = stderr(&out);
+        assert!(
+            err.contains("dithering"),
+            "should name the unimplemented dithering bit: {err:?}"
+        );
+    }
 }
 
 #[test]

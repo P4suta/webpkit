@@ -278,6 +278,32 @@ libwebp is absent, and a file cwebp cannot read is reported as a `skipped` row
 rather than aborting the run. The ratio column is integer permille
 (`ours * 1000 / cwebp`; below 1000 means our stream is smaller).
 
+### Real-image lossy AUTO comparison — `metrics --lossy --real <dir>`
+
+```
+cargo run --release -p xtask -- metrics --lossy --real <dir> [--max-edge N]
+```
+
+Composes `--lossy` with `--real`: instead of the lossless `Best`-vs-`cwebp -m 6`
+size table, it compares our **zero-knob `AUTO` encoder** against `cwebp -q Q`
+**default shaping** at each of qualities `50 / 75 / 90` — the exact default a user
+ships, so it is the measurement basis for the AUTO default-shaping tune. For each
+quality it prints size + PSNR + SSIM rolled up by **content category** — `photo` /
+`graphic` / `transparent` — where the category is **derived from the pixels**
+(alpha presence, then distinct-color count), never from the filename. Both
+payloads are decoded by *our* decoder so PSNR/SSIM are apples-to-apples, and
+`cwebp -noalpha` matches our alpha-dropping lossy encoder (the comparison is on
+RGB). Columns: `size%` = `ours * 100 / cwebp` (`< 100` means we are smaller);
+`+dB` / `+SSIM` = ours − cwebp (positive means we are better).
+
+Like the other `--real` paths it is **print-only** (temp files in a dropped
+`tempfile::tempdir()`, no repo file written, never gated) and **soft-skips** when
+libwebp is absent. **Privacy:** the directory is a pure runtime argument and
+results are aggregated by pixel-derived category, so **no filename is ever printed
+or recorded** — keep a private corpus out of git and report only the category
+rollup. If a non-libwebp `cwebp` (e.g. this repo's own CLI) shadows libwebp on
+`PATH`, point `WEBPKIT_CWEBP` / `WEBPKIT_DWEBP` at the libwebp `1.6.0` binaries.
+
 ## Reading results
 
 **Compression (the ledger).** The measured impact of an encoder change is the

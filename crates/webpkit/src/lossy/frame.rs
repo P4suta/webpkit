@@ -157,6 +157,14 @@ pub(crate) struct FrameTuning {
     /// ([`crate::lossy::sharp_yuv`]). `false` (the default) leaves the box path — and every
     /// output byte — unchanged; only the U/V planes are affected when it is set.
     pub(crate) sharp_yuv: bool,
+    /// Whether to 3×3 majority-vote smooth the per-macroblock segment map before the ids
+    /// are emitted (libwebp `SmoothSegmentMap`). `false` (the default) keeps the raw
+    /// k-means map and every output byte; it only engages on the segmenting tiers.
+    pub(crate) smooth_segments: bool,
+    /// Whether to apply the per-frequency luma quant sharpening bias (libwebp
+    /// `kFreqSharpening`) before quantization. `false` (the default) applies no bias and
+    /// keeps every output byte; when on it biases high-frequency luma AC to survive.
+    pub(crate) freq_sharpen: bool,
     /// Number of entropy-refinement passes (`1..=10`; libwebp's `StatLoop`). `1` (the
     /// default) is the single-pass, byte-identical encode; a higher count re-plans the
     /// frame against the previous pass's optimized coefficient probabilities, so the
@@ -179,6 +187,8 @@ impl FrameTuning {
         filter_strength: 60,
         filter_sharpness: 0,
         sharp_yuv: false,
+        smooth_segments: false,
+        freq_sharpen: false,
         passes: 1,
     };
 }
@@ -348,6 +358,7 @@ fn encode_one_pass(
         mb_h,
         mut seg_params,
         seg_base_q,
+        seg_beta,
     } = plan_frame(
         rgba,
         width,
@@ -379,6 +390,7 @@ fn encode_one_pass(
             seg_base_q,
             effort.apply_filter(),
             tuning.filter_strength,
+            seg_beta,
         );
     }
     let header = HeaderParams {
@@ -495,6 +507,9 @@ struct Segmentation {
     seg_ids: Vec<u8>,
     /// Per-segment base quantizer index (all `base_q` when unsegmented).
     base_q: [i32; 4],
+    /// Per-segment complexity bias `beta_s` in `0..=255` (all `0` when unsegmented),
+    /// consumed by the loop-filter [`segment_filter_deltas`].
+    beta: [i32; 4],
     /// The emittable segment header, or `None` for a single-segment frame.
     params: Option<SegmentParams>,
 }
@@ -518,6 +533,7 @@ fn plan_segmentation(
     let single = || Segmentation {
         seg_ids: vec![0u8; n],
         base_q: [base_q; 4],
+        beta: [0; 4],
         params: None,
     };
     let nb = usize::from(tuning.segments.clamp(1, 4));
@@ -541,10 +557,19 @@ fn plan_segmentation(
     for (delta, &bq) in quantizer.iter_mut().zip(&seg_base_q) {
         *delta = bq - base_q;
     }
+    // Opt-in 3×3 majority-vote cleanup of the per-macroblock id map (libwebp
+    // `SmoothSegmentMap`). It only rewrites which of the (unchanged) `seg_base_q`
+    // quantizers an interior macroblock uses; the tree probabilities below are then
+    // computed over the smoothed ids so the header stays consistent with what is emitted.
+    let mut seg_ids = seg_ids;
+    if tuning.smooth_segments {
+        smooth_segment_map(&mut seg_ids, src.mb_w, src.mb_h);
+    }
     let tree_probs = segment_tree_probs(&seg_ids);
     Segmentation {
         seg_ids,
         base_q: seg_base_q,
+        beta: segment_betas(count, seg_a),
         params: Some(SegmentParams {
             quantizer,
             filter_strength: [0; 4],
@@ -695,6 +720,48 @@ fn update_centroids(values: &[i64], assign: &[u8], centroids: &mut [i64; 4], nb:
     displacement
 }
 
+/// The number of like-valued neighbors (of the eight in a 3×3 grid) that flips a
+/// macroblock's segment id in [`smooth_segment_map`] — libwebp's
+/// `majority_cnt_3_x_3_grid`. `5` is a strict majority of the nine cells, so at most one
+/// id can reach it (two ids at `5` would need ten of eight neighbors).
+const SEGMENT_SMOOTH_MAJORITY: u8 = 5;
+
+/// A 3×3 majority-vote cleanup of the per-macroblock segment map (libwebp
+/// `SmoothSegmentMap`): each interior macroblock adopts the lowest segment id that at
+/// least [`SEGMENT_SMOOTH_MAJORITY`] of its eight neighbors share, otherwise keeps its
+/// own id. Border macroblocks (no full eight-neighborhood) and frames narrower/shorter
+/// than three macroblocks are left untouched. Reads come from the original map and land
+/// in a scratch copy that is written back at the end, so the vote never sees a
+/// half-updated neighborhood (matching libwebp's `tmp` buffer). Integer counting only;
+/// the ids stay in `0..=3` so the per-segment quantizer table is untouched — this only
+/// changes *which* segment an interior macroblock is assigned.
+fn smooth_segment_map(seg_ids: &mut [u8], mb_w: usize, mb_h: usize) {
+    if mb_w < 3 || mb_h < 3 {
+        return; // no macroblock has a full eight-neighborhood
+    }
+    let mut out = seg_ids.to_vec();
+    for y in 1..mb_h - 1 {
+        for x in 1..mb_w - 1 {
+            let mut cnt = [0u8; NUM_MB_SEGMENTS];
+            for ny in [y - 1, y, y + 1] {
+                for nx in [x - 1, x, x + 1] {
+                    if ny == y && nx == x {
+                        continue; // the eight neighbors, center excluded
+                    }
+                    cnt[usize::from(seg_ids[ny * mb_w + nx])] += 1;
+                }
+            }
+            for (seg, &c) in cnt.iter().enumerate() {
+                if c >= SEGMENT_SMOOTH_MAJORITY {
+                    out[y * mb_w + x] = u8::try_from(seg).unwrap_or(0);
+                    break;
+                }
+            }
+        }
+    }
+    seg_ids.copy_from_slice(&out);
+}
+
 /// Map each of the `count` segments' representative activity to a base quantizer index
 /// by the zero-centered SNS delta ([`sns_quant_delta`]) at `sns_strength`: a flat
 /// (low-activity) segment is coded finer (negative delta), a busy one coarser (positive
@@ -748,6 +815,9 @@ struct FramePlan {
     seg_params: Option<SegmentParams>,
     /// Per-segment base quantizer index (all `base_q` when unsegmented).
     seg_base_q: [i32; 4],
+    /// Per-segment complexity bias `beta_s` (all `0` when unsegmented), used to ease the
+    /// per-segment loop-filter deltas on busy segments.
+    seg_beta: [i32; 4],
 }
 
 /// Pass 1: predict, transform/quantize and reconstruct every macroblock, returning
@@ -792,9 +862,17 @@ fn plan_frame(
     let (mb_w, mb_h) = (src.mb_w, src.mb_h);
     // Partition the macroblocks into up to four quantizer segments (Full/Best), then
     // build one forward quantizer per segment. A single-segment frame reuses
-    // `Quantizer::new(base_q)` for all four slots, so the fast path is unchanged.
+    // `Quantizer::new(base_q)` for all four slots, so the fast path is unchanged. The
+    // opt-in `freq_sharpen` knob swaps in the sharpened quantizer (a luma high-frequency
+    // bias); off (the default) it is `Quantizer::new`, so every byte is unchanged.
     let seg = plan_segmentation(&src, base_q, uses_segments, tuning);
-    let quants = seg.base_q.map(Quantizer::new);
+    let quants = seg.base_q.map(|q| {
+        if tuning.freq_sharpen {
+            Quantizer::freq_sharpened(q)
+        } else {
+            Quantizer::new(q)
+        }
+    });
 
     let mut planes = Planes::new(mb_w, mb_h);
     let mb_plans = run_mb_planning(
@@ -814,6 +892,7 @@ fn plan_frame(
         mb_h,
         seg_params: seg.params,
         seg_base_q: seg.base_q,
+        seg_beta: seg.beta,
     }
 }
 
@@ -1525,24 +1604,52 @@ fn emit_intra_modes(
 /// index `q` under the `filter_strength` knob (`0..=100`), a fixed-point port of
 /// libwebp's `SetupFilterStrength`: `level0 = 5 * filter_strength`, the quantizer step
 /// `qstep = kAcTable[clip(q)] >> 2` stands in for the pixel-difference delta, and
-/// `f = level0 * qstep / 256`. A result below `2` disables the filter for that segment
-/// (`0`), else it clamps into `0..=63`. `filter_strength == 0` always yields `0`. The
-/// sharpness term is not folded in here — it rides in the emitted [`FilterHeader`] and
-/// is applied identically by `compute_fstrengths`/the decoder.
+/// `f = level0 * qstep / (256 + beta_s)`. A result below `2` disables the filter for
+/// that segment (`0`), else it clamps into `0..=63`. `filter_strength == 0` always yields
+/// `0`. The sharpness term is not folded in here — it rides in the emitted
+/// [`FilterHeader`] and is applied identically by `compute_fstrengths`/the decoder.
 ///
-/// (libwebp additionally divides by `256 + beta_s`, a per-segment SNS bias we do not
-/// model; `beta_s = 0` here. Byte-exact parity with `cwebp` filtering is not a goal —
-/// the derivation is self-consistent because the decoder re-derives from the emitted
-/// header — so the term is dropped.)
-fn segment_filter_level(q: i32, filter_strength: u8, apply_filter: bool) -> i32 {
+/// `beta_s` is libwebp's per-segment complexity bias (`SetSegmentAlphas`, `0..=255`): a
+/// busier segment carries a larger `beta_s`, which shrinks its filter level so textured
+/// regions are deblocked less. `beta_s = 0` (the base and every flat/lowest-activity
+/// segment) reduces to `f = level0 * qstep / 256`, so a single-segment or `Fast` frame
+/// is byte-identical to the pre-`beta_s` encoder. (The `qstep` stand-in for libwebp's
+/// pixel-difference base strength is kept; byte-exact parity with `cwebp` filtering is
+/// not a goal — the derivation is self-consistent because the decoder re-derives from the
+/// emitted header.)
+fn segment_filter_level(q: i32, filter_strength: u8, apply_filter: bool, beta_s: i32) -> i32 {
     if !apply_filter || filter_strength == 0 {
         return 0;
     }
     let level0 = 5 * i32::from(filter_strength);
     let idx = usize::try_from(q.clamp(0, 127)).unwrap_or(0);
     let qstep = i32::from(AC_TABLE[idx]) >> 2;
-    let f = level0 * qstep / 256;
+    // `beta_s >= 0`, so the divisor is in `256..=511` and never zero.
+    let f = level0 * qstep / (256 + beta_s.max(0));
     if f < 2 { 0 } else { f.min(63) }
+}
+
+/// Each segment's complexity bias `beta_s` in `0..=255` (libwebp `SetSegmentAlphas`):
+/// `beta_s[i] = 255 * (seg_a[i] - min) / (max - min)` over the `count` used segment
+/// activity means `seg_a`, with the `max == min` guard libwebp applies. The
+/// lowest-activity segment (and every unused slot) gets `0`, so the base filter level is
+/// never biased. Integer arithmetic only.
+fn segment_betas(count: usize, seg_a: [i64; 4]) -> [i32; 4] {
+    let mut beta = [0i32; 4];
+    if count <= 1 {
+        return beta;
+    }
+    let used = &seg_a[..count];
+    let min = used.iter().copied().min().unwrap_or(0);
+    let mut max = used.iter().copied().max().unwrap_or(0);
+    if max <= min {
+        max = min + 1; // libwebp's max == min guard keeps the divisor positive
+    }
+    let span = max - min;
+    for (b, &a) in beta.iter_mut().zip(used) {
+        *b = i32::try_from((255 * (a - min) / span).clamp(0, 255)).unwrap_or(0);
+    }
+    beta
 }
 
 /// Choose the frame's in-loop deblocking-filter parameters. The normal (non-simple)
@@ -1560,7 +1667,10 @@ fn choose_filter(
 ) -> FilterHeader {
     FilterHeader {
         simple: false,
-        level: segment_filter_level(base_q, filter_strength, apply_filter),
+        // The base level carries no per-segment complexity bias (`beta_s = 0`), matching
+        // libwebp's `filter_hdr.level_ = dqm_[0].fstrength_`, where segment 0 is the
+        // lowest-activity segment (`beta_s[0] == 0`). Per-segment deltas add the bias.
+        level: segment_filter_level(base_q, filter_strength, apply_filter, 0),
         sharpness: i32::from(filter_sharpness),
         ..FilterHeader::default()
     }
@@ -1568,17 +1678,20 @@ fn choose_filter(
 
 /// The per-segment loop-filter strength deltas emitted in the segment header, each
 /// relative to the base `filter.level` (the decoder adds `filter.level` back, since the
-/// deltas are coded `absolute_delta = false`). A busier segment (coarser quantizer)
-/// deblocks harder than a flat one. Unused segments (`count..4`) carry `0`.
+/// deltas are coded `absolute_delta = false`). A busier segment deblocks according to its
+/// coarser quantizer but is eased back by its complexity bias `beta_s[i]` (libwebp
+/// `SetSegmentAlphas`), so texture is not over-smoothed. Unused segments (`count..4`)
+/// carry `0`.
 fn segment_filter_deltas(
     base_level: i32,
     seg_base_q: [i32; 4],
     apply_filter: bool,
     filter_strength: u8,
+    beta_s: [i32; 4],
 ) -> [i32; 4] {
     let mut deltas = [0i32; 4];
-    for (delta, &q) in deltas.iter_mut().zip(&seg_base_q) {
-        *delta = segment_filter_level(q, filter_strength, apply_filter) - base_level;
+    for ((delta, &q), &beta) in deltas.iter_mut().zip(&seg_base_q).zip(&beta_s) {
+        *delta = segment_filter_level(q, filter_strength, apply_filter, beta) - base_level;
     }
     deltas
 }
@@ -1704,7 +1817,7 @@ fn quantize_one(
         let lambda = trellis_lambda(pair.ac.q);
         trellis_quantize_block(coeffs, pair, first, 0, plane, probas, lambda)
     } else {
-        quantize_block(coeffs, pair.dc, pair.ac, first)
+        quantize_block(coeffs, pair, first)
     }
 }
 
@@ -2839,12 +2952,21 @@ mod tests {
             sharp_yuv: true,
             ..base
         });
+        // Segment-map smoothing on (opt-in): the decoder re-derives the per-segment
+        // quantizer from the emitted (smoothed) ids, so decode-of-output must still equal
+        // the encoder's reconstruction.
+        tunings.push(FrameTuning {
+            smooth_segments: true,
+            ..base
+        });
         tunings.push(FrameTuning {
             sns_strength: 100,
             segments: 4,
             filter_strength: 100,
             filter_sharpness: 7,
             sharp_yuv: true,
+            smooth_segments: true,
+            freq_sharpen: true,
             passes: 1,
         });
         tunings.push(FrameTuning {
@@ -2853,6 +2975,8 @@ mod tests {
             filter_strength: 30,
             filter_sharpness: 2,
             sharp_yuv: false,
+            smooth_segments: false,
+            freq_sharpen: false,
             passes: 1,
         });
         for tuning in tunings {
@@ -3785,14 +3909,14 @@ mod tests {
     /// (it prints the actual table on mismatch) and pasting the printed block here.
     const GOLDEN_EXPECTED: &str = "\
 gradient fast 190 fdbe0b6ce4ec645c
-gradient balanced 104 8ded861974c278bc
-gradient best 105 794ee2ab27bff891
+gradient balanced 89 44cc4831e2b014b5
+gradient best 113 f507b9cd3a89366e
 noisy fast 7975 f970e253b081638d
-noisy balanced 3928 6445bf58456e852a
-noisy best 3558 89dcb150ad8be9c1
+noisy balanced 3551 01eb533d4d1d4989
+noisy best 3157 2a63efd863fa841d
 flat fast 40 66b6a4ee87e184a3
-flat balanced 39 345288bf6a40e2d0
-flat best 39 345288bf6a40e2d0
+flat balanced 39 2f5a1f125c0a5180
+flat best 39 2f5a1f125c0a5180
 checker fast 65 a42deaf46567ecd9
 checker balanced 56 6b05842252d1046e
 checker best 56 6b05842252d1046e
@@ -3800,14 +3924,14 @@ stripe fast 1680 145aef26907ace38
 stripe balanced 322 d0284fcbb5c77800
 stripe best 118 00cc0a30e8a48b20
 diagonal fast 415 46ac66199192122b
-diagonal balanced 293 ce4f77901717f62c
-diagonal best 352 28ebd17e1489c006
+diagonal balanced 274 54c3293234733cd4
+diagonal best 337 462b55975bc359f2
 mixed fast 4363 13644d2cc4723cd5
-mixed balanced 2194 68463b656f1c9df3
-mixed best 2251 88a14a71a9ad4b73
+mixed balanced 1953 656fe4c084dd5c45
+mixed best 2044 c347fc85c019f5f0
 horizontal fast 667 81e58ac967acf023
-horizontal balanced 282 0efb696deedf3513
-horizontal best 222 f827cced43febb3a";
+horizontal balanced 278 b98f0c9e1dfbcc25
+horizontal best 213 2e6a76a653010c3a";
 
     /// Golden exact-encode test — THE high-leverage encoder-decision net. Encodes a
     /// diverse set of fixed images (smooth gradient, AC-rich noise, flat blocks,
@@ -4117,8 +4241,8 @@ horizontal best 222 f827cced43febb3a";
         };
         let (_p0, _t, default_total, optimized_total, _probas) =
             emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
-        assert_eq!(default_total, 5784, "default candidate byte-length sum");
-        assert_eq!(optimized_total, 3914, "optimized candidate byte-length sum");
+        assert_eq!(default_total, 4979, "default candidate byte-length sum");
+        assert_eq!(optimized_total, 3538, "optimized candidate byte-length sum");
     }
 
     #[test]
@@ -4159,9 +4283,10 @@ horizontal best 222 f827cced43febb3a";
         // A macroblock with an empty Y2, empty chroma, and every luma block `last <= 1`
         // with at least one exactly 1 sits on that boundary: the strict `< 1` keeps it
         // NON-skippable; the `<= 1` mutant would wrongly mark it skippable. Scan a range
-        // of qualities over mixed content for such a witness (robust to which
-        // macroblock/quality the mode/quant choice lands it on).
-        let rgba = stripe_image(96, 96);
+        // of qualities over mixed flat-vs-noise content for such a witness (robust to
+        // which macroblock/quality the mode/quant choice lands it on — the boundary MB
+        // recurs across the whole q=107..=127 band under the tuned trellis lambda).
+        let rgba = mixed_image(96, 96);
         let witness = (2..=127)
             .find_map(|q| {
                 let FramePlan {
@@ -4183,7 +4308,7 @@ horizontal best 222 f827cced43febb3a";
                         && p.tokens.luma.iter().any(|b| b.last == 1)
                 })
             })
-            .expect("stripe content must contain a luma-last==1 boundary macroblock");
+            .expect("mixed content must contain a luma-last==1 boundary macroblock");
         assert!(
             !witness.skippable,
             "a luma last==1 block must not be skippable"
@@ -4202,7 +4327,7 @@ horizontal best 222 f827cced43febb3a";
         let payload = encode_frame(&rgba, 16, 16, 24, BALANCED);
         assert_eq!(
             golden_digest(&payload),
-            0x56cc_6d7b_a58f_d6dd,
+            0x6e07_e15d_6c4e_0924,
             "at a size tie the encoder must keep the default probability table"
         );
     }
@@ -4345,10 +4470,10 @@ horizontal best 222 f827cced43febb3a";
     /// under each of those mutations. Regenerate by running this test (it prints the
     /// actual table on mismatch) and pasting the block.
     const RD_GOLDEN_EXPECTED: &str = "\
-rd_rx0_ry5_d0_q48 8bf2cf76968f0a1d
-rd_rx1_ry0_d0_q8 af6becf29ccc028e
-rd_rx0_ry2_d0_q24 963cf5ce80e9d47e
-rd_rx0_ry5_d60_q24 f47a591a224ab56b";
+rd_rx0_ry5_d0_q48 c03bd74b0b752939
+rd_rx1_ry0_d0_q8 2dbc60b6031d7af4
+rd_rx0_ry2_d0_q24 b6e5b4d5e6bc4ab2
+rd_rx0_ry5_d60_q24 a788b70bb1dfc28e";
 
     #[test]
     fn rd_cost_arithmetic_golden() {
@@ -4398,5 +4523,127 @@ rd_rx0_ry5_d60_q24 f47a591a224ab56b";
         assert_eq!(ids_b, vec![0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], "B ids");
         assert_eq!(cnt_b, 4, "B count");
         assert_eq!(seg_b, [1010, 1110, 1210, 1310], "B segment means");
+    }
+
+    #[test]
+    fn freq_sharpen_knob_changes_output_and_stays_self_consistent() {
+        // On AC-rich content the per-frequency sharpening bias pushes high-frequency luma
+        // coefficients to survive, so the opt-in knob must change the emitted bytes (it is
+        // wired through both the round-to-nearest and trellis quantizers) while staying
+        // decode-consistent (recon = level*q regardless of how the level was chosen).
+        let (w, h) = (96usize, 96usize);
+        let rgba = noisy96(w, h);
+        let off = FrameTuning {
+            freq_sharpen: false,
+            ..FrameTuning::AUTO
+        };
+        let on = FrameTuning {
+            freq_sharpen: true,
+            ..FrameTuning::AUTO
+        };
+        for &effort in &[Effort::Best, Effort::Full] {
+            let a = encode_frame_impl(&rgba, w, h, 40, effort, off).0;
+            let b = encode_frame_impl(&rgba, w, h, 40, effort, on).0;
+            assert_ne!(
+                a, b,
+                "freq_sharpen must change the stream on AC-rich content ({effort:?})"
+            );
+            assert!(
+                b.len() >= a.len(),
+                "sharpening keeps more high-frequency detail, so it never shrinks the frame \
+                 ({effort:?}): {} vs {}",
+                b.len(),
+                a.len()
+            );
+            assert_self_consistent_tuned(&rgba, w, h, 40, effort, on);
+        }
+    }
+
+    #[test]
+    fn smooth_segments_knob_changes_output_and_stays_self_consistent() {
+        // On AC-rich content the raw k-means segment map carries isolated ids that the
+        // 3×3 majority vote rewrites, so the opt-in knob must change the emitted bytes
+        // (it is wired to the bitstream, not inert) while the decoder still reconstructs
+        // exactly what the encoder coded from the smoothed ids.
+        let (w, h) = (96usize, 96usize);
+        let rgba = noisy96(w, h);
+        let off = FrameTuning {
+            smooth_segments: false,
+            ..FrameTuning::AUTO
+        };
+        let on = FrameTuning {
+            smooth_segments: true,
+            ..FrameTuning::AUTO
+        };
+        assert_ne!(
+            encode_frame_impl(&rgba, w, h, 40, BALANCED, off).0,
+            encode_frame_impl(&rgba, w, h, 40, BALANCED, on).0,
+            "segment-map smoothing must change the stream on isolated-segment content"
+        );
+        assert_self_consistent_tuned(&rgba, w, h, 40, BALANCED, on);
+    }
+
+    #[test]
+    fn segment_betas_scale_activity_span_to_0_255() {
+        // libwebp `SetSegmentAlphas`: `255 * (a - min) / (max - min)`; the lowest-activity
+        // segment gets `0`, the highest `255`, so the base filter level is never biased.
+        assert_eq!(
+            super::segment_betas(4, [105, 1105, 2105, 3105]),
+            [0, 85, 170, 255]
+        );
+        // A single segment carries no bias (early return).
+        assert_eq!(super::segment_betas(1, [500, 0, 0, 0]), [0, 0, 0, 0]);
+        // The `max == min` guard: uniform activity forces the divisor to `1`, so every
+        // used segment still resolves to `0` rather than dividing by zero.
+        assert_eq!(super::segment_betas(3, [200, 200, 200, 0]), [0, 0, 0, 0]);
+        // Only the `count` used segments get a bias; unused slots stay `0`.
+        assert_eq!(super::segment_betas(2, [10, 110, 9999, 0]), [0, 255, 0, 0]);
+    }
+
+    #[test]
+    fn smooth_segment_map_votes_and_preserves_borders() {
+        // 3×3: the only interior cell (center) is a `1` island; seven of its eight
+        // neighbors are `0` (>= 5), so it flips to `0`. The `1` in the top-left corner
+        // is a border cell and is never rewritten — it stays `1`.
+        let mut m = vec![1u8, 0, 0, 0, 1, 0, 0, 0, 0];
+        super::smooth_segment_map(&mut m, 3, 3);
+        assert_eq!(
+            m,
+            vec![1u8, 0, 0, 0, 0, 0, 0, 0, 0],
+            "interior island flips to the neighbor majority; the border corner is kept"
+        );
+
+        // No id reaches five of eight (four `0`s and four `1`s around the center), so the
+        // center keeps its own id — the strict `>= 5` majority, not a plurality.
+        let mb_w = 5usize;
+        let mut c = vec![0u8; 25];
+        for &(x, y, v) in &[
+            (1, 1, 0u8),
+            (2, 1, 1),
+            (3, 1, 0),
+            (1, 2, 1),
+            (3, 2, 1),
+            (1, 3, 0),
+            (2, 3, 1),
+            (3, 3, 0),
+        ] {
+            c[y * mb_w + x] = v;
+        }
+        c[2 * mb_w + 2] = 3;
+        super::smooth_segment_map(&mut c, 5, 5);
+        assert_eq!(
+            c[2 * mb_w + 2],
+            3,
+            "no 5/8 majority keeps the center's own id"
+        );
+
+        // A uniform map is idempotent, and a frame too small for a full 3×3 neighborhood
+        // is left untouched.
+        let mut uniform = vec![2u8; 25];
+        super::smooth_segment_map(&mut uniform, 5, 5);
+        assert_eq!(uniform, vec![2u8; 25], "uniform map is unchanged");
+        let mut tiny = vec![0u8, 1, 0, 1];
+        super::smooth_segment_map(&mut tiny, 2, 2);
+        assert_eq!(tiny, vec![0u8, 1, 0, 1], "a 2×2 frame has no interior cell");
     }
 }

@@ -1,5 +1,5 @@
-# Full mutation sweep of the `webpkit` product crate — the authoritative,
-# whole-crate run behind the PR-scoped `--in-diff` gate in ci.yml.
+# Full mutation sweep of the `webpkit` + `webpkit-cli` product crates — the
+# authoritative, whole-crate run behind the PR-scoped `--in-diff` gate in ci.yml.
 #
 # It is NOT a per-push gate (a full sweep is far too slow for that). Trigger it
 # by hand (`workflow_dispatch`) after anything that moves code wholesale — a
@@ -13,9 +13,12 @@
 #     surviving mutant is reported. Download the `mutants-out-shard-*` artifacts,
 #     union their `missed.txt`, and rebuild the ledger's coordinates from it.
 #
-# The work is fanned across 8 shards (independent runners) so the wall-clock is a
-# fraction of a single-runner sweep. cargo-mutants is version-pinned to match
-# mise.toml and the ci.yml `mutants` job so the generated mutants are reproducible.
+# The work is fanned across 32 shards (independent runners) so the wall-clock is a
+# fraction of a single-runner sweep — restoring codec visibility took the surface to
+# ~9.5k mutants, far more than the original facade+CLI 8-shard sizing held within a
+# runner's time budget. Raise the shard count (extend the matrix) if any shard still
+# hits `timeout-minutes`. cargo-mutants is version-pinned to match mise.toml and the
+# ci.yml `mutants` job so the generated mutants are reproducible.
 name: mutants-full
 
 on:
@@ -31,13 +34,13 @@ permissions:
 
 jobs:
   sweep:
-    name: sweep (shard ${{ matrix.shard }}/8)
+    name: sweep (shard ${{ matrix.shard }}/32)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -63,7 +66,7 @@ jobs:
           assert n == 1, f"expected one exclude_re array, found {n}"
           p.write_text(s, encoding="utf8")
           PY
-      # `--shard k/8` deterministically partitions the mutant list; each runner
+      # `--shard k/32` deterministically partitions the mutant list; each runner
       # tests only its slice. In confirm mode a shard fails if any mutant in its
       # slice survives and is not covered by `.cargo/mutants.toml`'s `exclude_re`.
       #
@@ -72,8 +75,11 @@ jobs:
       # PR gate and `just mutants` ran proptest's default, so a mutant only
       # proptest kills could survive here, be excluded as "equivalent", and then
       # never be caught anywhere.
+      # Scope matches `just mutants` and the ci.yml `--in-diff` gate: both published
+      # crates (`-p webpkit -p webpkit-cli`), so the authoritative sweep and the PR
+      # gate mutate exactly the same surface.
       - name: mutation sweep (this shard)
-        run: cargo mutants --shard ${{ matrix.shard }}/8 -p webpkit --test-tool nextest
+        run: cargo mutants --shard ${{ matrix.shard }}/32 -p webpkit -p webpkit-cli --test-tool nextest
       # Preserve each shard's outcome lists (missed/caught/...) so the exclude
       # ledger can be regenerated from the aggregated `missed.txt` after a big move.
       - name: upload shard outcomes

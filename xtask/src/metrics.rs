@@ -778,8 +778,21 @@ fn extract_vp8_chunk(webp: &[u8]) -> Result<Vec<u8>> {
 /// This is the lossy analog of [`metrics`]: the ledger is integer-only (its
 /// quality field is `sse`, not float dB) and byte-golden drift-gated exactly like
 /// `corpus/metrics.json`, blessed on the pinned MSRV (`just metrics-lossy-bless`).
-/// `--vs-libwebp` stays a print-only developer aid ([`compare_lossy_vs_libwebp`]).
-pub(crate) fn metrics_lossy(action: MetricsAction, vs_libwebp: bool) -> Result<()> {
+/// `--vs-libwebp` stays a print-only developer aid ([`compare_lossy_vs_libwebp`]);
+/// `--real <dir>` runs the print-only AUTO-vs-cwebp real-image sweep
+/// ([`compare_lossy_vs_libwebp_real`]) and returns without touching the ledger.
+pub(crate) fn metrics_lossy(
+    action: MetricsAction,
+    vs_libwebp: bool,
+    real: Option<PathBuf>,
+    max_edge: u32,
+) -> Result<()> {
+    // `--real <dir>` runs ONLY the real-image AUTO-vs-cwebp comparison: it never
+    // touches the gated ledger, writes no repo file, and soft-skips when libwebp is
+    // absent (mirrors the lossless `metrics` path).
+    if let Some(real_dir) = real {
+        return compare_lossy_vs_libwebp_real(&real_dir, max_edge);
+    }
     let root = workspace_root()?;
     let dir = corpus_dir(&root);
     let metrics_path = dir.join("metrics-lossy.json");
@@ -897,6 +910,302 @@ fn compare_lossy_vs_libwebp() -> Result<()> {
                 "  {id:<14} {q:>3} {ours_bytes:>10} {ours_psnr:>8.2} {cwebp_bytes:>11} {cwebp_psnr:>9.2}"
             );
         }
+    }
+    Ok(())
+}
+
+/// A real image's content category, derived from its PIXELS (never its filename),
+/// so the real-image sweep can roll results up without recording any file name —
+/// the private corpus stays private by construction (see [`classify_real`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RealCategory {
+    /// Opaque, high distinct-color content — photographs and scans.
+    Photo,
+    /// Opaque, low distinct-color content — line art, charts, flat graphics.
+    Graphic,
+    /// Any pixel with alpha `< 255` — icons and transparent exports.
+    Transparent,
+}
+
+impl RealCategory {
+    /// The categories in printed/aggregation order.
+    const ALL: [Self; 3] = [Self::Photo, Self::Graphic, Self::Transparent];
+
+    /// The row label used in the printed rollup.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Photo => "photo",
+            Self::Graphic => "graphic",
+            Self::Transparent => "transparent",
+        }
+    }
+
+    /// Dense index into the per-category accumulator array.
+    const fn idx(self) -> usize {
+        match self {
+            Self::Photo => 0,
+            Self::Graphic => 1,
+            Self::Transparent => 2,
+        }
+    }
+}
+
+/// Distinct-color threshold separating flat graphics/line-art from photographic
+/// content (opaque images only). A 512-edge photograph carries tens of thousands
+/// of distinct RGB triples; clean vector-style exports stay in the low thousands.
+const GRAPHIC_MAX_COLORS: usize = 8192;
+
+/// Classify a decoded RGBA buffer into a [`RealCategory`] from its pixels alone —
+/// transparency first, then distinct-color count. No filename is ever inspected,
+/// which is what lets the sweep aggregate a private corpus without naming it.
+fn classify_real(rgba: &[u8]) -> RealCategory {
+    if rgba.chunks_exact(4).any(|px| px[3] < 255) {
+        return RealCategory::Transparent;
+    }
+    let mut colors = std::collections::BTreeSet::new();
+    for px in rgba.chunks_exact(4) {
+        colors.insert([px[0], px[1], px[2]]);
+        if colors.len() > GRAPHIC_MAX_COLORS {
+            return RealCategory::Photo;
+        }
+    }
+    RealCategory::Graphic
+}
+
+/// Mean structural similarity (MSSIM) over non-overlapping 8×8 luma windows of two
+/// RGBA buffers; `1.0` for an identical pair, lower as structure degrades.
+///
+/// Like [`psnr_rgb`] this is an `f64` print-only aid — xtask is a CLI boundary, not
+/// the float-free codec, and nothing here is committed to a gated ledger. Luma is
+/// BT.601; alpha is ignored (the lossy codec drops it); pixels beyond the last full
+/// 8×8 block (a partial right/bottom strip) are not windowed. An image smaller than
+/// one window scores `1.0` (no measurable structural loss).
+fn ssim_rgb(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
+    // Stabilizers from the standard SSIM definition at 8-bit dynamic range L = 255:
+    // C1 = (0.01 L)^2, C2 = (0.03 L)^2.
+    const C1: f64 = 6.5025;
+    const C2: f64 = 58.5225;
+    let luma = |px: &[u8]| {
+        0.299f64.mul_add(
+            f64::from(px[0]),
+            0.587f64.mul_add(f64::from(px[1]), 0.114 * f64::from(px[2])),
+        )
+    };
+    let ya: Vec<f64> = a.chunks_exact(4).map(&luma).collect();
+    let yb: Vec<f64> = b.chunks_exact(4).map(&luma).collect();
+    if width < 8 || height < 8 || ya.len() < width * height || yb.len() < width * height {
+        return 1.0;
+    }
+    let (mut acc, mut windows) = (0.0f64, 0u32);
+    let mut wy = 0;
+    while wy + 8 <= height {
+        let mut wx = 0;
+        while wx + 8 <= width {
+            let (mut sa, mut sb, mut saa, mut sbb, mut sab) = (0.0, 0.0, 0.0, 0.0, 0.0);
+            for dy in 0..8 {
+                let row = (wy + dy) * width + wx;
+                for dx in 0..8 {
+                    let (va, vb) = (ya[row + dx], yb[row + dx]);
+                    sa += va;
+                    sb += vb;
+                    saa = va.mul_add(va, saa);
+                    sbb = vb.mul_add(vb, sbb);
+                    sab = va.mul_add(vb, sab);
+                }
+            }
+            let n = 64.0;
+            let (ma, mb) = (sa / n, sb / n);
+            // variance/covariance as E[x^2] - E[x]^2, expressed via mul_add.
+            let va = ma.mul_add(-ma, saa / n);
+            let vb = mb.mul_add(-mb, sbb / n);
+            let cov = ma.mul_add(-mb, sab / n);
+            let num = (2.0 * ma).mul_add(mb, C1) * 2.0f64.mul_add(cov, C2);
+            let den = mb.mul_add(mb, ma.mul_add(ma, C1)) * (va + vb + C2);
+            acc += num / den;
+            windows += 1;
+            wx += 8;
+        }
+        wy += 8;
+    }
+    if windows == 0 {
+        1.0
+    } else {
+        acc / f64::from(windows)
+    }
+}
+
+/// Running per-(quality, category) totals for the real-image AUTO-vs-cwebp sweep.
+/// Sizes are exact byte sums; the quality fields are dB / SSIM sums averaged by `n`
+/// at print time.
+#[derive(Default, Clone, Copy)]
+struct CategoryAcc {
+    /// Images folded into this bucket.
+    n: u32,
+    /// Summed webpkit-AUTO `VP8 ` payload bytes.
+    ours_bytes: u64,
+    /// Summed `cwebp -q Q` `VP8 ` payload bytes.
+    cwebp_bytes: u64,
+    /// Summed webpkit-AUTO reconstruction PSNR (dB).
+    ours_psnr: f64,
+    /// Summed `cwebp` reconstruction PSNR (dB).
+    cwebp_psnr: f64,
+    /// Summed webpkit-AUTO reconstruction MSSIM.
+    ours_ssim: f64,
+    /// Summed `cwebp` reconstruction MSSIM.
+    cwebp_ssim: f64,
+}
+
+impl CategoryAcc {
+    /// Fold this accumulator into `other` (the per-quality `ALL` rollup).
+    fn add_into(self, other: &mut Self) {
+        other.n += self.n;
+        other.ours_bytes += self.ours_bytes;
+        other.cwebp_bytes += self.cwebp_bytes;
+        other.ours_psnr += self.ours_psnr;
+        other.cwebp_psnr += self.cwebp_psnr;
+        other.ours_ssim += self.ours_ssim;
+        other.cwebp_ssim += self.cwebp_ssim;
+    }
+
+    /// Print one rollup row (`label` names the bucket). No-op for an empty bucket.
+    fn print_row(self, label: &str) {
+        if self.n == 0 {
+            return;
+        }
+        let n = f64::from(self.n);
+        let (o_db, c_db) = (self.ours_psnr / n, self.cwebp_psnr / n);
+        let (o_ss, c_ss) = (self.ours_ssim / n, self.cwebp_ssim / n);
+        let size_tenths = self
+            .ours_bytes
+            .saturating_mul(1000)
+            .checked_div(self.cwebp_bytes)
+            .unwrap_or(0);
+        let size_pct = format!("{}.{}", size_tenths / 10, size_tenths % 10);
+        println!(
+            "  {label:<12} {:>3} {:>12} {:>12} {size_pct:>7} {o_db:>7.2} {c_db:>6.2} {:>+6.2} {o_ss:>8.4} {c_ss:>7.4} {:>+8.4}",
+            self.n,
+            self.ours_bytes,
+            self.cwebp_bytes,
+            o_db - c_db,
+            o_ss - c_ss,
+        );
+    }
+}
+
+/// Print (never gate) a lossy size + PSNR + SSIM comparison of our zero-knob AUTO
+/// encoder against libwebp `cwebp -q Q` (default shaping) over the real images in
+/// `real`, rolled up by pixel-derived content category.
+///
+/// PRIVACY: `real` is a pure runtime argument; results are aggregated by
+/// [`RealCategory`] (classified from pixels, never the filename), and no file name
+/// is printed or recorded. Every temp file lives in a dropped `tempfile::tempdir()`,
+/// so nothing is written into the repo. Needs libwebp (`cwebp`); soft-skips when it
+/// is absent or the wrong version.
+///
+/// This is the AUTO analog of [`compare_lossy_vs_libwebp`] (which runs `l9` over the
+/// synthetic matrix): it exercises the exact zero-knob default a user ships, so it is
+/// the measurement basis for the AUTO default-shaping tune (issue #32). Both payloads
+/// are decoded by OUR decoder for an apples-to-apples PSNR/SSIM; `cwebp -noalpha` and
+/// our alpha-dropping lossy encoder compare on RGB.
+fn compare_lossy_vs_libwebp_real(real: &Path, max_edge: u32) -> Result<()> {
+    let cwebp = cwebp_bin();
+    if let Err(e) = check_version(&cwebp, "cwebp", "WEBPKIT_CWEBP") {
+        println!("metrics --lossy --real: skipped ({e})");
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "webpkit AUTO vs cwebp -q Q default shaping on real images (printed only, NOT gated):"
+    );
+    match (max_edge > 0).then_some(max_edge) {
+        Some(w) => println!("  input width capped to {w}px by cwebp (aspect preserved)"),
+        None => println!("  native resolution (no resize)"),
+    }
+    println!(
+        "  bytes = summed VP8 payload; both decoded by our decoder; category derived from pixels"
+    );
+    println!(
+        "  size% = ours*100/cwebp (<100 = ours smaller); +dB / +SSIM = ours - cwebp (>0 = ours better)"
+    );
+
+    let prepared = prepare_real_images(&cwebp, real, max_edge)?;
+
+    let tmp = tempfile::tempdir().context("creating tempdir for lossy --real comparison")?;
+    let src_png = tmp.path().join("src.png");
+    let out_webp = tmp.path().join("out.webp");
+
+    // [quality][category] byte/quality accumulators.
+    let mut acc = [[CategoryAcc::default(); 3]; LOSSY_QUALITIES.len()];
+    let mut skipped = 0usize;
+
+    for item in &prepared {
+        let RealPrep::Ready(img) = item else {
+            skipped += 1;
+            continue;
+        };
+        let (w, h) = (img.dims.width() as usize, img.dims.height() as usize);
+        let cat = classify_real(&img.rgba);
+        // cwebp reads a file, so materialize the exact resized pixels once per image.
+        write_png(&src_png, img.dims.width(), img.dims.height(), &img.rgba)?;
+        let dims = webpkit::lossy::Dimensions::new(img.dims.width(), img.dims.height())?;
+
+        for (qi, &q) in LOSSY_QUALITIES.iter().enumerate() {
+            // Ours: the zero-knob AUTO default a user actually ships.
+            let image =
+                webpkit::lossy::ImageRef::new(dims, webpkit::lossy::PixelLayout::Rgba8, &img.rgba)?;
+            let cfg = webpkit::lossy::LossyConfig::new()
+                .with_quality(q)
+                .with_effort(webpkit::lossy::Effort::AUTO);
+            let (_dims, ours) = webpkit::lossy::encode_vp8(image, &cfg)?;
+            let ours_dec = webpkit::lossy::decode(&ours)?;
+
+            // cwebp default shaping at the same quality.
+            run_cwebp_lossy(&cwebp, &src_png, &out_webp, q)?;
+            let cwebp_file = std::fs::read(&out_webp)
+                .with_context(|| format!("reading {}", out_webp.display()))?;
+            let cwebp_vp8 = extract_vp8_chunk(&cwebp_file)?;
+            let cwebp_dec = webpkit::lossy::decode(&cwebp_vp8)?;
+
+            let a = &mut acc[qi][cat.idx()];
+            a.n += 1;
+            a.ours_bytes += ours.len() as u64;
+            a.cwebp_bytes += cwebp_vp8.len() as u64;
+            a.ours_psnr += psnr_rgb(&img.rgba, ours_dec.as_bytes());
+            a.cwebp_psnr += psnr_rgb(&img.rgba, cwebp_dec.as_bytes());
+            a.ours_ssim += ssim_rgb(&img.rgba, ours_dec.as_bytes(), w, h);
+            a.cwebp_ssim += ssim_rgb(&img.rgba, cwebp_dec.as_bytes(), w, h);
+        }
+    }
+
+    for (qi, &q) in LOSSY_QUALITIES.iter().enumerate() {
+        println!();
+        println!("q{q}:");
+        println!(
+            "  {:<12} {:>3} {:>12} {:>12} {:>7} {:>7} {:>6} {:>6} {:>8} {:>7} {:>8}",
+            "category",
+            "n",
+            "ours bytes",
+            "cwebp bytes",
+            "size%",
+            "o.dB",
+            "c.dB",
+            "+dB",
+            "o.SSIM",
+            "c.SSIM",
+            "+SSIM"
+        );
+        let mut all = CategoryAcc::default();
+        for cat in RealCategory::ALL {
+            let a = acc[qi][cat.idx()];
+            a.print_row(cat.label());
+            a.add_into(&mut all);
+        }
+        all.print_row("ALL");
+    }
+    if skipped > 0 {
+        println!();
+        println!("  ({skipped} non-image file(s) skipped)");
     }
     Ok(())
 }
