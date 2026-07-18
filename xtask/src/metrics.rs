@@ -919,9 +919,9 @@ fn compare_lossy_vs_libwebp() -> Result<()> {
 /// the private corpus stays private by construction (see [`classify_real`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RealCategory {
-    /// Opaque, high distinct-colour content — photographs and scans.
+    /// Opaque, high distinct-color content — photographs and scans.
     Photo,
-    /// Opaque, low distinct-colour content — line art, charts, flat graphics.
+    /// Opaque, low distinct-color content — line art, charts, flat graphics.
     Graphic,
     /// Any pixel with alpha `< 255` — icons and transparent exports.
     Transparent,
@@ -950,13 +950,13 @@ impl RealCategory {
     }
 }
 
-/// Distinct-colour threshold separating flat graphics/line-art from photographic
+/// Distinct-color threshold separating flat graphics/line-art from photographic
 /// content (opaque images only). A 512-edge photograph carries tens of thousands
 /// of distinct RGB triples; clean vector-style exports stay in the low thousands.
 const GRAPHIC_MAX_COLORS: usize = 8192;
 
 /// Classify a decoded RGBA buffer into a [`RealCategory`] from its pixels alone —
-/// transparency first, then distinct-colour count. No filename is ever inspected,
+/// transparency first, then distinct-color count. No filename is ever inspected,
 /// which is what lets the sweep aggregate a private corpus without naming it.
 fn classify_real(rgba: &[u8]) -> RealCategory {
     if rgba.chunks_exact(4).any(|px| px[3] < 255) {
@@ -1115,13 +1115,19 @@ fn compare_lossy_vs_libwebp_real(real: &Path, max_edge: u32) -> Result<()> {
     }
 
     println!();
-    println!("webpkit AUTO vs cwebp -q Q default shaping on real images (printed only, NOT gated):");
+    println!(
+        "webpkit AUTO vs cwebp -q Q default shaping on real images (printed only, NOT gated):"
+    );
     match (max_edge > 0).then_some(max_edge) {
         Some(w) => println!("  input width capped to {w}px by cwebp (aspect preserved)"),
         None => println!("  native resolution (no resize)"),
     }
-    println!("  bytes = summed VP8 payload; both decoded by our decoder; category derived from pixels");
-    println!("  size% = ours*100/cwebp (<100 = ours smaller); +dB / +SSIM = ours - cwebp (>0 = ours better)");
+    println!(
+        "  bytes = summed VP8 payload; both decoded by our decoder; category derived from pixels"
+    );
+    println!(
+        "  size% = ours*100/cwebp (<100 = ours smaller); +dB / +SSIM = ours - cwebp (>0 = ours better)"
+    );
 
     let prepared = prepare_real_images(&cwebp, real, max_edge)?;
 
@@ -1177,8 +1183,17 @@ fn compare_lossy_vs_libwebp_real(real: &Path, max_edge: u32) -> Result<()> {
         println!("q{q}:");
         println!(
             "  {:<12} {:>3} {:>12} {:>12} {:>7} {:>7} {:>6} {:>6} {:>8} {:>7} {:>8}",
-            "category", "n", "ours bytes", "cwebp bytes", "size%", "o.dB", "c.dB", "+dB", "o.SSIM",
-            "c.SSIM", "+SSIM"
+            "category",
+            "n",
+            "ours bytes",
+            "cwebp bytes",
+            "size%",
+            "o.dB",
+            "c.dB",
+            "+dB",
+            "o.SSIM",
+            "c.SSIM",
+            "+SSIM"
         );
         let mut all = CategoryAcc::default();
         for cat in RealCategory::ALL {

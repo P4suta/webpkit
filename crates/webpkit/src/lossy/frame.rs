@@ -720,24 +720,24 @@ fn update_centroids(values: &[i64], assign: &[u8], centroids: &mut [i64; 4], nb:
     displacement
 }
 
-/// The number of like-valued neighbours (of the eight in a 3×3 grid) that flips a
+/// The number of like-valued neighbors (of the eight in a 3×3 grid) that flips a
 /// macroblock's segment id in [`smooth_segment_map`] — libwebp's
 /// `majority_cnt_3_x_3_grid`. `5` is a strict majority of the nine cells, so at most one
-/// id can reach it (two ids at `5` would need ten of eight neighbours).
+/// id can reach it (two ids at `5` would need ten of eight neighbors).
 const SEGMENT_SMOOTH_MAJORITY: u8 = 5;
 
 /// A 3×3 majority-vote cleanup of the per-macroblock segment map (libwebp
 /// `SmoothSegmentMap`): each interior macroblock adopts the lowest segment id that at
-/// least [`SEGMENT_SMOOTH_MAJORITY`] of its eight neighbours share, otherwise keeps its
-/// own id. Border macroblocks (no full eight-neighbourhood) and frames narrower/shorter
+/// least [`SEGMENT_SMOOTH_MAJORITY`] of its eight neighbors share, otherwise keeps its
+/// own id. Border macroblocks (no full eight-neighborhood) and frames narrower/shorter
 /// than three macroblocks are left untouched. Reads come from the original map and land
 /// in a scratch copy that is written back at the end, so the vote never sees a
-/// half-updated neighbourhood (matching libwebp's `tmp` buffer). Integer counting only;
+/// half-updated neighborhood (matching libwebp's `tmp` buffer). Integer counting only;
 /// the ids stay in `0..=3` so the per-segment quantizer table is untouched — this only
 /// changes *which* segment an interior macroblock is assigned.
 fn smooth_segment_map(seg_ids: &mut [u8], mb_w: usize, mb_h: usize) {
     if mb_w < 3 || mb_h < 3 {
-        return; // no macroblock has a full eight-neighbourhood
+        return; // no macroblock has a full eight-neighborhood
     }
     let mut out = seg_ids.to_vec();
     for y in 1..mb_h - 1 {
@@ -746,7 +746,7 @@ fn smooth_segment_map(seg_ids: &mut [u8], mb_w: usize, mb_h: usize) {
             for ny in [y - 1, y, y + 1] {
                 for nx in [x - 1, x, x + 1] {
                     if ny == y && nx == x {
-                        continue; // the eight neighbours, center excluded
+                        continue; // the eight neighbors, center excluded
                     }
                     cnt[usize::from(seg_ids[ny * mb_w + nx])] += 1;
                 }
@@ -4544,7 +4544,10 @@ rd_rx0_ry5_d60_q24 a788b70bb1dfc28e";
         for &effort in &[Effort::Best, Effort::Full] {
             let a = encode_frame_impl(&rgba, w, h, 40, effort, off).0;
             let b = encode_frame_impl(&rgba, w, h, 40, effort, on).0;
-            assert_ne!(a, b, "freq_sharpen must change the stream on AC-rich content ({effort:?})");
+            assert_ne!(
+                a, b,
+                "freq_sharpen must change the stream on AC-rich content ({effort:?})"
+            );
             assert!(
                 b.len() >= a.len(),
                 "sharpening keeps more high-frequency detail, so it never shrinks the frame \
@@ -4600,14 +4603,14 @@ rd_rx0_ry5_d60_q24 a788b70bb1dfc28e";
     #[test]
     fn smooth_segment_map_votes_and_preserves_borders() {
         // 3×3: the only interior cell (center) is a `1` island; seven of its eight
-        // neighbours are `0` (>= 5), so it flips to `0`. The `1` in the top-left corner
+        // neighbors are `0` (>= 5), so it flips to `0`. The `1` in the top-left corner
         // is a border cell and is never rewritten — it stays `1`.
         let mut m = vec![1u8, 0, 0, 0, 1, 0, 0, 0, 0];
         super::smooth_segment_map(&mut m, 3, 3);
         assert_eq!(
             m,
             vec![1u8, 0, 0, 0, 0, 0, 0, 0, 0],
-            "interior island flips to the neighbour majority; the border corner is kept"
+            "interior island flips to the neighbor majority; the border corner is kept"
         );
 
         // No id reaches five of eight (four `0`s and four `1`s around the center), so the
@@ -4628,9 +4631,13 @@ rd_rx0_ry5_d60_q24 a788b70bb1dfc28e";
         }
         c[2 * mb_w + 2] = 3;
         super::smooth_segment_map(&mut c, 5, 5);
-        assert_eq!(c[2 * mb_w + 2], 3, "no 5/8 majority keeps the center's own id");
+        assert_eq!(
+            c[2 * mb_w + 2],
+            3,
+            "no 5/8 majority keeps the center's own id"
+        );
 
-        // A uniform map is idempotent, and a frame too small for a full 3×3 neighbourhood
+        // A uniform map is idempotent, and a frame too small for a full 3×3 neighborhood
         // is left untouched.
         let mut uniform = vec![2u8; 25];
         super::smooth_segment_map(&mut uniform, 5, 5);

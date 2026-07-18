@@ -995,5 +995,4 @@ mod tests {
             assert_eq!(got.recon, want.recon, "trial {trial}: recon mismatch");
         }
     }
-
 }

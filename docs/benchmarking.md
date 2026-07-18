@@ -290,7 +290,7 @@ size table, it compares our **zero-knob `AUTO` encoder** against `cwebp -q Q`
 ships, so it is the measurement basis for the AUTO default-shaping tune. For each
 quality it prints size + PSNR + SSIM rolled up by **content category** — `photo` /
 `graphic` / `transparent` — where the category is **derived from the pixels**
-(alpha presence, then distinct-colour count), never from the filename. Both
+(alpha presence, then distinct-color count), never from the filename. Both
 payloads are decoded by *our* decoder so PSNR/SSIM are apples-to-apples, and
 `cwebp -noalpha` matches our alpha-dropping lossy encoder (the comparison is on
 RGB). Columns: `size%` = `ours * 100 / cwebp` (`< 100` means we are smaller);

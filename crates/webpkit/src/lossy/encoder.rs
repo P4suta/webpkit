@@ -734,7 +734,10 @@ mod tests {
             "freq_sharpen off is byte-identical to the default"
         );
         let sharpened = at(LossyTuning::new().with_freq_sharpen(true));
-        assert_ne!(base, sharpened, "freq_sharpen on must change the AC-rich stream");
+        assert_ne!(
+            base, sharpened,
+            "freq_sharpen on must change the AC-rich stream"
+        );
         assert!(
             sharpened.len() >= base.len(),
             "sharpening preserves detail, so it never shrinks the file"
