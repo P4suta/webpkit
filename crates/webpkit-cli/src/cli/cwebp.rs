@@ -290,10 +290,10 @@ const FLAGS: &[FlagSpec] = &[
     },
     FlagSpec {
         name: "-pre",
-        disposition: Disposition::Rejected {
-            cause: GENERIC_TUNE_CAUSE,
-            help: TUNE_HELP,
-        },
+        disposition: active(
+            "-pre <int>",
+            "preprocessing filter: 0=none, 1=segment-map smoothing (2=dithering unsupported)",
+        ),
     },
     FlagSpec {
         name: "-map",
@@ -378,6 +378,9 @@ struct Config {
     /// `-sharp_yuv`: use luminance-guided (sharp) chroma subsampling instead of the box
     /// filter. Off by default, matching the byte-identical plain path.
     sharp_yuv: bool,
+    /// `-pre <int>`: preprocessing bitmask (bit 0 = segment-map smoothing). `None`/`0`
+    /// is byte-identical; the dithering bit (bit 1) is rejected as unimplemented.
+    preprocessing: Option<u8>,
     /// `-preset <name>`: a content preset expanded into a base [`LossyTuning`] that the
     /// explicit knobs above override.
     preset: Option<Preset>,
@@ -448,6 +451,9 @@ impl Config {
         }
         if self.sharp_yuv {
             tuning = tuning.with_sharp_yuv(true);
+        }
+        if let Some(pre) = self.preprocessing {
+            tuning = tuning.with_smooth_segments(pre & 1 != 0);
         }
         if self.exact {
             tuning = tuning.with_exact(true);
@@ -627,6 +633,20 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
             // Luminance-guided chroma subsampling (a boolean flag), mapped onto
             // `LossyTuning::with_sharp_yuv`. Off by default, so omitting it is byte-identical.
             "-sharp_yuv" => config.sharp_yuv = true,
+            // Preprocessing bitmask (libwebp `-pre`): bit 0 = segment-map smoothing
+            // (`LossyTuning::with_smooth_segments`). The dithering bit is not implemented,
+            // so it is rejected rather than silently ignored. `0` is byte-identical.
+            "-pre" => {
+                let pre = value_knob(args, &mut index, "-pre")?;
+                if pre & 2 != 0 {
+                    return Err(CliError::Usage(
+                        "`-pre` bit 2 (pseudo-random dithering) is not implemented; use 0 \
+                         (none) or 1 (segment-map smoothing)"
+                            .to_owned(),
+                    ));
+                }
+                config.preprocessing = Some(pre);
+            },
             // `-exact` preserves the RGB under fully-transparent pixels — webpkit's
             // default, so this states the guarantee. `-jpeg_like`/`-partition_limit`
             // bias the base quantizer; both neutral by default (byte-identical).
@@ -925,12 +945,13 @@ mod tests {
     fn rejected_residue_is_exactly_the_true_unsupported_flags() {
         // The rejected set is the true residue only: the genuinely-unsupported knobs.
         // Everything the audit called out (`-preset`, `-jpeg_like`, `-partition_limit`,
-        // `-exact`) and P6b's rate control (`-size`/`-psnr`/`-pass`) is now Active.
+        // `-exact`) and P6b's rate control (`-size`/`-psnr`/`-pass`) is now Active, as is
+        // `-pre` (bit 0 = segment-map smoothing; the dithering bit is rejected at parse).
         let rejected: Vec<&str> = FLAGS
             .iter()
             .filter(|f| matches!(f.disposition, Disposition::Rejected { .. }))
             .map(|f| f.name)
             .collect();
-        assert_eq!(rejected, ["-blend_alpha", "-hint", "-af", "-pre", "-map"]);
+        assert_eq!(rejected, ["-blend_alpha", "-hint", "-af", "-map"]);
     }
 }

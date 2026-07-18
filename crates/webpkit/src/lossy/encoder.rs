@@ -438,6 +438,7 @@ const fn frame_tuning(tuning: LossyTuning) -> frame::FrameTuning {
         filter_strength: tuning.filter_strength(),
         filter_sharpness: tuning.filter_sharpness(),
         sharp_yuv: tuning.sharp_yuv(),
+        smooth_segments: tuning.smooth_segments(),
         passes: tuning.pass(),
     }
 }

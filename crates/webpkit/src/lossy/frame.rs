@@ -157,6 +157,10 @@ pub(crate) struct FrameTuning {
     /// ([`crate::lossy::sharp_yuv`]). `false` (the default) leaves the box path — and every
     /// output byte — unchanged; only the U/V planes are affected when it is set.
     pub(crate) sharp_yuv: bool,
+    /// Whether to 3×3 majority-vote smooth the per-macroblock segment map before the ids
+    /// are emitted (libwebp `SmoothSegmentMap`). `false` (the default) keeps the raw
+    /// k-means map and every output byte; it only engages on the segmenting tiers.
+    pub(crate) smooth_segments: bool,
     /// Number of entropy-refinement passes (`1..=10`; libwebp's `StatLoop`). `1` (the
     /// default) is the single-pass, byte-identical encode; a higher count re-plans the
     /// frame against the previous pass's optimized coefficient probabilities, so the
@@ -179,6 +183,7 @@ impl FrameTuning {
         filter_strength: 60,
         filter_sharpness: 0,
         sharp_yuv: false,
+        smooth_segments: false,
         passes: 1,
     };
 }
@@ -541,6 +546,14 @@ fn plan_segmentation(
     for (delta, &bq) in quantizer.iter_mut().zip(&seg_base_q) {
         *delta = bq - base_q;
     }
+    // Opt-in 3×3 majority-vote cleanup of the per-macroblock id map (libwebp
+    // `SmoothSegmentMap`). It only rewrites which of the (unchanged) `seg_base_q`
+    // quantizers an interior macroblock uses; the tree probabilities below are then
+    // computed over the smoothed ids so the header stays consistent with what is emitted.
+    let mut seg_ids = seg_ids;
+    if tuning.smooth_segments {
+        smooth_segment_map(&mut seg_ids, src.mb_w, src.mb_h);
+    }
     let tree_probs = segment_tree_probs(&seg_ids);
     Segmentation {
         seg_ids,
@@ -693,6 +706,48 @@ fn update_centroids(values: &[i64], assign: &[u8], centroids: &mut [i64; 4], nb:
         }
     }
     displacement
+}
+
+/// The number of like-valued neighbours (of the eight in a 3×3 grid) that flips a
+/// macroblock's segment id in [`smooth_segment_map`] — libwebp's
+/// `majority_cnt_3_x_3_grid`. `5` is a strict majority of the nine cells, so at most one
+/// id can reach it (two ids at `5` would need ten of eight neighbours).
+const SEGMENT_SMOOTH_MAJORITY: u8 = 5;
+
+/// A 3×3 majority-vote cleanup of the per-macroblock segment map (libwebp
+/// `SmoothSegmentMap`): each interior macroblock adopts the lowest segment id that at
+/// least [`SEGMENT_SMOOTH_MAJORITY`] of its eight neighbours share, otherwise keeps its
+/// own id. Border macroblocks (no full eight-neighbourhood) and frames narrower/shorter
+/// than three macroblocks are left untouched. Reads come from the original map and land
+/// in a scratch copy that is written back at the end, so the vote never sees a
+/// half-updated neighbourhood (matching libwebp's `tmp` buffer). Integer counting only;
+/// the ids stay in `0..=3` so the per-segment quantizer table is untouched — this only
+/// changes *which* segment an interior macroblock is assigned.
+fn smooth_segment_map(seg_ids: &mut [u8], mb_w: usize, mb_h: usize) {
+    if mb_w < 3 || mb_h < 3 {
+        return; // no macroblock has a full eight-neighbourhood
+    }
+    let mut out = seg_ids.to_vec();
+    for y in 1..mb_h - 1 {
+        for x in 1..mb_w - 1 {
+            let mut cnt = [0u8; NUM_MB_SEGMENTS];
+            for ny in [y - 1, y, y + 1] {
+                for nx in [x - 1, x, x + 1] {
+                    if ny == y && nx == x {
+                        continue; // the eight neighbours, center excluded
+                    }
+                    cnt[usize::from(seg_ids[ny * mb_w + nx])] += 1;
+                }
+            }
+            for (seg, &c) in cnt.iter().enumerate() {
+                if c >= SEGMENT_SMOOTH_MAJORITY {
+                    out[y * mb_w + x] = u8::try_from(seg).unwrap_or(0);
+                    break;
+                }
+            }
+        }
+    }
+    seg_ids.copy_from_slice(&out);
 }
 
 /// Map each of the `count` segments' representative activity to a base quantizer index
@@ -2839,12 +2894,20 @@ mod tests {
             sharp_yuv: true,
             ..base
         });
+        // Segment-map smoothing on (opt-in): the decoder re-derives the per-segment
+        // quantizer from the emitted (smoothed) ids, so decode-of-output must still equal
+        // the encoder's reconstruction.
+        tunings.push(FrameTuning {
+            smooth_segments: true,
+            ..base
+        });
         tunings.push(FrameTuning {
             sns_strength: 100,
             segments: 4,
             filter_strength: 100,
             filter_sharpness: 7,
             sharp_yuv: true,
+            smooth_segments: true,
             passes: 1,
         });
         tunings.push(FrameTuning {
@@ -2853,6 +2916,7 @@ mod tests {
             filter_strength: 30,
             filter_sharpness: 2,
             sharp_yuv: false,
+            smooth_segments: false,
             passes: 1,
         });
         for tuning in tunings {
@@ -4399,5 +4463,72 @@ rd_rx0_ry5_d60_q24 ab1c536dec055d08";
         assert_eq!(ids_b, vec![0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], "B ids");
         assert_eq!(cnt_b, 4, "B count");
         assert_eq!(seg_b, [1010, 1110, 1210, 1310], "B segment means");
+    }
+
+    #[test]
+    fn smooth_segments_knob_changes_output_and_stays_self_consistent() {
+        // On AC-rich content the raw k-means segment map carries isolated ids that the
+        // 3×3 majority vote rewrites, so the opt-in knob must change the emitted bytes
+        // (it is wired to the bitstream, not inert) while the decoder still reconstructs
+        // exactly what the encoder coded from the smoothed ids.
+        let (w, h) = (96usize, 96usize);
+        let rgba = noisy96(w, h);
+        let off = FrameTuning {
+            smooth_segments: false,
+            ..FrameTuning::AUTO
+        };
+        let on = FrameTuning {
+            smooth_segments: true,
+            ..FrameTuning::AUTO
+        };
+        assert_ne!(
+            encode_frame_impl(&rgba, w, h, 40, BALANCED, off).0,
+            encode_frame_impl(&rgba, w, h, 40, BALANCED, on).0,
+            "segment-map smoothing must change the stream on isolated-segment content"
+        );
+        assert_self_consistent_tuned(&rgba, w, h, 40, BALANCED, on);
+    }
+
+    #[test]
+    fn smooth_segment_map_votes_and_preserves_borders() {
+        // 3×3: the only interior cell (center) is a `1` island; seven of its eight
+        // neighbours are `0` (>= 5), so it flips to `0`. The `1` in the top-left corner
+        // is a border cell and is never rewritten — it stays `1`.
+        let mut m = vec![1u8, 0, 0, 0, 1, 0, 0, 0, 0];
+        super::smooth_segment_map(&mut m, 3, 3);
+        assert_eq!(
+            m,
+            vec![1u8, 0, 0, 0, 0, 0, 0, 0, 0],
+            "interior island flips to the neighbour majority; the border corner is kept"
+        );
+
+        // No id reaches five of eight (four `0`s and four `1`s around the center), so the
+        // center keeps its own id — the strict `>= 5` majority, not a plurality.
+        let mb_w = 5usize;
+        let mut c = vec![0u8; 25];
+        for &(x, y, v) in &[
+            (1, 1, 0u8),
+            (2, 1, 1),
+            (3, 1, 0),
+            (1, 2, 1),
+            (3, 2, 1),
+            (1, 3, 0),
+            (2, 3, 1),
+            (3, 3, 0),
+        ] {
+            c[y * mb_w + x] = v;
+        }
+        c[2 * mb_w + 2] = 3;
+        super::smooth_segment_map(&mut c, 5, 5);
+        assert_eq!(c[2 * mb_w + 2], 3, "no 5/8 majority keeps the center's own id");
+
+        // A uniform map is idempotent, and a frame too small for a full 3×3 neighbourhood
+        // is left untouched.
+        let mut uniform = vec![2u8; 25];
+        super::smooth_segment_map(&mut uniform, 5, 5);
+        assert_eq!(uniform, vec![2u8; 25], "uniform map is unchanged");
+        let mut tiny = vec![0u8, 1, 0, 1];
+        super::smooth_segment_map(&mut tiny, 2, 2);
+        assert_eq!(tiny, vec![0u8, 1, 0, 1], "a 2×2 frame has no interior cell");
     }
 }

@@ -144,6 +144,12 @@ pub enum AlphaFilterMode {
 /// Build from [`LossyTuning::default`] (the near-best auto baseline) and override with
 /// the `with_*` setters, each of which validates its input into the encoder's range.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "a flat surface of independent cwebp-mirror boolean knobs (sharp_yuv, \
+              smooth_segments, exact, jpeg_like); a state machine would obscure the \
+              one-knob-per-field map callers rely on"
+)]
 pub struct LossyTuning {
     sns_strength: u8,
     segments: u8,
@@ -155,6 +161,9 @@ pub struct LossyTuning {
     alpha_filter: AlphaFilterMode,
     // The active sharp-YUV (luminance-guided chroma) strategy; default off = box chroma.
     sharp_yuv: bool,
+    // 3×3 majority-vote smoothing of the per-macroblock segment map (libwebp
+    // `SmoothSegmentMap`); default off = the raw k-means map, byte-identical.
+    smooth_segments: bool,
     // Preserve the RGB under fully-transparent pixels (default `true`); `false` clears it.
     exact: bool,
     // Active RD/rate knobs, neutral by default (bias the base quantizer when set).
@@ -177,6 +186,7 @@ impl LossyTuning {
         alpha_method: AlphaMethod::Compressed,
         alpha_filter: AlphaFilterMode::Best,
         sharp_yuv: false,
+        smooth_segments: false,
         exact: true,
         jpeg_like: false,
         partition_limit: 0,
@@ -236,6 +246,17 @@ impl LossyTuning {
     #[must_use]
     pub const fn with_sharp_yuv(mut self, sharp_yuv: bool) -> Self {
         self.sharp_yuv = sharp_yuv;
+        self
+    }
+
+    /// Set the segment-map smoothing flag. `false` (the default) keeps the raw k-means
+    /// per-macroblock segment map and byte-identical output; `true` applies a 3×3
+    /// majority-vote smoothing pass (libwebp `SmoothSegmentMap`) that cleans isolated
+    /// segment assignments before the ids are emitted. Only bites on the effort tiers
+    /// that segment (`Full`/`Best`) and only when the content forms `>= 2` segments.
+    #[must_use]
+    pub const fn with_smooth_segments(mut self, smooth_segments: bool) -> Self {
+        self.smooth_segments = smooth_segments;
         self
     }
 
@@ -334,6 +355,12 @@ impl LossyTuning {
         self.sharp_yuv
     }
 
+    /// The segment-map smoothing flag; `false` keeps the raw k-means map.
+    #[must_use]
+    pub const fn smooth_segments(self) -> bool {
+        self.smooth_segments
+    }
+
     /// The alpha-plane quality (`0..=100`); `100` keeps alpha lossless.
     #[must_use]
     pub const fn alpha_q(self) -> u8 {
@@ -406,6 +433,7 @@ mod tests {
         assert_eq!(t.alpha_filter(), AlphaFilterMode::Best);
         // Neutral RD-knob defaults leave every output byte unchanged.
         assert!(!t.sharp_yuv());
+        assert!(!t.smooth_segments());
         assert!(t.exact(), "exact preserves hidden RGB by default");
         assert_eq!(t.pass(), 1);
         assert!(!t.jpeg_like());
@@ -464,11 +492,13 @@ mod tests {
     fn rd_and_placeholder_setters_validate_and_round_trip() {
         let t = LossyTuning::new()
             .with_sharp_yuv(true)
+            .with_smooth_segments(true)
             .with_exact(false)
             .with_pass(50)
             .with_jpeg_like(true)
             .with_partition_limit(250);
         assert!(t.sharp_yuv());
+        assert!(t.smooth_segments());
         assert!(!t.exact());
         assert_eq!(t.pass(), 10, "pass clamps to 10");
         assert!(t.jpeg_like());
