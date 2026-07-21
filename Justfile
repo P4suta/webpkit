@@ -29,15 +29,13 @@ default:
 
 # One-shot setup for a fresh clone. Idempotent.
 bootstrap:
-    @echo "==> 1/4 rustup components + msvc target"
+    @echo "==> 1/3 rustup components + msvc target"
     rustup component add rustfmt clippy rust-src
     rustup target add x86_64-pc-windows-msvc
-    @echo "==> 2/4 mise install (see mise.toml)"
+    @echo "==> 2/3 mise install (see mise.toml)"
     mise install
-    @echo "==> 3/4 lefthook install (git hooks)"
+    @echo "==> 3/3 lefthook install (git hooks)"
     mise exec -- lefthook install
-    @echo "==> 4/4 bun install (commitlint, commit-msg hook)"
-    mise exec -- bun install
     @mise exec -- just doctor
     @echo "bootstrap done. Try: just build / just test / just lint / just conformance"
 
@@ -61,7 +59,7 @@ doctor-native:
         check actionlint    "actionlint -version"; \
         check lefthook      "lefthook version"; \
         check just          "just --version"; \
-        check bun           "bun --version"; \
+        check committed     "committed --version"; \
         check cwebp         "cwebp -version"; \
         check dwebp         "dwebp -version"; \
         soft  cargo-fuzz    "cargo fuzz --version"; \
@@ -312,7 +310,6 @@ fuzz-smoke:
 
 hooks:
     lefthook install
-    bun install
 
 # ----- lefthook delegated recipes (do not run directly) -----
 
@@ -336,6 +333,3 @@ _hook-typos-fix +files:
 
 _hook-actionlint +files:
     actionlint {{files}}
-
-_hook-commitlint msg_path:
-    bunx commitlint --edit {{msg_path}}

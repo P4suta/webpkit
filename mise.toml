@@ -2,9 +2,6 @@
 # owned by rust-toolchain.toml. Install with `mise install`, then `just doctor`.
 
 [tools]
-# JS runtime for commitlint (commit-msg hook).
-bun = "latest"
-
 # Task runner, git hooks, and the format/lint tools the recipes shell out to.
 just = "latest"
 lefthook = "latest"
@@ -25,6 +22,10 @@ cargo-binstall = "latest"
 "cargo:cargo-fuzz" = "latest"
 "cargo:cargo-insta" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
+# Conventional-Commits linter for the lefthook commit-msg hook — the local guard
+# that keeps release tooling fed with well-formed commit messages. cargo backend,
+# binstalled.
+"cargo:committed" = "1"
 # Pinned (not `latest`): cargo-mutants gates PRs, and its generated mutants /
 # output can shift across releases, so reproducibility beats auto-updates. Bump
 # explicitly (like yamlfmt / libwebp), not via Dependabot.

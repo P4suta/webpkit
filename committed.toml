@@ -1,0 +1,31 @@
+# Conventional Commits enforcement for the lefthook commit-msg hook. Keeps commit
+# messages well-formed so the release tooling's version + CHANGELOG derivation
+# stays reliable; this is the earlier, local signal before push / CI.
+#
+# Only the conventional style is enforced; committed skips fixup!/merge commits by
+# default, so `git rebase --autosquash` and the occasional merge still work.
+style = "conventional"
+# The repo uses lowercase subjects (`feat(x): add y`), matching the existing git
+# history. committed defaults to requiring capitalization, so turn that off to keep
+# the local hook consistent with the CI conventional-commits gate.
+subject_capitalized = false
+# Enforce the conventional *format*, not arbitrary length: the repo's commits come
+# from squash-merged PR titles, so disable committed's 50/72 defaults.
+subject_length = 0
+line_length = 0
+# Match the types CONTRIBUTING.md documents. committed's default set omits
+# ci/build/deps/revert, which the repo uses.
+allowed_types = [
+  "feat",
+  "fix",
+  "perf",
+  "docs",
+  "refactor",
+  "test",
+  "chore",
+  "ci",
+  "build",
+  "deps",
+  "style",
+  "revert",
+]

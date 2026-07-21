@@ -13,7 +13,7 @@ owned by `rust-toolchain.toml`.
 
 ```
 mise install        # install pinned tools (incl. cwebp/dwebp via the http backend)
-just bootstrap      # one-shot setup: rustup components, hooks, commitlint deps
+just bootstrap      # one-shot setup: rustup components, git hooks
 just doctor         # verify the environment matches the pins
 ```
 
@@ -67,7 +67,7 @@ webpkit follows an external-verification discipline:
 
 - [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` / `fix:` /
   `perf:` / `docs:` / `refactor:` / `test:` / `chore:` / `ci:` / `build:`).
-  commitlint (`commitlint.config.mjs`) lints every commit in a PR.
+  committed (`committed.toml`) enforces this locally on the `commit-msg` hook.
 - **Squash-merge only.**
 - Releases are cut by [release-plz](https://release-plz.dev): it opens a release PR
   that bumps the version + CHANGELOG from conventional commits, then on merge
