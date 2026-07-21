@@ -16,16 +16,16 @@ line_length = 0
 # Match the types CONTRIBUTING.md documents. committed's default set omits
 # ci/build/deps/revert, which the repo uses.
 allowed_types = [
-  "feat",
-  "fix",
-  "perf",
-  "docs",
-  "refactor",
-  "test",
-  "chore",
-  "ci",
-  "build",
-  "deps",
-  "style",
-  "revert",
+    "feat",
+    "fix",
+    "perf",
+    "docs",
+    "refactor",
+    "test",
+    "chore",
+    "ci",
+    "build",
+    "deps",
+    "style",
+    "revert",
 ]

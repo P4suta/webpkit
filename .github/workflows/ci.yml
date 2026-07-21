@@ -58,8 +58,8 @@ jobs:
         run: cargo build --workspace --all-targets --locked
       - name: cargo nextest
         run: cargo nextest run --workspace --locked
-      # nextest does not run doctests; run them as a separate step.
       - name: cargo test --doc
+        # nextest does not run doctests; run them as a separate step.
         run: cargo test --doc --workspace --locked
 
   fmt:
@@ -123,8 +123,8 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      # Explicit `cargo run -p xtask` (not the `cargo xtask` alias) so `--locked` applies.
       - name: corpus sweep (byte-golden drift gate)
+        # Explicit `cargo run -p xtask` (not the `cargo xtask` alias) so `--locked` applies.
         run: cargo run --locked --quiet -p xtask -- corpus-sweep
 
   metrics:
@@ -186,10 +186,10 @@ jobs:
           curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
             | tar xz -C /tmp actionlint
           /tmp/actionlint -color
-      # Fail closed if a job is not in `ci-required.needs`: the ruleset only gates
       # the `ci-required` context, so a job missing from `needs` would run but never
       # block a merge. This proves `needs` covers every job (minus ci-required).
       - name: needs sync (ci-required.needs == job set)
+        # Fail closed if a job is not in `ci-required.needs`: the ruleset only gates
         run: |
           set -euo pipefail
           f=.github/workflows/ci.yml
@@ -212,11 +212,11 @@ jobs:
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
         with:
           tool: cargo-deny
-      # Gate the consumer-facing dependency graph. The dev-only `oracle` feature
       # (libwebp-sys, a C reference never shipped) carries licenses outside the
       # published crate's supply chain, so an `--all-features` audit is out of scope.
       - run: cargo deny check advisories bans licenses sources
 
+        # Gate the consumer-facing dependency graph. The dev-only `oracle` feature
   conventional-commits:
     name: conventional commits
     # Validate the PR title (the squash-merge commit subject) as Conventional
@@ -261,9 +261,9 @@ jobs:
       - name: install the declared MSRV toolchain
         run: rustup toolchain install 1.88 --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      # Consumer surface of the published crates only. Not `--all-targets`: dev/
       # tooling deps (e.g. cargo-platform) need a newer rustc and no consumer builds them.
       - name: cargo check on MSRV (consumer surface)
+        # Consumer surface of the published crates only. Not `--all-targets`: dev/
         run: |
           cargo +1.88 check -p webpkit -p webpkit-cli --locked
           cargo +1.88 check -p webpkit --features rayon,image --locked
@@ -317,25 +317,25 @@ jobs:
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
         with:
           tool: cargo-llvm-cov,cargo-nextest
-      # Collect coverage once (whole workspace), then apply a per-crate floor from
       # the same profile data. `webpkit` (the product library) and `webpkit-cli`
       # (the binaries) each get their own floor; the tooling / test-harness crates
       # are excluded so their intentionally-low coverage cannot mask a regression.
       - name: collect coverage
+        # Collect coverage once (whole workspace), then apply a per-crate floor from
         run: cargo llvm-cov nextest --workspace --locked --no-report
-      # Product library: `webpkit-cli` is excluded here — it carries its own floor
       # below. (The `webpkit/src`-only exclusion in the CLI step conversely drops
       # the library, so the two floors partition the published crates.)
       - name: line coverage floor (webpkit)
+        # Product library: `webpkit-cli` is excluded here — it carries its own floor
         run: >
           cargo llvm-cov report
           --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-samples|webpkit-lossless-fuzz|webpkit-cli|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
           --fail-under-lines 90
-      # CLI crate: a regression ratchet, deliberately set below the current measured
       # line coverage so day-to-day noise never flakes it. The measured baseline was
       # taken on Windows; the platform-specific paths differ on this Linux runner, so
       # the floor starts conservative — raise it once the CI baseline is confirmed.
       - name: line coverage floor (webpkit-cli)
+        # CLI crate: a regression ratchet, deliberately set below the current measured
         run: >
           cargo llvm-cov report
           --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-samples|webpkit-lossless-fuzz|webpkit[/\\]src|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
@@ -391,26 +391,26 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      # `oracle` links libwebp-sys, which builds the vendored libwebp C source
       # with the runner's C compiler. The in-process differential fails closed on
       # any byte divergence from the reference implementation.
       - name: in-process differential vs libwebp
+        # `oracle` links libwebp-sys, which builds the vendored libwebp C source
         run: cargo test -p webpkit --features oracle --test oracle_lossless --locked
-      # The lossy decoder is likewise validated bit-exact against libwebp: Level A
       # (our reconstructed YUV planes vs WebPDecodeYUV), Level B (our RGBA vs
       # WebPDecodeRGBA) across a content/size/quality matrix + an advanced-encoder
       # (segmentation / normal-filter) matrix + a randomized proptest.
       - name: lossy decoder differential vs libwebp
+        # The lossy decoder is likewise validated bit-exact against libwebp: Level A
         run: cargo test -p webpkit --features oracle --test oracle_lossy --locked
-      # The umbrella decode path is validated on transparent-lossy images: our
       # composited RGBA (VP8 + ALPH) is byte-exact vs WebPDecodeRGBA across a
       # {raw, lossless} x alpha-filter x size matrix.
       - name: umbrella ALPH differential vs libwebp
+        # The umbrella decode path is validated on transparent-lossy images: our
         run: cargo test -p webpkit --features oracle --test oracle --locked
-      # The core geometry rescaler is byte-exact vs WebPPictureRescale's ARGB path
       # across an up/down/non-integer/aspect size matrix (the resize `cwebp -resize`
       # and `dwebp -scale` run), including the alpha black-matting.
       - name: geometry rescaler differential vs libwebp
+        # The core geometry rescaler is byte-exact vs WebPPictureRescale's ARGB path
         run: cargo test -p webpkit --features oracle --test oracle_rescale --locked
 
   rayon:
@@ -420,13 +420,12 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      # The `rayon` feature evaluates the Method::Best candidate families across a
       # work-stealing pool. The committed byte-golden and the serial/parallel
       # agreement test both run here, proving the parallel evaluator is identical
       # to the serial one, byte-for-byte.
       - name: parallel Best test suite
+        # The `rayon` feature evaluates the Method::Best candidate families across a
         run: cargo test -p webpkit --features rayon --locked
-      # The parallel==serial byte-for-byte equivalence is the product-path guarantee
       # the whole feature rests on, so name the three differential tests explicitly as
       # their own gate (the suite step above is the backstop): the lossless Best
       # evaluator, the lossy macroblock wavefront planner, and the YUV row emitter each
@@ -435,6 +434,7 @@ jobs:
       # caught by two independent nets.
       - name: rayon differential (parallel == serial, byte-for-byte)
         # The three names are libtest filters (their union), so they go after `--`;
+        # The parallel==serial byte-for-byte equivalence is the product-path guarantee
         # `cargo test` itself takes only one positional and rejects the rest.
         run: >
           cargo test -p webpkit --features rayon --locked --
@@ -449,11 +449,11 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      # The optional `image` feature adds `TryFrom` interop with the `image` crate.
       # It is off by default (the default build stays zero-dependency), so exercise
       # it explicitly: clippy the gated code under the same strict gate, then run its
       # conversion tests and the feature-gated doctest.
       - name: clippy (image feature)
+        # The optional `image` feature adds `TryFrom` interop with the `image` crate.
         run: cargo clippy -p webpkit --all-targets --features image --locked -- -D warnings
       - name: test (image feature)
         run: cargo test -p webpkit --features image --locked
