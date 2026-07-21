@@ -8,6 +8,11 @@ Thanks for contributing! A few reminders (see CONTRIBUTING.md for the full loop)
 
 Describe the change and the motivation. Link any related issue (`Closes #123`).
 
+## Linear
+
+Closes DEV-___
+<!-- Links this PR to its Linear issue; requires the Linear GitHub integration. -->
+
 ## Checklist
 
 - [ ] `just lint` passes (fmt, clippy `-D warnings`, cargo-deny, typos, actionlint)
