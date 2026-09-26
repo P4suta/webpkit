@@ -587,6 +587,6 @@ jobs:
       - name: Fail unless every needed job succeeded or was skipped
         env:
           RESULTS: ${{ toJSON(needs.*.result) }}
-        run: |
+        run: |-
           echo "${RESULTS}"
           jq -e 'all(.[]; IN("success", "skipped"))' <<< "${RESULTS}"
