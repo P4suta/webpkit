@@ -99,7 +99,7 @@ fn resize_matches_libwebp_byte_for_byte() {
     let mut exercised_alpha = false;
     for (sw, sh, dw, dh) in cases {
         let rgba = synthetic(sw, sh);
-        exercised_alpha |= rgba.chunks_exact(4).any(|p| p[3] != 0xff);
+        exercised_alpha |= rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 0xff);
 
         let img = Image::new(
             Dimensions::new(sw, sh).unwrap(),

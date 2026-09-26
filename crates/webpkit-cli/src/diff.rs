@@ -89,7 +89,7 @@ fn load_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>), CliError> {
 pub(crate) fn psnr_rgb(a: &[u8], b: &[u8]) -> Option<f64> {
     let mut se = 0.0f64;
     let mut n = 0.0f64;
-    for (pa, pb) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+    for (pa, pb) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0) {
         for c in 0..3 {
             let d = f64::from(pa[c]) - f64::from(pb[c]);
             se = d.mul_add(d, se);

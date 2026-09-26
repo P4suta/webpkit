@@ -445,7 +445,7 @@ mod tests {
     /// Fill every cell with a value that depends only on its row (a horizontal
     /// stripe pattern → a step in the *vertical* direction for top-edge KATs).
     fn fill_by_row(plane: &mut [u8], f: impl Fn(usize) -> u8) {
-        for (r, row) in plane.chunks_exact_mut(S).enumerate() {
+        for (r, row) in plane.as_chunks_mut::<S>().0.iter_mut().enumerate() {
             row.fill(f(r));
         }
     }
@@ -455,7 +455,7 @@ mod tests {
     /// vertical-edge KATs; also stays vertically flat so horizontal edges are
     /// no-ops).
     fn fill_by_col(plane: &mut [u8], f: impl Fn(usize) -> u8) {
-        for row in plane.chunks_exact_mut(S) {
+        for row in plane.as_chunks_mut::<S>().0.iter_mut() {
             for (c, px) in row.iter_mut().enumerate() {
                 *px = f(c);
             }

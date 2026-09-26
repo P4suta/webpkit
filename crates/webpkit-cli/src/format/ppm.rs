@@ -29,7 +29,7 @@ pub(crate) fn write_ppm(image: &Image) -> Vec<u8> {
     let rgba = to_rgba8(image);
     let mut out = format!("P6\n{} {}\n255\n", image.width(), image.height()).into_bytes();
     out.reserve(rgba.len() / 4 * 3);
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         out.extend_from_slice(&px[..3]);
     }
     out

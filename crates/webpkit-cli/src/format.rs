@@ -283,7 +283,7 @@ pub(crate) fn to_rgba8(image: &Image) -> Vec<u8> {
 /// Reorder 4-byte pixels by picking source indices `order` into RGBA slots.
 fn reorder(src: &[u8], order: [usize; 4]) -> Vec<u8> {
     let mut out = Vec::with_capacity(src.len());
-    for px in src.chunks_exact(4) {
+    for px in src.as_chunks::<4>().0 {
         out.extend_from_slice(&[px[order[0]], px[order[1]], px[order[2]], px[order[3]]]);
     }
     out

@@ -414,6 +414,13 @@ fn length_at(
 /// Length of the exact match of the pixels at `dst` against those at `src`
 /// (`src < dst`), capped at `max_len`. Overlapping matches (`dst - src < len`)
 /// extend naturally against the known source, reproducing run-length fills.
+#[cfg_attr(
+    not(feature = "work-count"),
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "work-count instrumentation calls an atomic counter and cannot run in const context"
+    )
+)]
 fn match_length(pixels: &[u32], src: usize, dst: usize, max_len: usize) -> usize {
     let mut len = 0usize;
     while len < max_len && pixels[src + len] == pixels[dst + len] {

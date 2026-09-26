@@ -515,7 +515,7 @@ pub(crate) fn crop(image: &Image, rect: Rect) -> Result<Image> {
     }
 
     let off = image.layout().alpha_byte_offset();
-    let has_alpha = out.chunks_exact(4).any(|px| px[off] != 0xff);
+    let has_alpha = out.as_chunks::<4>().0.iter().any(|px| px[off] != 0xff);
     Ok(Image::from_parts(
         out_dims,
         image.layout(),
@@ -563,7 +563,9 @@ pub(crate) fn resize(image: &Image, target: Dimensions) -> Image {
     );
 
     let mut out_argb: Vec<u32> = dst_bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     for pixel in &mut out_argb {
@@ -635,7 +637,7 @@ mod tests {
         // Opaque pixels skip the alpha matting, so a 1:1 resize is the identity.
         let src: Vec<u8> = (0..16u8).map(|v| v | 0x03).collect();
         let mut pixels = Vec::new();
-        for c in src.chunks_exact(4) {
+        for c in src.as_chunks::<4>().0 {
             pixels.extend_from_slice(&[c[0], c[1], c[2], 0xff]);
         }
         let img = opaque(2, 2, &pixels);
@@ -662,7 +664,13 @@ mod tests {
         let img = opaque(4, 4, &pixels);
         let out = crop(&img, Rect::new(1, 1, 2, 2)).unwrap();
         assert_eq!((out.width(), out.height()), (2, 2));
-        let firsts: Vec<u8> = out.as_bytes().chunks_exact(4).map(|c| c[0]).collect();
+        let firsts: Vec<u8> = out
+            .as_bytes()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| c[0])
+            .collect();
         assert_eq!(firsts, vec![5, 6, 9, 10]);
     }
 

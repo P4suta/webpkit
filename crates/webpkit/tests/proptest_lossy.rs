@@ -15,7 +15,7 @@ use webpkit_lossy_proptest::{arbitrary_bytes, arbitrary_lossy_rgb, psnr_rgb};
 /// Expand interleaved RGB (`w*h*3`) to opaque RGBA for the encoder.
 fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgb.len() / 3 * 4);
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0 {
         out.extend_from_slice(&[px[0], px[1], px[2], 0xff]);
     }
     out

@@ -43,7 +43,7 @@ impl TryFrom<&image::DynamicImage> for Image {
     fn try_from(src: &image::DynamicImage) -> Result<Self> {
         let dims = Dimensions::new(src.width(), src.height())?;
         let rgba = src.to_rgba8().into_raw();
-        let has_alpha = rgba.chunks_exact(4).any(|px| px[3] != 0xff);
+        let has_alpha = rgba.as_chunks::<4>().0.iter().any(|px| px[3] != 0xff);
         Ok(Self::from_parts(
             dims,
             PixelLayout::Rgba8,

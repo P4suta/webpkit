@@ -1553,7 +1553,14 @@ mod tests {
         assert_eq!(&file[12..16], b"VP8 ", "lossy chunk fourcc");
         let decoded = decode(&file).unwrap();
         assert_eq!(decoded.dimensions(), dims);
-        assert!(decoded.as_bytes().chunks_exact(4).all(|p| p[3] == 0xff));
+        assert!(
+            decoded
+                .as_bytes()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|p| p[3] == 0xff)
+        );
     }
 
     #[test]
@@ -1603,7 +1610,13 @@ mod tests {
         assert_eq!(decoded.dimensions(), dims);
         assert!(decoded.has_alpha());
         // The alpha lane (byte 3 of every Rgba8 pixel) is byte-exact vs the source.
-        let decoded_alpha: Vec<u8> = decoded.as_bytes().chunks_exact(4).map(|p| p[3]).collect();
+        let decoded_alpha: Vec<u8> = decoded
+            .as_bytes()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| p[3])
+            .collect();
         assert_eq!(decoded_alpha, source_alpha, "alpha must be lossless");
     }
 
@@ -1630,7 +1643,12 @@ mod tests {
             let decoded = decode(&file).unwrap();
             assert_eq!(decoded.dimensions(), dims, "{effort:?}: dims");
             assert!(
-                decoded.as_bytes().chunks_exact(4).all(|p| p[3] == 0xff),
+                decoded
+                    .as_bytes()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|p| p[3] == 0xff),
                 "{effort:?}: not fully opaque"
             );
         }
@@ -1749,7 +1767,14 @@ mod tests {
         assert_eq!(image.dimensions(), Dimensions::new(16, 16).unwrap());
         assert!(image.has_alpha());
         // Default Rgba8 layout: the alpha lane is byte 3 of every pixel.
-        assert!(image.as_bytes().chunks_exact(4).all(|px| px[3] == 0x80));
+        assert!(
+            image
+                .as_bytes()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|px| px[3] == 0x80)
+        );
     }
 
     #[test]

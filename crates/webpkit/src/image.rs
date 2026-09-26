@@ -166,7 +166,9 @@ pub fn pack_pixels(layout: PixelLayout, argb: &[u32]) -> Vec<u8> {
 #[must_use]
 pub fn unpack_pixels(layout: PixelLayout, bytes: &[u8]) -> Vec<u32> {
     bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| layout.unpack([c[0], c[1], c[2], c[3]]))
         .collect()
 }
@@ -324,7 +326,7 @@ impl Image {
             return Err(Error::PixelBufferMismatch);
         }
         let off = layout.alpha_byte_offset();
-        let has_alpha = pixels.chunks_exact(4).any(|px| px[off] != 0xff);
+        let has_alpha = pixels.as_chunks::<4>().0.iter().any(|px| px[off] != 0xff);
         Ok(Self {
             dims,
             layout,
@@ -432,7 +434,7 @@ impl Image {
             return Err(Error::PixelBufferMismatch);
         }
         let off = self.layout.alpha_byte_offset();
-        for (px, &a) in self.pixels.chunks_exact_mut(4).zip(alpha) {
+        for (px, &a) in self.pixels.as_chunks_mut::<4>().0.iter_mut().zip(alpha) {
             px[off] = a;
         }
         self.has_alpha = alpha.iter().any(|&a| a != 0xff);
@@ -817,7 +819,7 @@ mod tests {
             // Four fully-opaque pixels with distinct non-alpha channels.
             let bases = [10u8, 14, 18, 22];
             let mut pixels = vec![0u8; 16];
-            for (px, &base) in pixels.chunks_exact_mut(4).zip(bases.iter()) {
+            for (px, &base) in pixels.as_chunks_mut::<4>().0.iter_mut().zip(bases.iter()) {
                 px[0] = base;
                 px[1] = base + 1;
                 px[2] = base + 2;
@@ -830,8 +832,10 @@ mod tests {
             img.apply_alpha_plane(&plane).unwrap();
             for (i, (px, orig)) in img
                 .as_bytes()
-                .chunks_exact(4)
-                .zip(original.chunks_exact(4))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(original.as_chunks::<4>().0.iter())
                 .enumerate()
             {
                 assert_eq!(px[off], plane[i], "alpha lane at offset {off}");
@@ -854,7 +858,7 @@ mod tests {
             img.apply_alpha_plane(&[0xffu8; 4]).unwrap();
             assert!(!img.has_alpha());
             let off = layout.alpha_byte_offset();
-            for px in img.as_bytes().chunks_exact(4) {
+            for px in img.as_bytes().as_chunks::<4>().0 {
                 assert_eq!(px[off], 0xff);
             }
         }
