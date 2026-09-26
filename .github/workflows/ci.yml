@@ -4,8 +4,8 @@
 #   - Pure-Rust, cross-platform codec. `build-test` and `conformance` run on the
 #     Linux/Windows/macOS matrix; platform-independent gates (fmt, clippy, doc,
 #     deny, coverage, fuzz, oracle, msrv) run on ubuntu-latest only.
-#   - Actions SHA-pinned; Dependabot bumps weekly. New toolchains are installed
-#     via `rustup` (no unpinned action).
+#   - Actions are SHA-pinned and Renovate refreshes them under the shared policy.
+#     New toolchains are installed via `rustup` without an unpinned action.
 #   - `Swatinem/rust-cache` over raw `actions/cache` for cargo state.
 #   - A single `ci-required` aggregation gate is the one status context branch
 #     protection references, so the ruleset never desyncs when jobs are added or
@@ -35,8 +35,8 @@ env:
   RUST_BACKTRACE: short
   # Pinned nightly for the fuzz job so an upstream nightly regression cannot block
   # every merge. This exact dated channel was verified to exist and build the fuzz
-  # targets. Bump it deliberately (Dependabot does not track rustup channels; a
-  # scheduled bump PR or a periodic manual review is the intended refresh path).
+  # targets.
+  # Bump it deliberately because Renovate does not manage this bare `rustup` channel; a scheduled pull request or periodic manual review is the intended refresh path.
   NIGHTLY_TOOLCHAIN: nightly-2026-07-01
 
 jobs:
