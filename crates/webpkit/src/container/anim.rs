@@ -33,7 +33,7 @@ impl AnimChunk {
     /// # Errors
     ///
     /// [`Error::InvalidContainer`] if the payload length is not exactly 6.
-    pub fn parse(data: &[u8]) -> Result<Self> {
+    pub const fn parse(data: &[u8]) -> Result<Self> {
         if data.len() != ANIM_PAYLOAD_LEN {
             return Err(Error::InvalidContainer);
         }

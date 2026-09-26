@@ -800,7 +800,12 @@ mod anim_tests {
             let dec = frame.image().as_bytes();
             let mut total = 0u64;
             let mut count = 0u64;
-            for (s, d) in src.chunks_exact(4).zip(dec.chunks_exact(4)) {
+            for (s, d) in src
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(dec.as_chunks::<4>().0.iter())
+            {
                 for k in 0..3 {
                     total += u64::from(s[k].abs_diff(d[k]));
                     count += 1;
@@ -836,7 +841,7 @@ mod anim_tests {
         let frames = decode_frames(&file).unwrap();
         let decoded: Vec<_> = frames.map(Result::unwrap).collect();
         let dec = decoded[0].image().as_bytes();
-        let recovered: Vec<u8> = dec.chunks_exact(4).map(|px| px[3]).collect();
+        let recovered: Vec<u8> = dec.as_chunks::<4>().0.iter().map(|px| px[3]).collect();
         let expected: Vec<u8> = argb
             .iter()
             .map(|&p| u8::try_from(p >> 24).unwrap())

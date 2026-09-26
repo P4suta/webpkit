@@ -356,7 +356,7 @@ mod tests {
                 let expected = (edge as usize) * (edge as usize) * 4;
                 assert_eq!(sample.rgba.len(), expected, "{} @ {edge}", content.name());
                 // Alpha (every 4th byte) is always 255.
-                for pixel in sample.rgba.chunks_exact(4) {
+                for pixel in sample.rgba.as_chunks::<4>().0 {
                     assert_eq!(pixel[3], 255, "{} @ {edge} alpha", content.name());
                 }
             }
