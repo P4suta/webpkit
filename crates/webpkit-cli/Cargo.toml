@@ -89,7 +89,7 @@ toml = { workspace = true }
 # `rayon` feature on: the CLI binaries evaluate the ~16 `Effort::Best` candidate
 # families across the rayon pool. Output stays byte-identical to the serial library
 # default; only Best encode wall-clock improves.
-webpkit = { path = "../webpkit", version = "0.1.0", features = ["rayon"] }
+webpkit = { path = "../webpkit", version = "0.2.0", features = ["rayon"] }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
