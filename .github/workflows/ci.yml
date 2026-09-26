@@ -186,14 +186,13 @@ jobs:
           curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
             | tar xz -C /tmp actionlint
           /tmp/actionlint -color
-      # the `ci-required` context, so a job missing from `needs` would run but never
-      # block a merge. This proves `needs` covers every job (minus ci-required).
+      # Fail closed if a job is not in `ci-required.needs`: the ruleset only gates the `ci-required` context, so a missing job would run but never block a merge.
+      # This proves `needs` covers every non-aggregate job.
       - name: needs sync (ci-required.needs == job set)
-        # Fail closed if a job is not in `ci-required.needs`: the ruleset only gates
         run: |
           set -euo pipefail
           f=.github/workflows/ci.yml
-          jobs=$(awk '/^jobs:/{inj=1;next} inj && /^[^ ]/{inj=0} inj && /^  [A-Za-z0-9_-]+:/{gsub(/[: ]/,"");print}' "$f" | grep -v '^ci-required$' | sort -u)
+          jobs=$(awk '/^jobs:/{inj=1;next} inj && /^[^ ]/{inj=0} inj && /^  [A-Za-z0-9_-]+:/{gsub(/[: ]/,"");print}' "$f" | grep -Ev '^(ci-required|required)$' | sort -u)
           needs=$(awk '/^  ci-required:/{inr=1} inr && /^    needs:/{inn=1;next} inn && /^      - /{print $2} inn && /^    [A-Za-z]/{inn=0}' "$f" | sort -u)
           if [ "$jobs" != "$needs" ]; then
             echo "::error::ci-required.needs is out of sync with the job set (< job missing from needs, > stale needs entry):"
