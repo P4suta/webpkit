@@ -26,9 +26,8 @@ cargo-binstall = "latest"
 # that keeps release tooling fed with well-formed commit messages. cargo backend,
 # binstalled.
 "cargo:committed" = "1"
-# Pinned (not `latest`): cargo-mutants gates PRs, and its generated mutants /
-# output can shift across releases, so reproducibility beats auto-updates. Bump
-# explicitly (like yamlfmt / libwebp), not via Dependabot.
+# Pinned (not `latest`): cargo-mutants gates PRs, and its generated mutants and output can shift across releases, so reproducibility beats an implicit floating version.
+# Review Renovate proposals for this pin deliberately against the mutation suite, as with yamlfmt and libwebp.
 "cargo:cargo-mutants" = "27.1.0"
 
 # libwebp's `cwebp` / `dwebp` — the conformance oracle used to generate and
