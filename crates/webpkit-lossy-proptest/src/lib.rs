@@ -35,7 +35,7 @@ const MAX_SIDE: u32 = 48;
 pub fn psnr_rgb(a: &[u8], b: &[u8]) -> f64 {
     let mut se = 0.0f64;
     let mut n = 0.0f64;
-    for (pa, pb) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+    for (pa, pb) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0) {
         for c in 0..3 {
             let d = f64::from(pa[c]) - f64::from(pb[c]);
             se = d.mul_add(d, se);
@@ -90,7 +90,7 @@ pub fn arbitrary_lossy_rgb() -> impl Strategy<Value = (u32, u32, Vec<u8>)> {
 /// is bit-deterministic across platforms.
 fn gradient_noise_mix(cols: u8, rows: u8, noise: &[u8]) -> Vec<u8> {
     let mut rgb = Vec::with_capacity(noise.len());
-    let mut pixels = noise.chunks_exact(3);
+    let mut pixels = noise.as_chunks::<3>().0.iter();
     for y in 0..rows {
         for x in 0..cols {
             // Coherent ramps: red across x, green across y, blue across both.

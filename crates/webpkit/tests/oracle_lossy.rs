@@ -693,7 +693,7 @@ proptest! {
 /// Expand interleaved RGB (`w*h*3`) to opaque RGBA (`w*h*4`) for our encoder.
 fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgb.len() / 3 * 4);
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0 {
         out.extend_from_slice(&[px[0], px[1], px[2], 0xff]);
     }
     out
@@ -703,7 +703,12 @@ fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
 fn psnr_rgba_vs_rgb(rgba: &[u8], rgb: &[u8]) -> f64 {
     let mut se = 0.0f64;
     let mut n = 0.0f64;
-    for (dec, src) in rgba.chunks_exact(4).zip(rgb.chunks_exact(3)) {
+    for (dec, src) in rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(rgb.as_chunks::<3>().0.iter())
+    {
         for c in 0..3 {
             let d = f64::from(dec[c]) - f64::from(src[c]);
             se = d.mul_add(d, se);
@@ -820,7 +825,7 @@ fn our_alpha_container_is_read_byte_exactly_by_libwebp() {
         // size and recovers the alpha lane exactly (alpha is lossless).
         let (rw, rh, dec_rgba) = libwebp_decode_rgba(&webp);
         assert_eq!((rw, rh), (w, h), "{w}x{h}: libwebp dims");
-        let dec_alpha: Vec<u8> = dec_rgba.chunks_exact(4).map(|p| p[3]).collect();
+        let dec_alpha: Vec<u8> = dec_rgba.as_chunks::<4>().0.iter().map(|p| p[3]).collect();
         assert_eq!(
             dec_alpha, source_alpha,
             "{w}x{h}: libwebp alpha not byte-exact"
@@ -1118,7 +1123,7 @@ fn encode_image_metadata_survives_libwebp_demux() {
     let (w, h) = (16u32, 16u32);
     let rgb = gradient_rgb(w, h);
     let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
-    for px in rgb.chunks_exact(3) {
+    for px in rgb.as_chunks::<3>().0 {
         rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
     }
     let dims = webpkit::lossy::Dimensions::new(w, h).unwrap();
@@ -1207,7 +1212,12 @@ fn rgb_to_chroma(r: f64, g: f64, b: f64) -> (f64, f64) {
 fn chroma_psnr_rgba_vs_rgb(rgba: &[u8], rgb: &[u8]) -> f64 {
     let mut se = 0.0f64;
     let mut n = 0.0f64;
-    for (dec, src) in rgba.chunks_exact(4).zip(rgb.chunks_exact(3)) {
+    for (dec, src) in rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(rgb.as_chunks::<3>().0.iter())
+    {
         let (dcb, dcr) = rgb_to_chroma(f64::from(dec[0]), f64::from(dec[1]), f64::from(dec[2]));
         let (scb, scr) = rgb_to_chroma(f64::from(src[0]), f64::from(src[1]), f64::from(src[2]));
         let db = dcb - scb;

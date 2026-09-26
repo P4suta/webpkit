@@ -211,7 +211,7 @@ fn incremental_decodes_lossy_still_like_one_shot() {
     // the one-shot `webpkit::decode` and libwebp's `WebPDecodeRGBA`.
     for &(w, h) in &[(32u32, 24u32), (17, 13), (5, 9)] {
         let mut rgba = synth_rgba(w, h, 2);
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             px[3] = 0xff; // fully opaque -> libwebp emits a bare VP8, no ALPH
         }
         let file = libwebp_encode_lossy_rgba(&rgba, w, h, 80.0, 0, 0);
@@ -243,7 +243,7 @@ fn incremental_decodes_lossy_still_like_one_shot() {
     // stream is set up rather than short-circuited), the umbrella must drain rows
     // that reassemble to the libwebp golden.
     let mut rgba = synth_rgba(48, 40, 2);
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         px[3] = 0xff;
     }
     let file = libwebp_encode_lossy_rgba(&rgba, 48, 40, 80.0, 0, 0);
@@ -452,7 +452,7 @@ fn webp_anim_composite(webp: &[u8]) -> (u32, u32, Vec<Vec<u8>>) {
 /// fully opaque.
 fn anim_frame(width: u32, height: u32, index: u32, opaque: bool) -> Vec<u8> {
     let mut frame = synth_rgba(width, height, index % 5);
-    for px in frame.chunks_exact_mut(4) {
+    for px in frame.as_chunks_mut::<4>().0 {
         px[0] = px[0].wrapping_add((index * 40) as u8);
         px[1] = px[1].wrapping_add((index * 17) as u8);
         px[2] = px[2].wrapping_add((index * 91) as u8);

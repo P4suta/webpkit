@@ -339,7 +339,7 @@ fn decode_yuv(bytes: &[u8], layout: YuvOut) -> Result<webpkit::YuvImage, CliErro
 /// alpha plane as grayscale — mirroring `dwebp -alpha`.
 fn alpha_as_gray(image: &Image) -> Result<Image, CliError> {
     let mut pixels = image.as_bytes().to_vec();
-    for px in pixels.chunks_exact_mut(4) {
+    for px in pixels.as_chunks_mut::<4>().0 {
         let a = px[3];
         px[0] = a;
         px[1] = a;

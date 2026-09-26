@@ -450,7 +450,7 @@ mod tests {
         assert_eq!(px.len(), 16 * 16 * 4);
 
         // Every pixel is opaque and gray (neutral chroma => R == G == B).
-        for (i, p) in px.chunks_exact(4).enumerate() {
+        for (i, p) in px.as_chunks::<4>().0.iter().enumerate() {
             assert_eq!(p[0], p[1], "pixel {i}: R != G");
             assert_eq!(p[1], p[2], "pixel {i}: G != B");
             assert_eq!(p[3], 0xff, "pixel {i}: alpha not opaque");
@@ -603,7 +603,7 @@ mod tests {
             r[0], r[2],
             "decoded frame must be colored for this test to bite"
         );
-        for (rp, bp) in r.chunks_exact(4).zip(b.chunks_exact(4)) {
+        for (rp, bp) in r.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0.iter()) {
             assert_eq!(
                 [bp[0], bp[1], bp[2], bp[3]],
                 [rp[2], rp[1], rp[0], rp[3]],

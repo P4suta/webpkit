@@ -713,7 +713,7 @@ fn explain_lossy_metrics(committed: &LossyMetricsLedger, fresh: &LossyMetricsLed
 fn psnr_rgb(a: &[u8], b: &[u8]) -> f64 {
     let mut se = 0.0f64;
     let mut n = 0.0f64;
-    for (pa, pb) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+    for (pa, pb) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0) {
         for c in 0..3 {
             let d = f64::from(pa[c]) - f64::from(pb[c]);
             se = d.mul_add(d, se);
@@ -738,7 +738,7 @@ fn psnr_rgb(a: &[u8], b: &[u8]) -> f64 {
 /// `--vs-libwebp` aid. `alpha` is ignored (the lossy codec drops it).
 fn sse_rgb(a: &[u8], b: &[u8]) -> u64 {
     let mut se = 0u64;
-    for (pa, pb) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+    for (pa, pb) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0) {
         for c in 0..3 {
             let d = (i64::from(pa[c]) - i64::from(pb[c])).unsigned_abs();
             se += d * d;
@@ -959,11 +959,11 @@ const GRAPHIC_MAX_COLORS: usize = 8192;
 /// transparency first, then distinct-color count. No filename is ever inspected,
 /// which is what lets the sweep aggregate a private corpus without naming it.
 fn classify_real(rgba: &[u8]) -> RealCategory {
-    if rgba.chunks_exact(4).any(|px| px[3] < 255) {
+    if rgba.as_chunks::<4>().0.iter().any(|px| px[3] < 255) {
         return RealCategory::Transparent;
     }
     let mut colors = std::collections::BTreeSet::new();
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         colors.insert([px[0], px[1], px[2]]);
         if colors.len() > GRAPHIC_MAX_COLORS {
             return RealCategory::Photo;
@@ -985,14 +985,14 @@ fn ssim_rgb(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
     // C1 = (0.01 L)^2, C2 = (0.03 L)^2.
     const C1: f64 = 6.5025;
     const C2: f64 = 58.5225;
-    let luma = |px: &[u8]| {
+    let luma = |px: &[u8; 4]| {
         0.299f64.mul_add(
             f64::from(px[0]),
             0.587f64.mul_add(f64::from(px[1]), 0.114 * f64::from(px[2])),
         )
     };
-    let ya: Vec<f64> = a.chunks_exact(4).map(&luma).collect();
-    let yb: Vec<f64> = b.chunks_exact(4).map(&luma).collect();
+    let ya: Vec<f64> = a.as_chunks::<4>().0.iter().map(&luma).collect();
+    let yb: Vec<f64> = b.as_chunks::<4>().0.iter().map(&luma).collect();
     if width < 8 || height < 8 || ya.len() < width * height || yb.len() < width * height {
         return 1.0;
     }

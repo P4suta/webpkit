@@ -557,7 +557,13 @@ mod tests {
         // the original — near-lossless is bounded-error, not arbitrary.
         let decoded = decode_rgba(&near).unwrap().1;
         let bound = near_lossless::error_bound(level);
-        for (src, dec) in sample.rgba.chunks_exact(4).zip(decoded.chunks_exact(4)) {
+        for (src, dec) in sample
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(decoded.as_chunks::<4>().0.iter())
+        {
             for k in 0..4 {
                 assert!(
                     u32::from(src[k].abs_diff(dec[k])) <= bound,

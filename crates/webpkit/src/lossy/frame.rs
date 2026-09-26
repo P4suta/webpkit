@@ -2663,7 +2663,7 @@ mod tests {
         // Deterministic high-frequency source so many macroblocks pick i4x4.
         let mut rgba = vec![0u8; w * h * 4];
         let mut s: u8 = 0x11;
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             s = s.wrapping_mul(37).wrapping_add(0x53);
             px[0] = s;
             px[1] = s.wrapping_add(40);
