@@ -59,7 +59,7 @@ pub(crate) const fn avg2(a: i32, b: i32) -> u8 {
 }
 
 /// Store `v` at block coordinate `(x, y)` — the C `DST(x, y) = dst[x + y*BPS]`.
-pub(crate) fn put(plane: &mut [u8], off: usize, stride: usize, x: usize, y: usize, v: u8) {
+pub(crate) const fn put(plane: &mut [u8], off: usize, stride: usize, x: usize, y: usize, v: u8) {
     plane[off + x + y * stride] = v;
 }
 

@@ -127,8 +127,8 @@ fn upsample_one_row(
         let far_r = load_uv(far_u[x], far_v[x]);
         let d_l = (near_l + 3 * near_r + 3 * far_l + far_r + 0x0008_0008) >> 3;
         let d_r = (3 * near_l + near_r + far_l + 3 * far_r + 0x0008_0008) >> 3;
-        emit_pixel(y_row[2 * x - 1], (d_l + near_l) >> 1, dst, 2 * x - 1);
-        emit_pixel(y_row[2 * x], (d_r + near_r) >> 1, dst, 2 * x);
+        emit_pixel(y_row[2 * x - 1], u32::midpoint(d_l, near_l), dst, 2 * x - 1);
+        emit_pixel(y_row[2 * x], u32::midpoint(d_r, near_r), dst, 2 * x);
         near_l = near_r;
         far_l = far_r;
     }
@@ -293,8 +293,8 @@ mod tests {
             height,
         );
         assert_eq!(out.len(), width * height * 4);
-        for (i, px) in out.chunks_exact(4).enumerate() {
-            assert_eq!(px, expected, "pixel {i} of {width}x{height}");
+        for (i, px) in out.as_chunks::<4>().0.iter().enumerate() {
+            assert_eq!(*px, expected, "pixel {i} of {width}x{height}");
         }
     }
 

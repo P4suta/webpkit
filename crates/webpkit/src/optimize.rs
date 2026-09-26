@@ -738,7 +738,7 @@ mod tests {
         let n = (w * h) as usize;
         let mut frames = Vec::new();
         let mut cur = vec![0u8; n * 4];
-        for px in cur.chunks_exact_mut(4) {
+        for px in cur.as_chunks_mut::<4>().0 {
             px[0] = (rng() & 0xff) as u8;
             px[1] = (rng() & 0xff) as u8;
             px[2] = (rng() & 0xff) as u8;
@@ -820,7 +820,7 @@ mod tests {
             let mut rng = || { state ^= state << 13; state ^= state >> 7; state ^= state << 17; state };
             let n = (w * h) as usize;
             let mut cur = vec![0u8; n * 4];
-            for px in cur.chunks_exact_mut(4) {
+            for px in cur.as_chunks_mut::<4>().0 {
                 px[0] = (rng() & 0xff) as u8;
                 px[1] = (rng() & 0xff) as u8;
                 px[2] = (rng() & 0xff) as u8;
@@ -847,7 +847,7 @@ mod tests {
         let canvas = Dimensions::new(8, 8).unwrap();
         let frame = {
             let mut v = vec![0u8; 8 * 8 * 4];
-            for (i, px) in v.chunks_exact_mut(4).enumerate() {
+            for (i, px) in v.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 px[0] = i as u8;
                 px[3] = 255;
             }
@@ -906,7 +906,7 @@ mod tests {
         let canvas = Dimensions::new(8, 8).unwrap();
         let mut frames = make_frames(0x1234, 8, 8, 4);
         for f in &mut frames {
-            for px in f.chunks_exact_mut(4) {
+            for px in f.as_chunks_mut::<4>().0 {
                 px[3] = 255;
             }
         }
@@ -967,7 +967,7 @@ mod tests {
         (0..count)
             .map(|_| {
                 let mut v = vec![0u8; n * 4];
-                for px in v.chunks_exact_mut(4) {
+                for px in v.as_chunks_mut::<4>().0 {
                     px[0] = (rng() & 0xff) as u8;
                     px[1] = (rng() & 0xff) as u8;
                     px[2] = (rng() & 0xff) as u8;
@@ -991,7 +991,7 @@ mod tests {
         };
         let n = (w * h) as usize;
         let mut cur = vec![0u8; n * 4];
-        for px in cur.chunks_exact_mut(4) {
+        for px in cur.as_chunks_mut::<4>().0 {
             px[0] = (rng() & 0xff) as u8;
             px[1] = (rng() & 0xff) as u8;
             px[2] = (rng() & 0xff) as u8;

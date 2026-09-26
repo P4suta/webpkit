@@ -46,7 +46,7 @@ const fn get_next_key(key: u32, len: u32) -> u32 {
 
 /// Strided fill: write `code` to `table[end - step]`, `table[end - 2*step]`, ...
 /// down to `table[0]`.
-fn replicate_value(table: &mut [HuffmanCode], step: usize, end: usize, code: HuffmanCode) {
+const fn replicate_value(table: &mut [HuffmanCode], step: usize, end: usize, code: HuffmanCode) {
     let mut e = end;
     loop {
         e -= step;
@@ -58,7 +58,7 @@ fn replicate_value(table: &mut [HuffmanCode], step: usize, end: usize, code: Huf
 }
 
 /// Compute the index width of the next second-level table for length `len`.
-fn next_table_bit_size(count: &[i32], mut len: usize, root_bits: usize) -> usize {
+const fn next_table_bit_size(count: &[i32], mut len: usize, root_bits: usize) -> usize {
     let mut left = 1i32 << (len - root_bits);
     while len < MAX_ALLOWED_CODE_LENGTH {
         left -= count[len];

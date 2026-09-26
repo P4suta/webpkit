@@ -235,13 +235,17 @@ fn cross_color_inverse_row_benchmark(c: &mut Criterion) {
     let width = 512usize;
     let bytes = fill(width * 4, 0x9E37_79B9_7F4A_7C15);
     let row0: Vec<u32> = bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     // One tile code per tile column; codes vary so the unpack is not const-folded.
     let td_bytes = fill(width.div_ceil(1 << bits) * 4, 0x1357_9BDF_2468_ACE0);
     let tile_data: Vec<u32> = td_bytes
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
 

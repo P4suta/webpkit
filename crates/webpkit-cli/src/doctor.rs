@@ -88,7 +88,7 @@ fn drop_in(name: &str, our_dir: Option<&std::path::Path>) -> Check {
         return Check::new(
             Severity::Ok,
             format!("`{name}` drop-in"),
-            vec![format!("not on PATH; run it as `webp` instead")],
+            vec!["not on PATH; run it as `webp` instead".to_string()],
         );
     };
     let same_dir = our_dir.is_some_and(|dir| found.parent() == Some(dir));

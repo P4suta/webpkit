@@ -568,7 +568,7 @@ mod generate {
     /// fully opaque.
     fn anim_frame(width: u32, height: u32, index: u32, opaque: bool) -> Vec<u8> {
         let mut frame = synth_rgba(width, height, index % 5);
-        for px in frame.chunks_exact_mut(4) {
+        for px in frame.as_chunks_mut::<4>().0 {
             px[0] = px[0].wrapping_add((index * 40) as u8);
             px[1] = px[1].wrapping_add((index * 17) as u8);
             px[2] = px[2].wrapping_add((index * 91) as u8);

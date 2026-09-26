@@ -756,7 +756,7 @@ fn parse_preset(text: &str) -> Result<Preset, CliError> {
 fn strip_alpha(image: &Image) -> Result<Image, CliError> {
     let off = image.layout().alpha_byte_offset();
     let mut pixels = image.as_bytes().to_vec();
-    for px in pixels.chunks_exact_mut(4) {
+    for px in pixels.as_chunks_mut::<4>().0 {
         px[off] = 0xff;
     }
     Ok(Image::new(image.dimensions(), image.layout(), pixels)?

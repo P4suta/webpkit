@@ -250,7 +250,7 @@ fn arbitrary_animation() -> impl Strategy<Value = (u32, u32, Vec<Vec<u8>>)> {
         })
         .prop_map(|(width, height, mut frames)| {
             for frame in &mut frames {
-                for px in frame.chunks_exact_mut(4) {
+                for px in frame.as_chunks_mut::<4>().0 {
                     px[3] = 255;
                 }
             }
@@ -291,7 +291,7 @@ fn arbitrary_subrect_animation() -> impl Strategy<Value = (u32, u32, Vec<SubRect
                 proptest::collection::vec(any::<u8>(), len..=len),
             )
                 .prop_map(move |(xh, yh, overwrite, dispose_bg, mut rgba)| {
-                    for px in rgba.chunks_exact_mut(4) {
+                    for px in rgba.as_chunks_mut::<4>().0 {
                         px[3] = match px[3] % 3 {
                             0 => 0,
                             1 => 128,
@@ -332,7 +332,7 @@ fn arbitrary_image() -> impl Strategy<Value = (u32, u32, Vec<u8>)> {
 /// comparison isolates *our* decoder rather than libwebp's cleanup.
 fn arbitrary_opaque_image() -> impl Strategy<Value = (u32, u32, Vec<u8>)> {
     arbitrary_image().prop_map(|(width, height, mut rgba)| {
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             px[3] = 255;
         }
         (width, height, rgba)
