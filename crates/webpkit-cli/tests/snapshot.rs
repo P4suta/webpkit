@@ -99,6 +99,6 @@ mod tests {
     #[test]
     fn a_leaf_command_has_no_subcommands() {
         let help = "Usage: webp encode [OPTIONS]\n\nOptions:\n  -h, --help  Print help\n";
-        assert!(subcommands_of(help).is_empty());
+        assert_eq!(subcommands_of(help), Vec::<String>::new());
     }
 }

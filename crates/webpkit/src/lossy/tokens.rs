@@ -823,7 +823,7 @@ mod tests {
         count_mb_residuals(&mut stats, &mb, &mut ctx, 0);
 
         let mut recorded = 0u64;
-        for plane in stats.iter() {
+        for plane in &stats {
             for band in plane {
                 for c in band {
                     for node in c {

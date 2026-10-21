@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn discovery_tolerates_a_missing_cwd_or_config_home() {
-        assert!(discover(None, None).is_empty());
+        assert_eq!(discover(None, None), Vec::<std::path::PathBuf>::new());
         assert_eq!(
             discover(None, Some(Path::new("/cfg"))),
             vec![PathBuf::from("/cfg/webpkit/webp.toml")]
