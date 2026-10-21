@@ -13,10 +13,9 @@ formatter:
   max_line_length: 0
 
 include:
-  - "**/*.yml"
-  - "**/*.yaml"
+  - "."
 
 exclude:
-  - "target/**"
-  - "artifacts/**"
-  - "node_modules/**"
+  - "target"
+  - "artifacts"
+  - "node_modules"
