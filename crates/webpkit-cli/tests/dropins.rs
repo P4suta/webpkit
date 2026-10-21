@@ -11,6 +11,8 @@ use assert_cmd::Command;
 fn run(bin: &str, args: &[&str], stdin: Vec<u8>) -> Output {
     Command::cargo_bin(bin)
         .expect("binary builds")
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
         .args(args)
         .write_stdin(stdin)
         .output()
