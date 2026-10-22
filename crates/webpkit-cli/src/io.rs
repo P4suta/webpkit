@@ -199,7 +199,7 @@ pub(crate) fn expand_globs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, CliError>
         let mut matched = false;
         for entry in paths {
             let path = entry.map_err(|err| {
-                CliError::read_input(err.path().display().to_string(), err.into_error())
+                CliError::read_input(err.path().display().to_string(), err.into())
             })?;
             matched = true;
             out.push(path);
