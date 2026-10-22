@@ -3,29 +3,29 @@
 
 [tools]
 # Task runner, git hooks, and the format/lint tools the recipes shell out to.
-just = "latest"
-lefthook = "latest"
-taplo = "latest"
-biome = "latest"
+just = "1.59.0"
+lefthook = "2.2.2"
+taplo = "0.10.0"
+biome = "2.5.0"
 yamlfmt = "0.21.0"    # pinned for format stability
-actionlint = "latest"
-typos = "latest"
-jq = "latest"
+actionlint = "1.7.12"
+typos = "1.51.1"
+jq = "1.8.2"
 
 # Lets the cargo: backend fetch prebuilt binaries instead of compiling.
-cargo-binstall = "latest"
+cargo-binstall = "1.21.1"
 
 # Cargo subcommands via the cargo: backend (no mise registry short names exist).
-"cargo:cargo-nextest" = "latest"
-"cargo:cargo-deny" = "latest"
-"cargo:cargo-sort" = "latest"
-"cargo:cargo-fuzz" = "latest"
-"cargo:cargo-insta" = "latest"
-"cargo:cargo-llvm-cov" = "latest"
+"cargo:cargo-nextest" = "0.9.148"
+"cargo:cargo-deny" = "0.20.2"
+"cargo:cargo-sort" = "2.1.4"
+"cargo:cargo-fuzz" = "0.13.2"
+"cargo:cargo-insta" = "1.49.0"
+"cargo:cargo-llvm-cov" = "0.9.1"
 # Conventional-Commits linter for the lefthook commit-msg hook — the local guard
 # that keeps release tooling fed with well-formed commit messages. cargo backend,
 # binstalled.
-"cargo:committed" = "1"
+"cargo:committed" = "1.1.11"
 # Pinned (not `latest`): cargo-mutants gates PRs, and its generated mutants and output can shift across releases, so reproducibility beats an implicit floating version.
 # Review Renovate proposals for this pin deliberately against the mutation suite, as with yamlfmt and libwebp.
 "cargo:cargo-mutants" = "27.1.0"
