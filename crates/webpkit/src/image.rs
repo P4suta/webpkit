@@ -133,10 +133,10 @@ impl PixelLayout {
     /// Unpack this layout's four bytes into a native ARGB pixel (`0xAARRGGBB`).
     #[must_use]
     pub const fn unpack(self, px: [u8; 4]) -> u32 {
-        let (r, g, b, a) = match self {
-            Self::Rgba8 => (px[0], px[1], px[2], px[3]),
-            Self::Argb8 => (px[1], px[2], px[3], px[0]),
-            Self::Bgra8 => (px[2], px[1], px[0], px[3]),
+        let [r, g, b, a] = match self {
+            Self::Rgba8 => px,
+            Self::Argb8 => [px[1], px[2], px[3], px[0]],
+            Self::Bgra8 => [px[2], px[1], px[0], px[3]],
         };
         u32::from_le_bytes([b, g, r, a])
     }

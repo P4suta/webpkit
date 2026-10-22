@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn empty_alphabet_is_all_zero() {
         assert_eq!(build_code_lengths(&[0, 0, 0], 15), vec![0, 0, 0]);
-        assert!(build_code_lengths(&[], 15).is_empty());
+        assert_eq!(build_code_lengths(&[], 15), Vec::<u32>::new());
     }
 
     #[test]

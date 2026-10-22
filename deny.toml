@@ -6,6 +6,7 @@ no-default-features = false
 feature-depth = 1
 
 [advisories]
+db-path = "target/advisory-dbs"
 version = 2
 yanked = "deny"
 ignore = []

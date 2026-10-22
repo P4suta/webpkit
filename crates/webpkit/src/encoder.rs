@@ -1104,7 +1104,7 @@ mod anim_tests {
                 .unwrap()
         };
         let expected = make().finish();
-        assert!(!expected.is_empty());
+        assert_ne!(expected, Vec::<u8>::new());
         let mut buf = Vec::new();
         make().finish_to(&mut buf).unwrap();
         assert_eq!(buf, expected);

@@ -616,7 +616,7 @@ mod tests {
         assert_eq!(frame.num_parts, 2);
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0], &after[3..23]); // all 20 data bytes (clamped)
-        assert!(parts[1].is_empty());
+        assert_eq!(parts[1], []);
     }
 
     // The size table for N partitions needs `3 * (N - 1)` bytes; a shorter

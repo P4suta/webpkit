@@ -425,7 +425,7 @@ mod tests {
             assert_eq!(header.filter, filter);
             assert_eq!(header.compression, AlphaCompression::None);
             assert_eq!(header.preprocessing, 0);
-            assert!(data.is_empty());
+            assert_eq!(data, []);
         }
     }
 
@@ -481,7 +481,7 @@ mod tests {
                     assert_eq!(header.compression, compression);
                     assert_eq!(header.filter, filter);
                     assert_eq!(header.preprocessing, preprocessing);
-                    assert!(data.is_empty());
+                    assert_eq!(data, []);
                 }
             }
         }

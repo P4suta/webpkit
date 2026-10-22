@@ -197,7 +197,7 @@ mod tests {
             },
         ];
         for variant in variants {
-            assert!(!variant.to_string().is_empty());
+            assert_ne!(variant.to_string(), "");
         }
     }
 
@@ -258,6 +258,6 @@ mod tests {
     #[test]
     fn io_display_is_non_empty() {
         let err: Error = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof").into();
-        assert!(!err.to_string().is_empty());
+        assert_ne!(err.to_string(), "");
     }
 }

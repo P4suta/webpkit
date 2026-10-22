@@ -638,7 +638,7 @@ mod tests {
             &cfg,
         )
         .unwrap();
-        assert!(!buf.is_empty());
+        assert_ne!(buf, Vec::<u8>::new());
         assert_eq!(buf, direct);
     }
 

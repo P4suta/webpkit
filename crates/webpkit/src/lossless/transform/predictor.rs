@@ -841,7 +841,7 @@ mod tests {
         // sub_pixels(argb[0], ARGB_BLACK) = 0x1222_3344 (non-zero), diverging.
         let (residual, tile_data) = forward(&[0x1122_3344u32], 0, 1, 2);
         assert_eq!(residual, vec![0u32]);
-        assert!(tile_data.is_empty());
+        assert_eq!(tile_data, Vec::<u32>::new());
     }
 
     #[test]

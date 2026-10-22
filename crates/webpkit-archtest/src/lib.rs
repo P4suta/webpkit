@@ -285,7 +285,10 @@ mod tests {
     #[test]
     fn unknown_idents_are_not_edges() {
         let code = "use crate::lossy::{LossyConfig, Quality};";
-        assert!(module_edges(code, "crate", "lossy", &known(&["idct"])).is_empty());
+        assert_eq!(
+            module_edges(code, "crate", "lossy", &known(&["idct"])),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
