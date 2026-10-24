@@ -1,0 +1,20 @@
+name = "webpkit"
+summary = "WebP encoding and decoding in Rust"
+install = """
+git clone https://github.com/P4suta/webpkit.git
+cd webpkit
+cargo install --path crates/webpkit-cli --locked
+"""
+usage = "webp photo.png"
+usage_language = "sh"
+documentation_index = true
+copyright = "webpkit contributors"
+license = "MIT OR Apache-2.0"
+
+[preserved_licenses]
+mit_sha256 = "dc1532f8e5593d28deef853636b47a5bf6c9c44066602ad2ef41ff1adc5a7c05"
+apache_sha256 = "2c55f1d23807be314616226e9d5d027002e7b9d3820dfbaaef6d10e0a580becc"
+
+[[consent]]
+contributor = "Yasunobu"
+evidence = "https://github.com/P4suta/webpkit/commit/f6336bb407bda61d5fd11f28ff48cbb575827001"
