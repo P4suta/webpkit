@@ -50,6 +50,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
@@ -68,9 +70,15 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install cargo-sort from its locked registry source
+        env:
+          CARGO_SORT_VERSION: 2.1.4
+        run: cargo install --locked --version "$CARGO_SORT_VERSION" cargo-sort
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
-          tool: cargo-sort,taplo-cli
+          tool: taplo-cli
       - run: cargo fmt --all -- --check
       - run: cargo sort --workspace --check
       - run: taplo fmt --check
@@ -81,6 +89,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
@@ -90,6 +100,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - env:
           RUSTDOCFLAGS: -D warnings
@@ -109,6 +121,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: run conformance fixtures + drift-gate every committed ledger
         run: cargo test --locked -p webpkit-lossless-conformance -p webpkit-lossy-conformance -p webpkit-conformance
@@ -122,6 +136,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: corpus sweep (byte-golden drift gate)
         # Explicit `cargo run -p xtask` (not the `cargo xtask` alias) so `--locked` applies.
@@ -141,6 +157,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: install the metrics reproducibility toolchain
         run: rustup toolchain install 1.96 --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -161,6 +179,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: work-cost ledger drift gate (release)
         run: cargo run --locked --release --quiet --features work-count -p xtask -- work
@@ -171,6 +191,8 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
 
   actionlint:
@@ -179,6 +201,8 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: actionlint
         env:
           ACTIONLINT_VERSION: 1.7.12
@@ -207,7 +231,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          persist-credentials: false
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-deny
@@ -225,7 +250,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      pull-requests: read
+      pull-requests: read # The title check reads pull request metadata.
     steps:
       - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
@@ -237,6 +262,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: biome (JSON/JSONC)
         # Version-pinned (matches mise.toml's resolved biome) so a new biome release
         # cannot fail CI on an unrelated rule change. Bump alongside mise.toml.
@@ -257,6 +284,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: install the declared MSRV toolchain
         run: rustup toolchain install 1.88 --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -279,6 +308,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: add bare-metal target
         run: rustup target add thumbv7em-none-eabi
@@ -298,6 +329,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: compile benches (no execution)
         run: cargo bench -p webpkit-bench --no-run --locked
@@ -312,6 +345,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
@@ -361,18 +396,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # --in-diff needs history back to the PR base
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest
       - name: mutation gate (changed lines)
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git diff "origin/${{ github.base_ref }}...HEAD" > mutants-diff.patch
+          git diff "origin/$BASE_REF...HEAD" > mutants-diff.patch
           # Each mutant reruns the whole suite (~6 min), so --in-diff only fits a small
           # incremental PR inside the 90-min budget. A campaign-scale diff mutates
           # thousands of lines and would time out; defer those to the full authoritative
           # sweep (`just mutants`, issue #34) rather than failing CI on the wrong gate.
-          changed=$(git diff --numstat "origin/${{ github.base_ref }}...HEAD" | awk '{a+=$1+$2} END{print a+0}')
+          changed=$(git diff --numstat "origin/$BASE_REF...HEAD" | awk '{a+=$1+$2} END{print a+0}')
           if [ "$changed" -gt 200 ]; then
             echo "::notice::diff touches $changed lines (> 200); the incremental --in-diff mutation gate is for small PRs — deferring to the full sweep (#34)."
             exit 0
@@ -389,6 +427,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # with the runner's C compiler. The in-process differential fails closed on
       # any byte divergence from the reference implementation.
@@ -418,6 +458,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # work-stealing pool. The committed byte-golden and the serial/parallel
       # agreement test both run here, proving the parallel evaluator is identical
@@ -447,6 +489,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # It is off by default (the default build stays zero-dependency), so exercise
       # it explicitly: clippy the gated code under the same strict gate, then run its
@@ -488,6 +532,8 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
@@ -561,8 +607,10 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: verify all required jobs passed (skipped counts as pass)
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |-
-          results="${{ join(needs.*.result, ' ') }}"
+          results="$RESULTS"
           echo "needs results: $results"
           for r in $results; do
             if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
