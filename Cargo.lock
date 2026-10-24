@@ -1557,7 +1557,7 @@ dependencies = [
 
 [[package]]
 name = "webpkit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "image",
  "libwebp-sys",
@@ -1571,15 +1571,15 @@ dependencies = [
 
 [[package]]
 name = "webpkit-alloc-count"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "webpkit-archtest"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "webpkit-bench"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "webpkit",
@@ -1588,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "webpkit-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1614,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "webpkit-conformance"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "libwebp-sys",
@@ -1626,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "webpkit-fuzz"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libfuzzer-sys",
  "webpkit",
@@ -1634,7 +1634,7 @@ dependencies = [
 
 [[package]]
 name = "webpkit-lossless-conformance"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "webpkit-lossless-fuzz"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libfuzzer-sys",
  "webpkit",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "webpkit-lossy-conformance"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "webpkit-lossy-fuzz"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libfuzzer-sys",
  "webpkit",
@@ -1672,14 +1672,14 @@ dependencies = [
 
 [[package]]
 name = "webpkit-lossy-proptest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "webpkit-samples"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "weezl"
@@ -1744,7 +1744,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",
