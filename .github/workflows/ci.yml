@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-nextest
@@ -91,7 +91,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   doc:
@@ -102,7 +102,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --locked
@@ -123,7 +123,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: run conformance fixtures + drift-gate every committed ledger
         run: cargo test --locked -p webpkit-lossless-conformance -p webpkit-lossy-conformance -p webpkit-conformance
 
@@ -138,7 +138,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: corpus sweep (byte-golden drift gate)
         # Explicit `cargo run -p xtask` (not the `cargo xtask` alias) so `--locked` applies.
         run: cargo run --locked --quiet -p xtask -- corpus-sweep
@@ -161,7 +161,7 @@ jobs:
           persist-credentials: false
       - name: install the metrics reproducibility toolchain
         run: rustup toolchain install 1.96 --profile minimal --no-self-update
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: metrics ledger drift gate (release, pinned toolchain)
         run: cargo +1.96 run --locked --release --quiet -p xtask -- metrics
       - name: lossy metrics ledger drift gate (release, pinned toolchain)
@@ -181,7 +181,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: work-cost ledger drift gate (release)
         run: cargo run --locked --release --quiet --features work-count -p xtask -- work
 
@@ -288,7 +288,7 @@ jobs:
           persist-credentials: false
       - name: install the declared MSRV toolchain
         run: rustup toolchain install 1.88 --profile minimal --no-self-update
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # tooling deps (e.g. cargo-platform) need a newer rustc and no consumer builds them.
       - name: cargo check on MSRV (consumer surface)
         # Consumer surface of the published crates only. Not `--all-targets`: dev/
@@ -310,7 +310,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: add bare-metal target
         run: rustup target add thumbv7em-none-eabi
       - name: build no_std (host, alloc only)
@@ -331,7 +331,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: compile benches (no execution)
         run: cargo bench -p webpkit-bench --no-run --locked
       - name: compile benches with rayon (no execution)
@@ -347,7 +347,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-llvm-cov,cargo-nextest
@@ -397,7 +397,7 @@ jobs:
         with:
           fetch-depth: 0 # --in-diff needs history back to the PR base
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest
@@ -429,7 +429,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # with the runner's C compiler. The in-process differential fails closed on
       # any byte divergence from the reference implementation.
       - name: in-process differential vs libwebp
@@ -460,7 +460,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # work-stealing pool. The committed byte-golden and the serial/parallel
       # agreement test both run here, proving the parallel evaluator is identical
       # to the serial one, byte-for-byte.
@@ -491,7 +491,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # It is off by default (the default build stays zero-dependency), so exercise
       # it explicitly: clippy the gated code under the same strict gate, then run its
       # conversion tests and the feature-gated doctest.
@@ -534,7 +534,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-fuzz
