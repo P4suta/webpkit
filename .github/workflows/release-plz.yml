@@ -67,10 +67,10 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-nextest@0.9.149,cargo-deny@0.20.2,taplo-cli@0.10.0
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: just@1.59.0
           fallback: none
@@ -128,10 +128,10 @@ jobs:
           CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
         shell: bash
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-nextest@0.9.149
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: just@1.59.0
           fallback: none
@@ -167,10 +167,10 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-nextest@0.9.149
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: just@1.59.0
           fallback: none
@@ -242,7 +242,7 @@ jobs:
       - name: install bare-metal target
         run: rustup target add thumbv7em-none-eabi
       - name: install pinned Just
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: just@1.59.0
           fallback: none
@@ -400,11 +400,11 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-llvm-cov@0.9.1,cargo-nextest@0.9.149
       - name: install pinned Just
-        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: just@1.59.0
           fallback: none
@@ -443,7 +443,7 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest@0.9.149
       - name: confirm the committed full mutation inventory
@@ -521,12 +521,12 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-fuzz@0.13.2
       - name: install the verified nightly toolchain
         run: rustup toolchain install "$NIGHTLY_TOOLCHAIN" --profile minimal --no-self-update
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: just@1.59.0
           fallback: none
