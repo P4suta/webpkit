@@ -69,7 +69,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
-          tool: cargo-nextest,cargo-deny,taplo-cli
+          tool: cargo-nextest@0.9.149,cargo-deny@0.20.2,taplo-cli@0.10.0
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: just@1.59.0
@@ -98,7 +98,7 @@ jobs:
             | tar xz -C /tmp typos
           echo /tmp >> "$GITHUB_PATH"
       - name: run the ordinary quality gate
-        run: npx --yes --package="@biomejs/biome@2.5.0" -- just check
+        run: npx --yes --package="@biomejs/biome@2.6.2" -- just check
       - name: verify the candidate source after checks
         id: source_after
         env:
@@ -130,7 +130,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest@0.9.149
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: just@1.59.0
@@ -169,7 +169,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest@0.9.149
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: just@1.59.0
@@ -402,7 +402,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
-          tool: cargo-llvm-cov,cargo-nextest
+          tool: cargo-llvm-cov@0.9.1,cargo-nextest@0.9.149
       - name: install pinned Just
         uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
@@ -445,7 +445,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
-          tool: cargo-mutants@27.1.0,cargo-nextest
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.149
       - name: confirm the committed full mutation inventory
         env:
           MUTANT_SHARD: ${{ matrix.shard }}

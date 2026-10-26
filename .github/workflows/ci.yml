@@ -34,7 +34,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
-          tool: cargo-nextest,cargo-deny,taplo-cli
+          tool: cargo-nextest@0.9.149,cargo-deny@0.20.2,taplo-cli@0.10.0
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: just@1.59.0
@@ -63,7 +63,7 @@ jobs:
             | tar xz -C /tmp typos
           echo /tmp >> "$GITHUB_PATH"
       - name: run the ordinary quality gate
-        run: npx --yes --package="@biomejs/biome@2.5.0" -- just check
+        run: npx --yes --package="@biomejs/biome@2.6.2" -- just check
 
   conventional-commits:
     name: conventional commits
