@@ -1,25 +1,4 @@
-# Release automation via release-plz (https://release-plz.dev). On push to main:
-#   - release-plz-pr:      opens/updates a release PR (version bump + CHANGELOG)
-#                          from Conventional Commits.
-#   - release-plz-release: when that PR merges, publishes newly-versioned crates to
-#                          crates.io and creates the GitHub release + tag.
-#                          cargo-semver-checks gates breaking API changes.
-#
-# Auth uses a GitHub App (no PAT, no repo-level secrets). Both jobs mint a short-
-# lived installation token via actions/create-github-app-token, so release PRs are
-# authored by the App and therefore DO trigger CI (GITHUB_TOKEN-authored PRs don't).
-#
-# Inject these into the `release` GitHub Environment (Settings > Environments):
-#   - RELEASE_PLZ_APP_ID           the GitHub App's App ID
-#   - RELEASE_PLZ_APP_PRIVATE_KEY  the App's private key (PEM)
-# The App needs repository permissions: Contents: read/write, Pull requests:
-# read/write, and must be installed on this repository.
-#
-# crates.io auth uses Trusted Publishing (OIDC), not a stored token: release-plz
-# mints a short-lived token via `id-token: write`. Register a trusted publisher for
-# each published crate on crates.io (owner P4suta, repo webpkit, workflow
-# release-plz.yml, environment release).
-
+# Release proposal generation and exact-source publication qualification.
 name: release-plz
 
 on:
@@ -27,22 +6,604 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: read # Read the pushed source by default.
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+  RUST_VERSION: 1.99.1
+  NIGHTLY_TOOLCHAIN: nightly-2026-07-01
 
 jobs:
-  # Publish + GitHub release. Runs on every push to main but no-ops unless a release
-  # PR merge introduced a new version (release_always = false); merging that PR is the
-  # human gate. Don't add a required reviewer to `release`: this job runs on every
-  # push, so approval would be demanded even for the no-op runs. crates.io pins its
-  # trusted publisher to this environment name.
+  candidate:
+    name: resolve release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # Check out the pushed source and its history.
+      pull-requests: read # Read release-pull-request metadata.
+    outputs:
+      candidate: ${{ steps.resolve.outputs.candidate }}
+      revision: ${{ steps.resolve.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - name: resolve the exact release candidate
+        id: resolve
+        env:
+          GH_REPO: ${{ github.repository }}
+          EVENT_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: cargo run --locked --quiet -p xtask -- ci candidate --repository "$GH_REPO" --revision "$EVENT_SHA" --output "$GITHUB_OUTPUT"
+
+  quality:
+    name: quality
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest,cargo-deny,taplo-cli
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+      - name: install pinned cargo-sort from the registry
+        run: cargo install --locked --version 2.1.4 cargo-sort
+      - name: install pinned yamlfmt
+        env:
+          YAMLFMT_VERSION: 0.21.0
+        run: |
+          curl -fsSL "https://github.com/google/yamlfmt/releases/download/v${YAMLFMT_VERSION}/yamlfmt_${YAMLFMT_VERSION}_Linux_x86_64.tar.gz" \
+            | tar xz -C /tmp yamlfmt
+          echo /tmp >> "$GITHUB_PATH"
+      - name: install pinned Actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            | tar xz -C /tmp actionlint
+          echo /tmp >> "$GITHUB_PATH"
+      - name: install pinned typos
+        env:
+          TYPOS_VERSION: 1.51.1
+        run: |
+          curl -fsSL "https://github.com/crate-ci/typos/releases/download/v${TYPOS_VERSION}/typos-v${TYPOS_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar xz -C /tmp typos
+          echo /tmp >> "$GITHUB_PATH"
+      - name: run the ordinary quality gate
+        run: npx --yes --package="@biomejs/biome@2.5.0" -- just check
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  native-windows:
+    name: Windows workspace tests
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$env:RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        shell: bash
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+      - name: run workspace tests and doctests
+        shell: bash
+        run: just test
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        shell: bash
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  native-macos:
+    name: macOS workspace tests
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+      - name: run workspace tests and doctests
+        run: just test
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  msrv:
+    name: MSRV consumer checks
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - name: install the declared MSRV
+        run: rustup toolchain install 1.88 --profile minimal --no-self-update
+      - name: verify the published consumer surface on Rust 1.88
+        run: |
+          cargo +1.88 check -p webpkit -p webpkit-cli --locked
+          cargo +1.88 check -p webpkit --features rayon,image --locked
+          cargo +1.88 check -p webpkit --no-default-features --features alloc --locked
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  no-std:
+    name: no_std host and bare-metal
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - name: install bare-metal target
+        run: rustup target add thumbv7em-none-eabi
+      - name: install pinned Just
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+      - name: run no_std builds
+        run: just no-std
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  corpus:
+    name: corpus drift gate
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - name: run the corpus byte-golden drift gate
+        run: cargo run --locked --release --quiet -p xtask -- corpus-sweep
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  metrics:
+    name: metrics ledgers
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - name: install metrics reproducibility toolchain
+        run: rustup toolchain install 1.96 --profile minimal --no-self-update
+      - name: run both metrics ledger checks
+        run: |
+          cargo +1.96 run --locked --release --quiet -p xtask -- metrics
+          cargo +1.96 run --locked --release --quiet -p xtask -- metrics --lossy
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  work:
+    name: deterministic work ledger
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - name: run deterministic work ledger check
+        run: cargo run --locked --release --quiet --features work-count -p xtask -- work
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  oracle:
+    name: libwebp differential suites
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - name: run every reference differential suite
+        run: cargo test --locked -p webpkit --features oracle --test oracle --test oracle_lossless --test oracle_lossy --test oracle_rescale
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  coverage:
+    name: product coverage floors
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+      - name: install pinned Just
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+      - name: run 90 percent library and 80 percent CLI coverage gates
+        run: just coverage
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  mutation:
+    name: full mutation confirmation (shard ${{ matrix.shard }}/32)
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before checks
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-mutants@27.1.0,cargo-nextest
+      - name: confirm the committed full mutation inventory
+        env:
+          MUTANT_SHARD: ${{ matrix.shard }}
+        run: cargo mutants --shard "${MUTANT_SHARD}/32" -p webpkit -p webpkit-cli --test-tool nextest
+      - name: verify the candidate source after checks
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  policy-proofs:
+    name: source-bound policy proofs
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read # Check out the candidate source and immutable proof helper.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before proofs
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - uses: P4suta/project-template/.github/actions/ci-policy@ee6265bd944c53097191f97dcb7a6ac678794b43
+        id: policy
+      - name: install Kani 0.68.0
+        env:
+          KANI_VERSION: 0.68.0
+        run: cargo install --locked --version "$KANI_VERSION" kani-verifier
+      - name: install the Kani toolchain components
+        working-directory: ${{ runner.temp }}
+        run: cargo kani setup
+      - name: prove the production policy module
+        env:
+          POLICY_TOOL: ${{ steps.policy.outputs.executable }}
+          REQUIRED_HARNESSES: '["production::proofs::commit_identity_is_exact","production::proofs::candidate_selection_preserves_source","production::proofs::ordinary_summary_requires_complete_work","production::proofs::publication_requires_complete_same_source_qualification"]'
+          COUNTEREXAMPLE: production::proofs::reject_incomplete_qualification_probe
+        run: '"$POLICY_TOOL" prove-source --source xtask/src/ci.rs --require-json "$REQUIRED_HARNESSES" --counterexample "$COUNTEREXAMPLE"'
+      - name: verify the candidate source after proofs
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  fuzz:
+    name: fixed-count fuzz discovery
+    needs: [candidate]
+    if: needs.candidate.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read # Check out the candidate source.
+    outputs:
+      revision: ${{ steps.source_after.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: verify the candidate source before discovery
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-fuzz@0.13.2
+      - name: install the verified nightly toolchain
+        run: rustup toolchain install "$NIGHTLY_TOOLCHAIN" --profile minimal --no-self-update
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+      - name: replay all committed fuzz seed targets with fixed work
+        run: just fuzz-smoke
+      - name: verify the candidate source after discovery
+        id: source_after
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
+
+  qualify:
+    name: strict release qualification
+    if: always() && needs.candidate.outputs.candidate == 'true'
+    needs:
+      - candidate
+      - quality
+      - native-windows
+      - native-macos
+      - msrv
+      - no-std
+      - corpus
+      - metrics
+      - work
+      - oracle
+      - coverage
+      - mutation
+      - policy-proofs
+      - fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # Check out the candidate source to run the strict admission validator.
+    outputs:
+      revision: ${{ steps.qualify.outputs.revision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: require all thirteen exact-source release roles to succeed
+        id: qualify
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: cargo run --locked --quiet -p xtask -- ci qualify --revision "$CANDIDATE_SHA" --needs "$NEEDS_JSON" --output "$GITHUB_OUTPUT"
+
   release-plz-release:
     name: release-plz release
+    needs: [candidate, qualify]
+    if: needs.candidate.outputs.candidate == 'true' && needs.qualify.result == 'success' && needs.qualify.outputs.revision == needs.candidate.outputs.revision
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release
     permissions:
-      contents: write # create the git tag + GitHub release
-      id-token: write # crates.io Trusted Publishing (OIDC)
+      contents: write # Create the git tag, GitHub release, and package release commit.
+      pull-requests: read # Revalidate the associated release pull request.
+      id-token: write # Authenticate to the automation credential source.
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.candidate.outputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - name: revalidate the exact publisher source and derive its isolated config
+        id: publish-source
+        env:
+          GH_REPO: ${{ github.repository }}
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CONFIG: ${{ runner.temp }}/qualified-release-plz.toml
+        run: cargo run --locked --quiet -p xtask -- ci publish-source --repository "$GH_REPO" --revision "$CANDIDATE_SHA" --config "$RELEASE_CONFIG" --output "$GITHUB_OUTPUT"
       - name: Fetch automation credentials
         id: doppler_automation_0
         uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534
@@ -62,32 +623,34 @@ jobs:
           ) }}
         shell: bash
         run: exit 1
-
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
         with:
           client-id: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID }}
           private-key: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+          permission-contents: write
+          permission-pull-requests: read
+      - name: verify the publisher source immediately before release
+        env:
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.revision }}
+        run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: release-plz/action@8b5bf233ecb5779f63508db7cd050e948ee77cc2 # v0.5.144
         with:
           command: release
+          version: 0.3.174
+          config: ${{ steps.publish-source.outputs.config_path }}
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  # Open/update the release PR. Same App token so the PR triggers CI.
   release-plz-pr:
     name: release-plz pr
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: release
     permissions:
-      id-token: write
-      contents: write
-      pull-requests: write
+      contents: write # Open and update the release pull request.
+      pull-requests: write # Create and update the release pull request.
+      id-token: write # Authenticate to the automation credential source.
     concurrency:
       group: release-plz-pr
       cancel-in-progress: false
@@ -111,19 +674,24 @@ jobs:
           ) }}
         shell: bash
         run: exit 1
-
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
         with:
           client-id: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID }}
           private-key: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
       - uses: release-plz/action@8b5bf233ecb5779f63508db7cd050e948ee77cc2 # v0.5.144
         with:
           command: release-pr
+          version: 0.3.174
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

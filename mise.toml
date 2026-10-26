@@ -3,13 +3,13 @@
 
 [tools]
 # Task runner, git hooks, and the format/lint tools the recipes shell out to.
-just = "latest"
+just = "1.59.0"
 lefthook = "latest"
 taplo = "latest"
-biome = "latest"
+biome = "2.5.0"
 yamlfmt = "0.21.0"    # pinned for format stability
-actionlint = "latest"
-typos = "latest"
+actionlint = "1.7.12"
+typos = "1.51.1"
 jq = "latest"
 
 # Lets the cargo: backend fetch prebuilt binaries instead of compiling.
@@ -18,7 +18,7 @@ cargo-binstall = "latest"
 # Cargo subcommands via the cargo: backend (no mise registry short names exist).
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-deny" = "latest"
-"cargo:cargo-sort" = "latest"
+"cargo:cargo-sort" = "2.1.4"
 "cargo:cargo-fuzz" = "latest"
 "cargo:cargo-insta" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
