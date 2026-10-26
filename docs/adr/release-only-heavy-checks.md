@@ -35,6 +35,8 @@ Malformed, incomplete, ambiguous, or inconsistent metadata is an error.
 
 Qualify the selected full commit through the fixed role inventory in `release-plz.yml`.
 Keep native platform tests, compatibility builds, corpus and measurement ledgers, reference suites, coverage, full product mutation testing, policy proofs, and fixed-count fuzz discovery.
+Pin the macOS role to `macos-26`, the Arm64 image listed for `macos-latest` in the [official runner inventory](https://github.com/actions/runner-images#available-images) on 2026-10-26.
+Start fuzz discovery with a fixed seed and a fresh copy of the committed corpus for each target.
 Check tracked source and the commit identity before and after each role.
 Require every role to report success for the same commit before admitting publication.
 The existing fuzz-linking defect remains a release blocker rather than a successful skip.

@@ -149,7 +149,7 @@ jobs:
     name: macOS workspace tests
     needs: [candidate]
     if: needs.candidate.outputs.candidate == 'true'
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 45
     permissions:
       contents: read # Check out the candidate source.
