@@ -308,10 +308,12 @@ fuzz-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
     shopt -s nullglob
-    revision_corpus="target/ci-fuzz-corpus/revision"
+    corpus_root=$(mktemp -d)
+    trap 'rm -rf -- "$corpus_root"' EXIT
+    revision_corpus="$corpus_root/revision"
     mkdir -p "$revision_corpus"
     cp xtask/fuzz/corpus/revision/* "$revision_corpus/"
-    cargo +{{ fuzz_toolchain }} fuzz run revision "$revision_corpus" --fuzz-dir xtask/fuzz --features fuzzing -- -runs=16384
+    cargo +{{ fuzz_toolchain }} fuzz run revision "$revision_corpus" --fuzz-dir xtask/fuzz --features fuzzing -- -seed=1 -runs=16384
     for crate in webpkit-lossless-fuzz webpkit-lossy-fuzz webpkit-fuzz; do
       targets=(crates/"$crate"/seeds/*/)
       if [[ ${#targets[@]} -eq 0 ]]; then
@@ -326,9 +328,10 @@ fuzz-smoke:
           exit 1
         fi
         echo "==> fuzz-smoke $crate/$target"
-        mkdir -p "crates/$crate/corpus/$target"
-        cp -n "${seeds[@]}" "crates/$crate/corpus/$target/"
-        cargo +{{ fuzz_toolchain }} fuzz run "$target" --fuzz-dir "crates/$crate" --features fuzzing -- -runs=16384
+        corpus="$corpus_root/$crate/$target"
+        mkdir -p "$corpus"
+        cp "${seeds[@]}" "$corpus/"
+        cargo +{{ fuzz_toolchain }} fuzz run "$target" "$corpus" --fuzz-dir "crates/$crate" --features fuzzing -- -seed=1 -runs=16384
       done
     done
 
