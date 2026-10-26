@@ -1,27 +1,10 @@
-# webpkit CI.
-#
-# Policy:
-#   - Pure-Rust, cross-platform codec. `build-test` and `conformance` run on the
-#     Linux/Windows/macOS matrix; platform-independent gates (fmt, clippy, doc,
-#     deny, coverage, fuzz, oracle, msrv) run on ubuntu-latest only.
-#   - Actions are SHA-pinned and Renovate refreshes them under the shared policy.
-#     New toolchains are installed via `rustup` without an unpinned action.
-#   - `Swatinem/rust-cache` over raw `actions/cache` for cargo state.
-#   - A single `ci-required` aggregation gate is the one status context branch
-#     protection references, so the ruleset never desyncs when jobs are added or
-#     renamed. Job COVERAGE is not automatic, though: `ci-required.needs` is the
-#     source of truth and a new job must be added to that list by hand. The
-#     `needs sync` step in the `actionlint` job fails CI if the job set and the
-#     `needs` list ever drift, so a forgotten entry cannot silently un-gate a job.
-
+# Lean pull-request and merge-group gate for webpkit.
+# Heavy release qualification runs from the exact candidate source in release-plz.yml.
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
   merge_group:
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,607 +16,106 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: short
-  # Pinned nightly for the fuzz job so an upstream nightly regression cannot block
-  # every merge. This exact dated channel was verified to exist and build the fuzz
-  # targets.
-  # Bump it deliberately because Renovate does not manage this bare `rustup` channel; a scheduled pull request or periodic manual review is the intended refresh path.
-  NIGHTLY_TOOLCHAIN: nightly-2026-07-01
+  RUST_VERSION: 1.99.1
 
 jobs:
-  build-test:
-    name: build + test
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
-        with:
-          tool: cargo-nextest
-      - name: cargo build (all targets)
-        run: cargo build --workspace --all-targets --locked
-      - name: cargo nextest
-        run: cargo nextest run --workspace --locked
-      - name: cargo test --doc
-        # nextest does not run doctests; run them as a separate step.
-        run: cargo test --doc --workspace --locked
-
-  fmt:
-    name: fmt
+  quality:
+    name: quality
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install cargo-sort from its locked registry source
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest@0.9.149,cargo-deny@0.20.2,taplo-cli@0.10.0
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: just@1.59.0
+          fallback: none
+      - name: install pinned cargo-sort from the registry
+        run: cargo install --locked --version 2.1.4 cargo-sort
+      - name: install pinned yamlfmt
         env:
-          CARGO_SORT_VERSION: 2.1.4
-        run: cargo install --locked --version "$CARGO_SORT_VERSION" cargo-sort
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
-        with:
-          tool: taplo-cli
-      - run: cargo fmt --all -- --check
-      - run: cargo sort --workspace --check
-      - run: taplo fmt --check
-
-  clippy:
-    name: clippy
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-  doc:
-    name: doc (cargo doc)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --workspace --no-deps --locked
-
-  conformance:
-    name: conformance
-    # Tool-free: reads committed libwebp goldens and runs the codecs. Each codec's
-    # `*-conformance` crate owns an in-crate `tests/ledger.rs` drift-gate (all three
-    # symmetric), so this is one `cargo test`. Matrixed so the goldens are
-    # re-verified on every platform (binary fixtures are pinned via .gitattributes).
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: run conformance fixtures + drift-gate every committed ledger
-        run: cargo test --locked -p webpkit-lossless-conformance -p webpkit-lossy-conformance -p webpkit-conformance
-
-  corpus-sweep:
-    name: corpus-sweep
-    # Tool-free byte-golden: decodes every committed corpus image and gates the
-    # committed `corpus/baseline.json` against a fresh run (integer-deterministic,
-    # so ubuntu-only is sufficient — no libwebp binaries required).
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: corpus sweep (byte-golden drift gate)
-        # Explicit `cargo run -p xtask` (not the `cargo xtask` alias) so `--locked` applies.
-        run: cargo run --locked --quiet -p xtask -- corpus-sweep
-
-  metrics:
-    name: metrics
-    # Tool-free byte-golden: measures the shared synthetic corpus (webpkit-samples)
-    # and gates the committed lossless `corpus/metrics.json` AND lossy
-    # `corpus/metrics-lossy.json` against a fresh run. Encoded sizes/sse are
-    # integer-deterministic and profile-independent, so ubuntu-only is sufficient
-    # (no libwebp binaries). Pinned to a fixed toolchain (1.96, independent of the
-    # MSRV) so both ledgers' peak-memory fields are reproducible; built --release so
-    # the encode-heavy searches stay inside the runtime budget (lossless 54 cases
-    # incl. Best@512, plus lossy methods x qualities with Best capped to edge<=256).
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: install the metrics reproducibility toolchain
-        run: rustup toolchain install 1.96 --profile minimal --no-self-update
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: metrics ledger drift gate (release, pinned toolchain)
-        run: cargo +1.96 run --locked --release --quiet -p xtask -- metrics
-      - name: lossy metrics ledger drift gate (release, pinned toolchain)
-        run: cargo +1.96 run --locked --release --quiet -p xtask -- metrics --lossy
-
-  work:
-    name: work-cost
-    # Deterministic algorithmic-work counters (the third measurement plane):
-    # instruments both codecs' encode hot paths and gates the committed
-    # `corpus/work.json` against a fresh run. The counts are integer event tallies
-    # that are toolchain- AND profile-independent (unlike metrics' peak memory), so
-    # NO MSRV pin is needed — plain stable on ubuntu suffices. Built --release for
-    # the runtime budget only (~2-3 min for all 96 cases, Best capped to edge<=256).
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: work-cost ledger drift gate (release)
-        run: cargo run --locked --release --quiet --features work-count -p xtask -- work
-
-  spell-check:
-    name: typos
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
-
-  actionlint:
-    name: actionlint
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: actionlint
+          YAMLFMT_VERSION: 0.21.0
+        run: |
+          curl -fsSL "https://github.com/google/yamlfmt/releases/download/v${YAMLFMT_VERSION}/yamlfmt_${YAMLFMT_VERSION}_Linux_x86_64.tar.gz" \
+            | tar xz -C /tmp yamlfmt
+          echo /tmp >> "$GITHUB_PATH"
+      - name: install pinned Actionlint
         env:
           ACTIONLINT_VERSION: 1.7.12
         run: |
           curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
             | tar xz -C /tmp actionlint
-          /tmp/actionlint -color
-      # Fail closed if a job is not in `ci-required.needs`: the ruleset only gates the `ci-required` context, so a missing job would run but never block a merge.
-      # This proves `needs` covers every non-aggregate job.
-      - name: needs sync (ci-required.needs == job set)
+          echo /tmp >> "$GITHUB_PATH"
+      - name: install pinned typos
+        env:
+          TYPOS_VERSION: 1.51.1
         run: |
-          set -euo pipefail
-          f=.github/workflows/ci.yml
-          jobs=$(awk '/^jobs:/{inj=1;next} inj && /^[^ ]/{inj=0} inj && /^  [A-Za-z0-9_-]+:/{gsub(/[: ]/,"");print}' "$f" | grep -Ev '^(ci-required|required)$' | sort -u)
-          needs=$(awk '/^  ci-required:/{inr=1} inr && /^    needs:/{inn=1;next} inn && /^      - /{print $2} inn && /^    [A-Za-z]/{inn=0}' "$f" | sort -u)
-          if [ "$jobs" != "$needs" ]; then
-            echo "::error::ci-required.needs is out of sync with the job set (< job missing from needs, > stale needs entry):"
-            diff <(echo "$jobs") <(echo "$needs") || true
-            exit 1
-          fi
-          echo "ci-required.needs covers every job"
+          curl -fsSL "https://github.com/crate-ci/typos/releases/download/v${TYPOS_VERSION}/typos-v${TYPOS_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar xz -C /tmp ./typos
+          echo /tmp >> "$GITHUB_PATH"
+      - name: run the ordinary quality gate
+        run: npx --yes --package="@biomejs/biome@2.6.2" -- just check
 
-  cargo-deny:
-    name: cargo-deny
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
-        with:
-          tool: cargo-deny
-      # (libwebp-sys, a C reference never shipped) carries licenses outside the
-      # published crate's supply chain, so an `--all-features` audit is out of scope.
-      - run: cargo deny check advisories bans licenses sources
-
-        # Gate the consumer-facing dependency graph. The dev-only `oracle` feature
   conventional-commits:
     name: conventional commits
-    # Validate the PR title (the squash-merge commit subject) as Conventional
-    # Commits. Local commit messages are enforced by committed (committed.toml)
-    # via the lefthook commit-msg hook; this is the authoritative CI gate.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      pull-requests: read # The title check reads pull request metadata.
+      pull-requests: read # The title action reads pull request metadata.
     steps:
       - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  format-extra:
-    name: fmt (json + yaml)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: biome (JSON/JSONC)
-        # Version-pinned (matches mise.toml's resolved biome) so a new biome release
-        # cannot fail CI on an unrelated rule change. Bump alongside mise.toml.
-        env:
-          BIOME_VERSION: 2.5.0
-        run: npx --yes "@biomejs/biome@${BIOME_VERSION}" ci .
-      - name: yamlfmt (YAML)
-        env:
-          YAMLFMT_VERSION: 0.13.0
-        run: |
-          curl -fsSL "https://github.com/google/yamlfmt/releases/download/v${YAMLFMT_VERSION}/yamlfmt_${YAMLFMT_VERSION}_Linux_x86_64.tar.gz" \
-            | tar xz -C /tmp yamlfmt
-          /tmp/yamlfmt -lint .
-
-  msrv:
-    name: msrv (1.88)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: install the declared MSRV toolchain
-        run: rustup toolchain install 1.88 --profile minimal --no-self-update
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # tooling deps (e.g. cargo-platform) need a newer rustc and no consumer builds them.
-      - name: cargo check on MSRV (consumer surface)
-        # Consumer surface of the published crates only. Not `--all-targets`: dev/
-        run: |
-          cargo +1.88 check -p webpkit -p webpkit-cli --locked
-          cargo +1.88 check -p webpkit --features rayon,image --locked
-          cargo +1.88 check -p webpkit --no-default-features --features alloc --locked
-
-  no-std:
-    name: no-std (alloc, bare-metal)
-    # Builds the product crate as a `no_std` library twice: on the host with only
-    # `alloc`, and for a bare-metal target that has no `std` at all. A stray
-    # `std::` reference in production code fails the second build, so this is a
-    # cheap, strong guard that the codec stays allocator-only. One `-p webpkit`
-    # build covers both codecs (lossless + lossy are always-compiled modules).
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: add bare-metal target
-        run: rustup target add thumbv7em-none-eabi
-      - name: build no_std (host, alloc only)
-        run: cargo build -p webpkit --no-default-features --features alloc --locked
-      - name: build no_std (bare-metal, alloc only)
-        run: cargo build -p webpkit --no-default-features --features alloc --target thumbv7em-none-eabi --locked
-
-  bench-build:
-    name: bench-build
-    # Compile-only guard so the local-only criterion benches (webpkit-bench) cannot
-    # bit-rot. It NEVER runs the benches: wall-clock time is noisy and is not a CI
-    # gate here (correctness is guarded by the byte/size goldens). `--no-run`
-    # builds the default, the `rayon` (parallel Best), and the `bench` (isolated
-    # kernel microbench) bench binaries.
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: compile benches (no execution)
-        run: cargo bench -p webpkit-bench --no-run --locked
-      - name: compile benches with rayon (no execution)
-        run: cargo bench -p webpkit-bench --features rayon --no-run --locked
-      - name: compile kernel microbenches (no execution)
-        run: cargo bench -p webpkit-bench --features bench --no-run --locked
-
-  coverage:
-    name: coverage
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
-        with:
-          tool: cargo-llvm-cov,cargo-nextest
-      # the same profile data. `webpkit` (the product library) and `webpkit-cli`
-      # (the binaries) each get their own floor; the tooling / test-harness crates
-      # are excluded so their intentionally-low coverage cannot mask a regression.
-      - name: collect coverage
-        # Collect coverage once (whole workspace), then apply a per-crate floor from
-        run: cargo llvm-cov nextest --workspace --locked --no-report
-      # below. (The `webpkit/src`-only exclusion in the CLI step conversely drops
-      # the library, so the two floors partition the published crates.)
-      - name: line coverage floor (webpkit)
-        # Product library: `webpkit-cli` is excluded here — it carries its own floor
-        run: >
-          cargo llvm-cov report
-          --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-samples|webpkit-lossless-fuzz|webpkit-cli|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
-          --fail-under-lines 90
-      # line coverage so day-to-day noise never flakes it. The measured baseline was
-      # taken on Windows; the platform-specific paths differ on this Linux runner, so
-      # the floor starts conservative — raise it once the CI baseline is confirmed.
-      - name: line coverage floor (webpkit-cli)
-        # CLI crate: a regression ratchet, deliberately set below the current measured
-        run: >
-          cargo llvm-cov report
-          --ignore-filename-regex '(xtask|webpkit-alloc-count|webpkit-bench|webpkit-samples|webpkit-lossless-fuzz|webpkit[/\\]src|webpkit-lossless-conformance|webpkit-lossy-fuzz|webpkit-lossy-proptest|webpkit-lossy-conformance|webpkit-fuzz|webpkit-conformance)'
-          --fail-under-lines 80
-
-  # Mutation-test only the lines this PR changes: inject bugs into the changed
-  # product code and require the existing tests to catch them. PR-only (a full
-  # run is far too slow to gate); on push / merge_group it skips and `ci-required`
-  # treats skipped as pass. cargo-mutants is version-pinned (mirrors mise.toml).
-  mutants:
-    name: mutants (PR --in-diff)
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    # Sized for an incremental PR. A large diff mutates many lines, and each mutant
-    # reruns the whole `-p webpkit -p webpkit-cli` suite (~6 min with the config's
-    # `--features image,rayon` + Best paths), so the wall time is mutants x suite /
-    # `--jobs`. The `rayon` feature is carried by `.cargo/mutants.toml` so the parallel
-    # Best / wavefront / row evaluators are mutated too, not left as uncompiled. `--jobs
-    # 4` saturates the runner's 4 vCPUs. The headroom absorbs an exceptionally large
-    # change: the one-time CLI-overhaul diff mutates ~45 lines and finishes in ~59
-    # min, so the ceiling is set well above that to leave margin for runner variance.
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0 # --in-diff needs history back to the PR base
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
-        with:
-          tool: cargo-mutants@27.1.0,cargo-nextest
-      - name: mutation gate (changed lines)
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          git diff "origin/$BASE_REF...HEAD" > mutants-diff.patch
-          # Each mutant reruns the whole suite (~6 min), so --in-diff only fits a small
-          # incremental PR inside the 90-min budget. A campaign-scale diff mutates
-          # thousands of lines and would time out; defer those to the full authoritative
-          # sweep (`just mutants`, issue #34) rather than failing CI on the wrong gate.
-          changed=$(git diff --numstat "origin/$BASE_REF...HEAD" | awk '{a+=$1+$2} END{print a+0}')
-          if [ "$changed" -gt 200 ]; then
-            echo "::notice::diff touches $changed lines (> 200); the incremental --in-diff mutation gate is for small PRs — deferring to the full sweep (#34)."
-            exit 0
-          fi
-          cargo mutants --in-diff mutants-diff.patch \
-            -p webpkit \
-            -p webpkit-cli \
-            --test-tool nextest \
-            --jobs 4
-
-  oracle:
-    name: oracle (libwebp differential)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # with the runner's C compiler. The in-process differential fails closed on
-      # any byte divergence from the reference implementation.
-      - name: in-process differential vs libwebp
-        # `oracle` links libwebp-sys, which builds the vendored libwebp C source
-        run: cargo test -p webpkit --features oracle --test oracle_lossless --locked
-      # (our reconstructed YUV planes vs WebPDecodeYUV), Level B (our RGBA vs
-      # WebPDecodeRGBA) across a content/size/quality matrix + an advanced-encoder
-      # (segmentation / normal-filter) matrix + a randomized proptest.
-      - name: lossy decoder differential vs libwebp
-        # The lossy decoder is likewise validated bit-exact against libwebp: Level A
-        run: cargo test -p webpkit --features oracle --test oracle_lossy --locked
-      # composited RGBA (VP8 + ALPH) is byte-exact vs WebPDecodeRGBA across a
-      # {raw, lossless} x alpha-filter x size matrix.
-      - name: umbrella ALPH differential vs libwebp
-        # The umbrella decode path is validated on transparent-lossy images: our
-        run: cargo test -p webpkit --features oracle --test oracle --locked
-      # across an up/down/non-integer/aspect size matrix (the resize `cwebp -resize`
-      # and `dwebp -scale` run), including the alpha black-matting.
-      - name: geometry rescaler differential vs libwebp
-        # The core geometry rescaler is byte-exact vs WebPPictureRescale's ARGB path
-        run: cargo test -p webpkit --features oracle --test oracle_rescale --locked
-
-  rayon:
-    name: rayon (parallel Best)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # work-stealing pool. The committed byte-golden and the serial/parallel
-      # agreement test both run here, proving the parallel evaluator is identical
-      # to the serial one, byte-for-byte.
-      - name: parallel Best test suite
-        # The `rayon` feature evaluates the Method::Best candidate families across a
-        run: cargo test -p webpkit --features rayon --locked
-      # the whole feature rests on, so name the three differential tests explicitly as
-      # their own gate (the suite step above is the backstop): the lossless Best
-      # evaluator, the lossy macroblock wavefront planner, and the YUV row emitter each
-      # reconstruct the exact serial output. These same paths are now also mutated
-      # under `--features rayon` by the `mutants` job, so a parallel-only regression is
-      # caught by two independent nets.
-      - name: rayon differential (parallel == serial, byte-for-byte)
-        # The three names are libtest filters (their union), so they go after `--`;
-        # The parallel==serial byte-for-byte equivalence is the product-path guarantee
-        # `cargo test` itself takes only one positional and rejects the rest.
-        run: >
-          cargo test -p webpkit --features rayon --locked --
-          serial_and_parallel_evaluation_agree
-          wavefront_planner_matches_serial_byte_for_byte
-          rayon_row_parallel_matches_serial_byte_for_byte
-
-  image:
-    name: image (interop feature)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # It is off by default (the default build stays zero-dependency), so exercise
-      # it explicitly: clippy the gated code under the same strict gate, then run its
-      # conversion tests and the feature-gated doctest.
-      - name: clippy (image feature)
-        # The optional `image` feature adds `TryFrom` interop with the `image` crate.
-        run: cargo clippy -p webpkit --all-targets --features image --locked -- -D warnings
-      - name: test (image feature)
-        run: cargo test -p webpkit --features image --locked
-      - name: doctest (image feature)
-        run: cargo test -p webpkit --doc --features image --locked
-
-  fuzz:
-    name: fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # TODO(fuzz): cargo-fuzz (0.13.1 and 0.13.2) passes -Cpasses=sancov-module, which
-    # on 2026 nightlies no longer emits the __sancov_gen_ globals, so every fuzz build
-    # fails to link (undefined symbol) — reproduced on gnu and musl, on nightly
-    # 2026-07-01 and 2026-06-10. Disabled on push/PR until cargo-fuzz ships a fix;
-    # still runnable on demand via the Actions "Run workflow" button.
-    #
-    # NOTE: continuous regression coverage does NOT depend on this job. Every
-    # committed seed is replayed through the fuzz targets *themselves* on *stable*
-    # by `tests/replay_seeds.rs` in each fuzz crate (run by the `build + test`
-    # nextest job, with overflow-checks on). The targets' bodies are library
-    # functions the replay calls directly — not a hand-written imitation — so the
-    # round-trip and encode invariants run here too, not only decode, and cannot
-    # drift from what the fuzzer runs. Integer overflow is input-determined, not
-    # optimization-determined, so a wrap a release build could hit is reachable —
-    # and trapped — there too. This libFuzzer job adds *new* input discovery on top;
-    # the replay net guards against regressions meanwhile.
-    #
-    # Upstream tracker: https://github.com/rust-fuzz/cargo-fuzz/issues
-    # RE-ENABLE when fixed: bump the cargo-fuzz install below (and NIGHTLY_TOOLCHAIN
-    # if needed), confirm a local `cargo fuzz build` links on the pinned nightly, then
-    # change this `if:` to run on push/PR again:
-    #   if: ${{ github.event_name != 'schedule' }}   # (or drop the guard entirely)
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
-        with:
-          tool: cargo-fuzz
-      - name: install nightly (libFuzzer)
-        run: rustup toolchain install "${NIGHTLY_TOOLCHAIN}" --profile minimal --no-self-update
-      - name: fuzz smoke (all targets, seeded from committed corpora)
-        run: |
-          set -euo pipefail
-          for target in decode roundtrip animation; do
-            echo "::group::fuzz ${target}"
-            mkdir -p "crates/webpkit-lossless-fuzz/corpus/${target}"
-            cp crates/webpkit-lossless-fuzz/seeds/"${target}"/* "crates/webpkit-lossless-fuzz/corpus/${target}/"
-            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossless-fuzz --features fuzzing \
-              -- -max_total_time=40 -runs=2000000
-            echo "::endgroup::"
-          done
-      - name: webpkit-lossy fuzz smoke (all targets, seeded from committed corpora)
-        run: |
-          set -euo pipefail
-          for target in decode stream encode; do
-            echo "::group::webpkit-lossy ${target}"
-            mkdir -p "crates/webpkit-lossy-fuzz/corpus/${target}"
-            cp crates/webpkit-lossy-fuzz/seeds/"${target}"/* "crates/webpkit-lossy-fuzz/corpus/${target}/"
-            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-lossy-fuzz --features fuzzing \
-              -- -max_total_time=40 -runs=2000000
-            echo "::endgroup::"
-          done
-      - name: webp fuzz smoke (all targets, seeded from committed corpora)
-        run: |
-          set -euo pipefail
-          for target in decode decode_frames; do
-            echo "::group::webpkit-fuzz ${target}"
-            mkdir -p "crates/webpkit-fuzz/corpus/${target}"
-            cp crates/webpkit-fuzz/seeds/"${target}"/*.webp "crates/webpkit-fuzz/corpus/${target}/"
-            cargo "+${NIGHTLY_TOOLCHAIN}" fuzz run "${target}" --fuzz-dir crates/webpkit-fuzz --features fuzzing \
-              -- -max_total_time=40 -runs=2000000
-            echo "::endgroup::"
-          done
-
-  # Single aggregation gate. `if: always()` so it runs when an upstream job
-  # fails; `skipped` counts as pass, letting PR-only jobs report green on
-  # merge_group / push.
   ci-required:
     name: ci-required
     if: always()
     needs:
-      - build-test
-      - fmt
-      - format-extra
-      - clippy
-      - doc
-      - conformance
-      - corpus-sweep
-      - metrics
-      - work
-      - spell-check
-      - actionlint
-      - cargo-deny
+      - quality
       - conventional-commits
-      - msrv
-      - no-std
-      - bench-build
-      - coverage
-      - mutants
-      - oracle
-      - rayon
-      - image
-      - fuzz
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
-      - name: verify all required jobs passed (skipped counts as pass)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: require every event-specific ordinary role to succeed
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
-        run: |-
-          results="$RESULTS"
-          echo "needs results: $results"
-          for r in $results; do
-            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
-              echo "::error::a required job did not pass ($r)"
-              exit 1
-            fi
-          done
-          echo "all required jobs passed"
+          EVENT_NAME: ${{ github.event_name }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: cargo run --locked --quiet -p xtask -- ci required --event "$EVENT_NAME" --needs "$NEEDS_JSON"
 
-  # The one status check branch protection requires,
-  # named the same in every P4suta repository.
-  # It passes only when every job it needs succeeded or was skipped.
   required:
     name: required
     if: always()
     needs: [ci-required]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
     steps:
-      - name: Fail unless every needed job succeeded or was skipped
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: require the strict aggregate to succeed
         env:
-          RESULTS: ${{ toJSON(needs.*.result) }}
-        run: |-
-          echo "${RESULTS}"
-          jq -e 'all(.[]; IN("success", "skipped"))' <<< "${RESULTS}"
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: cargo run --locked --quiet -p xtask -- ci required --final --needs "$NEEDS_JSON"

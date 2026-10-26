@@ -21,6 +21,7 @@ mut_packages := "-p webpkit -p webpkit-cli"
 # Declared MSRV, verified by `just msrv` / the CI msrv gate. Keep == Cargo.toml.
 # Floor pinned by let-chains, `is_multiple_of`, and the optional `image` dep (all 1.88).
 msrv := "1.88"
+fuzz_toolchain := "nightly-2026-07-01"
 
 default:
     @just --list
@@ -73,15 +74,15 @@ build:
     cargo build --workspace --all-targets
 
 test:
-    @if [ "{{nextest_present}}" = "1" ]; then \
-        echo "==> cargo nextest run --workspace"; \
-        cargo nextest run --workspace; \
+    @if [ "{{ nextest_present }}" = "1" ]; then \
+        echo "==> cargo nextest run --workspace --features webpkit/image,webpkit/rayon"; \
+        cargo nextest run --workspace --features webpkit/image,webpkit/rayon; \
     else \
-        echo "==> nextest absent -> cargo test --workspace"; \
-        cargo test --workspace; \
+        echo "==> nextest absent -> cargo test --workspace --features webpkit/image,webpkit/rayon"; \
+        cargo test --workspace --features webpkit/image,webpkit/rayon; \
     fi
-    @echo "==> cargo test --doc --workspace"
-    cargo test --doc --workspace
+    @echo "==> cargo test --doc --workspace --features webpkit/image,webpkit/rayon"
+    cargo test --doc --workspace --features webpkit/image,webpkit/rayon
 
 # ----- format / lint -----
 
@@ -96,11 +97,11 @@ fmt-check:
     cargo fmt --all -- --check
     cargo sort --workspace --check
     taplo fmt --check
-    biome format .
+    biome ci .
     yamlfmt --lint .
 
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --features webpkit/image,webpkit/rayon -- -D warnings
 
 deny:
     cargo deny check advisories bans licenses sources
@@ -116,7 +117,7 @@ actionlint:
 
 # Build rustdoc under `RUSTDOCFLAGS=-D warnings` (mirrors CI's doc gate).
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features webpkit/image,webpkit/rayon
 
 # Aggregated merge gate (mirrors CI).
 lint:
@@ -125,6 +126,13 @@ lint:
     just deny
     just typos
     just actionlint
+
+# The ordinary PR and merge-group gate, kept to checks that are useful on every change.
+check:
+    just lint
+    just test
+    just doc
+    just no-std-host
 
 # ----- conformance / verification (webp) -----
 
@@ -226,18 +234,18 @@ bench:
 # opt-vs-ref delta comes from two point estimates measured back-to-back (no
 # cold-baseline bias). Local-only; never a CI gate.
 #   just bench-kernels               # all kernels
-#   just bench-kernels sse_block     # filter to one kernel's group
+# just bench-kernels sse_block     # filter to one kernel's group
 bench-kernels filter="":
-    cargo bench -p webpkit-bench --features bench --bench kernels -- "{{filter}}"
+    cargo bench -p webpkit-bench --features bench --bench kernels -- "{{ filter }}"
 
 # In-process comparison vs the libwebp C reference -> self-contained HTML
 # dashboard (size, lossy quality, and wall-clock speed). Links libwebp via
 # `libwebp-sys` and measures both codecs in the same process (no CLI/IO skew).
 # Local-only (timing is machine-dependent); the report is written under target/.
 #   just report-vs-libwebp                    # -> target/vs-libwebp.html
-#   just report-vs-libwebp out.html
+# just report-vs-libwebp out.html
 report-vs-libwebp out="target/vs-libwebp.html":
-    cargo run -p webpkit --example vs_libwebp --features oracle --release -- "{{out}}"
+    cargo run -p webpkit --example vs_libwebp --features oracle --release -- "{{ out }}"
 
 # Encode/decode throughput over a directory of real images (print-only, NOT gated).
 # `dir` is a pure runtime path — nothing is written into it or the repo, and no
@@ -245,41 +253,44 @@ report-vs-libwebp out="target/vs-libwebp.html":
 # LTO) so rebuilds after an encoder edit are seconds; timing deltas stay valid as
 # long as before/after both use it. Needs cwebp on PATH (soft-skips otherwise).
 #   just bench-real ~/images                 # full corpus, 512px cap, best-of-5
-#   just bench-real ~/images 256 1 3         # 256px cap, best-of-1, first 3 images
+# just bench-real ~/images 256 1 3         # 256px cap, best-of-1, first 3 images
 bench-real dir max_edge="512" iters="5" limit="0":
-    cargo run --profile quick --quiet -p xtask -- bench-real "{{dir}}" --max-edge {{max_edge}} --iters {{iters}} --limit {{limit}}
+    cargo run --profile quick --quiet -p xtask -- bench-real "{{ dir }}" --max-edge {{ max_edge }} --iters {{ iters }} --limit {{ limit }}
 
 # Line coverage of the published crates with per-crate floors (tooling crates
 # excluded). One instrumented run, two report checks — mirrors the CI coverage job.
 coverage:
     cargo llvm-cov nextest --workspace --no-report
-    cargo llvm-cov report --ignore-filename-regex {{cov_exclude}} --fail-under-lines {{coverage_floor}}
-    cargo llvm-cov report --ignore-filename-regex {{cli_cov_exclude}} --fail-under-lines {{cli_coverage_floor}}
+    cargo llvm-cov report --ignore-filename-regex {{ cov_exclude }} --fail-under-lines {{ coverage_floor }}
+    cargo llvm-cov report --ignore-filename-regex {{ cli_cov_exclude }} --fail-under-lines {{ cli_coverage_floor }}
 
 # Mutation-test the product crates; survivors mark assertion gaps. Long by
 # default — narrow with pass-through args (`just mutants --file <path>` / `--shard 0/4`).
 mutants *args:
-    cargo mutants {{mut_packages}} --test-tool nextest {{args}}
+    cargo mutants {{ mut_packages }} --test-tool nextest {{ args }}
 
-# Reproduce the CI PR gate locally: mutation-test only lines changed vs base (default origin/main).
+# Investigate mutations on lines changed versus a base revision (default origin/main).
 mutants-diff base="origin/main":
     @mkdir -p target
-    git diff "{{base}}...HEAD" > target/mutants-diff.patch
-    cargo mutants --in-diff target/mutants-diff.patch {{mut_packages}} --test-tool nextest
+    git diff "{{ base }}...HEAD" > target/mutants-diff.patch
+    cargo mutants --in-diff target/mutants-diff.patch {{ mut_packages }} --test-tool nextest
 
 # Verify the declared MSRV over the consumer surface of the published crates
 # (default / feature opt-ins / no_std). Not `--all-targets`: dev/tooling deps
 # (e.g. cargo-platform) need a newer rustc and no consumer builds them.
 msrv:
-    cargo +{{msrv}} check -p webpkit -p webpkit-cli --locked
-    cargo +{{msrv}} check -p webpkit --features rayon,image --locked
-    cargo +{{msrv}} check -p webpkit --no-default-features --features alloc --locked
+    cargo +{{ msrv }} check -p webpkit -p webpkit-cli --locked
+    cargo +{{ msrv }} check -p webpkit --features rayon,image --locked
+    cargo +{{ msrv }} check -p webpkit --no-default-features --features alloc --locked
 
 # Build the product crate as a no_std library (host + bare-metal) to prove no
 # accidental `std::` use crept into production code.
-no-std:
-    rustup target add thumbv7em-none-eabi
+no-std-host:
     cargo build -p webpkit --no-default-features --features alloc
+
+no-std:
+    just no-std-host
+    rustup target add thumbv7em-none-eabi
     cargo build -p webpkit --no-default-features --features alloc --target thumbv7em-none-eabi
 
 # In-process differential against the libwebp reference (links libwebp-sys) —
@@ -296,13 +307,31 @@ example:
 fuzz-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
+    shopt -s nullglob
+    corpus_root=$(mktemp -d)
+    trap 'rm -rf -- "$corpus_root"' EXIT
+    revision_corpus="$corpus_root/revision"
+    mkdir -p "$revision_corpus"
+    cp xtask/fuzz/corpus/revision/* "$revision_corpus/"
+    cargo +{{ fuzz_toolchain }} fuzz run revision "$revision_corpus" --fuzz-dir xtask/fuzz --features fuzzing -- -seed=1 -runs=16384
     for crate in webpkit-lossless-fuzz webpkit-lossy-fuzz webpkit-fuzz; do
-      for dir in crates/"$crate"/seeds/*/; do
+      targets=(crates/"$crate"/seeds/*/)
+      if [[ ${#targets[@]} -eq 0 ]]; then
+        echo "::error::no fuzz seed targets found for $crate"
+        exit 1
+      fi
+      for dir in "${targets[@]}"; do
         target=$(basename "$dir")
+        seeds=("$dir"*)
+        if [[ ${#seeds[@]} -eq 0 ]]; then
+          echo "::error::no fuzz seeds found for $crate/$target"
+          exit 1
+        fi
         echo "==> fuzz-smoke $crate/$target"
-        mkdir -p "crates/$crate/corpus/$target"
-        cp -n "crates/$crate/seeds/$target/"* "crates/$crate/corpus/$target/" 2>/dev/null || true
-        cargo +nightly fuzz run "$target" --fuzz-dir "crates/$crate" --features fuzzing -- -runs=16384
+        corpus="$corpus_root/$crate/$target"
+        mkdir -p "$corpus"
+        cp "${seeds[@]}" "$corpus/"
+        cargo +{{ fuzz_toolchain }} fuzz run "$target" "$corpus" --fuzz-dir "crates/$crate" --features fuzzing -- -seed=1 -runs=16384
       done
     done
 
@@ -314,22 +343,22 @@ hooks:
 # ----- lefthook delegated recipes (do not run directly) -----
 
 _hook-fmt +files:
-    cargo fmt -- {{files}}
+    cargo fmt -- {{ files }}
 
 _hook-cargo-sort:
     cargo sort --workspace
 
 _hook-taplo-fmt +files:
-    taplo fmt {{files}}
+    taplo fmt {{ files }}
 
 _hook-biome-format +files:
-    biome format --write {{files}}
+    biome format --write {{ files }}
 
 _hook-yamlfmt +files:
-    yamlfmt {{files}}
+    yamlfmt {{ files }}
 
 _hook-typos-fix +files:
-    typos --write-changes {{files}}
+    typos --write-changes {{ files }}
 
 _hook-actionlint +files:
-    actionlint {{files}}
+    actionlint {{ files }}

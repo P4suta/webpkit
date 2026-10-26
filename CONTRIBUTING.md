@@ -1,87 +1,51 @@
 # Contributing
 
-Contributions to webpkit are welcome. webpkit is a pure-Rust WebP codec —
-**VP8L** (lossless) and **VP8** (lossy), decode and encode — developed
-**test-first** and verified against golden fixtures produced by libwebp's
-`cwebp` / `dwebp`.
+webpkit implements WebP decoding and encoding in Rust.
+Use failing regression tests and libwebp fixtures to establish intended codec behavior before changing it.
 
 ## Setup
 
-The toolchain is pinned via [mise](https://mise.jdx.dev/) (`mise.toml`); tasks
-run through [just](https://github.com/casey/just). The Rust toolchain itself is
-owned by `rust-toolchain.toml`.
+Install the tools declared in `mise.toml`, then run `mise x -- just bootstrap` and `mise x -- just doctor`.
+`rust-toolchain.toml` selects the development compiler.
+Use Git Bash for Just recipes on Windows.
 
-```
-mise install        # install pinned tools (incl. cwebp/dwebp via the http backend)
-just bootstrap      # one-shot setup: rustup components, git hooks
-just doctor         # verify the environment matches the pins
-```
+## Development
 
-Declare tools in `mise.toml` and install via `mise install`; do not add them ad
-hoc.
+Run `mise x -- just check` before pushing.
+The pre-push hook runs the same command.
+The gate checks formatting, Clippy, dependencies, spelling, workflows, workspace tests and doctests, documentation, the image feature, and the host `no_std` build.
+Workspace checks explicitly enable `webpkit/image` and `webpkit/rayon`.
+Workspace tests include conformance ledgers, stable fuzz seeds, image conversions, and the Rayon paths.
+The revision corpus replay shares acceptance and round-trip assertions with its release-only fuzz target.
+Pull requests and merge groups run one Linux quality job instead of repeating those suites in separate jobs.
 
-## Dev loop
+Use `just lint`, `just test`, or `just doc` for a narrower development check.
+The supported Rust floor is 1.88.
+Run `just msrv` before introducing a newer language or library feature.
+Keep the workspace `rust-version` and the Justfile MSRV declaration consistent.
+Update `Cargo.toml`, the Justfile, and CI together when raising the supported floor.
+Treat an increase as a minor-version bump.
 
-```
-just lint     # fmt-check + clippy -D warnings + cargo-deny + typos + actionlint
-just test     # cargo nextest (falls back to cargo test) + cargo test --doc
-just doc      # rustdoc under -D warnings
-```
+## Fixtures and verification
 
-## MSRV
+Keep generated goldens and `conformance-results-*.json` ledgers unchanged unless codec output intentionally changes.
+Use `just gen-fixtures` to regenerate libwebp fixtures and `just gen-ledgers` to regenerate conformance ledgers.
+`just conformance` and `just drift-gate` run the corresponding checks without rewriting them.
 
-MSRV is **1.88**, declared in `Cargo.toml` (`rust-version`) and mirrored in the
-`Justfile` `msrv` variable and the CI `msrv` gate. Before using a newer `std` or
-language feature, run `just msrv`; if the feature is needed, raise all three in
-lockstep and treat the bump as a minor version bump.
+Release qualification checks the selected full commit on Windows and macOS, the MSRV, bare-metal `no_std`, corpus and measurement ledgers, reference suites, coverage, mutation testing, policy proofs, and fuzz discovery.
+Those checks run before publication rather than on every pull request or a schedule.
+The documented fuzz-linking defect leaves discovery incomplete until repaired.
+A skipped or failed role can't qualify a release.
+Read [the CI decision](docs/adr/release-only-heavy-checks.md) for source binding and [mutation testing](docs/mutation-testing.md) for survivor handling.
 
-## Verification methodology
+## Pull requests and releases
 
-webpkit follows an external-verification discipline:
-
-- **Golden fixtures.** Cases live under `crates/webpkit-lossless-conformance/fixtures/{decode,encode}/<case>/`
-  as `meta.toml` + `input.*` + `expected.*`. Goldens are produced by libwebp
-  (`cwebp` / `dwebp`) — **never hand-edited.** Regenerate with `just gen-fixtures`.
-- **Conformance ledger.** Each codec's `*-conformance` crate owns an in-crate
-  `tests/ledger.rs` drift-gate over its committed `conformance-results-*.json`
-  ledger — all three (VP8L, VP8, alpha/anim) symmetric. `just conformance` /
-  `just drift-gate` run the gates; `just gen-ledgers` regenerates the ledgers
-  after an intended output change.
-- **Property + fuzz + differential tests.** Both codecs carry proptest suites
-  (the lossy strategies are shared via `webpkit-lossy-proptest`) and cargo-fuzz
-  targets (`webpkit-lossless-fuzz` / `webpkit-lossy-fuzz` / `webpkit-fuzz`,
-  `just fuzz-smoke`); the differential path cross-checks against libwebp behind
-  the `oracle` feature. The CI `fuzz` job is currently `workflow_dispatch`-only
-  (an upstream cargo-fuzz/sancov link regression on 2026 nightlies — see the
-  `TODO(fuzz)` in `.github/workflows/ci.yml`); when bumping `NIGHTLY_TOOLCHAIN` or
-  cargo-fuzz, re-check that `cargo fuzz build` links and re-enable the push/PR
-  trigger if it does.
-- **Mutation testing.** [cargo-mutants](https://mutants.rs/) injects deliberate
-  bugs into the product crates; a surviving mutant is an assertion the tests do
-  not make. `just mutants` runs the full (slow) sweep; `just mutants --file <path>`
-  narrows it. CI gates each PR on `--in-diff`, so new or edited product code must
-  ship with a test that catches its mutations. See `docs/mutation-testing.md`.
-- **TDD.** Write the failing test / fixture first, then make it pass.
-
-## Commit / PR rules
-
-- [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` / `fix:` /
-  `perf:` / `docs:` / `refactor:` / `test:` / `chore:` / `ci:` / `build:`).
-  committed (`committed.toml`) enforces this locally on the `commit-msg` hook.
-- **Squash-merge only.**
-- Releases are cut by [release-plz](https://release-plz.dev): it opens a release PR
-  that bumps the version + CHANGELOG from conventional commits, then on merge
-  publishes to crates.io (cargo-semver-checks gates breaking changes) and tags.
-
-## Before pushing
-
-- `just lint` and `just test` green (the `lefthook` pre-push hook runs both).
-- **Do not hand-edit generated artifacts:** conformance goldens and the
-  `conformance-results-*.json` ledgers. Regenerate them via `just gen-fixtures` /
-  `just gen-ledgers`.
-- Do not bypass hooks with `--no-verify`. If a hook fails, fix the cause.
+Use [Conventional Commits](https://www.conventionalcommits.org/) and describe the behavior change, its issue, and the checks performed.
+Pull requests are squash-merged.
+Release-plz prepares version proposals from conventional commits.
+Publication requires complete qualification of the selected source and preserves semantic-version checks and the existing registry authentication.
+A version proposal or ordinary main commit doesn't supply release verification.
 
 ## License
 
-Contributions are accepted under the project's dual MIT / Apache-2.0 license
-([`LICENSE-MIT`](LICENSE-MIT) / [`LICENSE-APACHE`](LICENSE-APACHE)).
+Contributions use the project's dual [`MIT`](LICENSE-MIT) and [`Apache-2.0`](LICENSE-APACHE) license.

@@ -63,11 +63,7 @@ commit-msg:
       run: committed --commit-file {1}
 
 pre-push:
-  piped: true
   commands:
-    lint:
-      tags: lint
-      run: just lint
-    test:
-      tags: test
-      run: just test
+    check:
+      tags: check
+      run: just check

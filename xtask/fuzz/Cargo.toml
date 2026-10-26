@@ -1,0 +1,31 @@
+[package]
+name = "webpkit-ci-fuzz"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Revision parser fuzzing and committed seed replay."
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[[bin]]
+name = "revision"
+path = "fuzz_targets/revision.rs"
+test = false
+doc = false
+bench = false
+required-features = ["fuzzing"]
+
+[features]
+fuzzing = ["dep:libfuzzer-sys"]
+
+[dependencies]
+libfuzzer-sys = { workspace = true, optional = true }
+webpkit-ci-core = { path = "../ci-core" }
+
+[lints]
+workspace = true

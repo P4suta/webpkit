@@ -36,6 +36,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod bench;
+mod ci_adapter;
 mod common;
 mod corpus;
 mod fixtures;
@@ -66,6 +67,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Task {
+    /// Check source identities and complete CI role inventories.
+    Ci {
+        #[command(subcommand)]
+        command: ci_adapter::CiCommand,
+    },
     /// Invoke libwebp `cwebp`/`dwebp` to (re)generate golden fixtures.
     GenFixtures,
     /// Sweep the committed image corpus for decoder/encoder regressions.
@@ -169,6 +175,7 @@ enum Task {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Task::Ci { command } => ci_adapter::run(command),
         Task::GenFixtures => fixtures::gen_fixtures(),
         Task::CorpusSweep { bless } => corpus::corpus_sweep(bless),
         Task::Metrics {

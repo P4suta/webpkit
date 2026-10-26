@@ -15,6 +15,8 @@ members = [
     "crates/webpkit-lossy-proptest",
     "crates/webpkit-samples",
     "xtask",
+    "xtask/ci-core",
+    "xtask/fuzz",
 ]
 default-members = ["crates/webpkit"]
 
@@ -89,14 +91,15 @@ multiple_crate_versions = "allow" # depends on the transitive graph, uncontrolla
 cargo_common_metadata = "allow"   # internal, publish=false
 
 [workspace.lints.rust]
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(kani)"] }
 unsafe_op_in_unsafe_fn = "deny"
 unreachable_pub = "deny"
 elided_lifetimes_in_paths = "deny"
 single_use_lifetimes = "deny"
 trivial_casts = "deny"
 trivial_numeric_casts = "deny"
-static_mut_refs = "deny"           # forbid references through `static mut`
-missing_docs = "deny"              # doc required on every public item
+static_mut_refs = "deny"                                        # forbid references through `static mut`
+missing_docs = "deny"                                           # doc required on every public item
 
 [profile.release]
 lto = "fat"
