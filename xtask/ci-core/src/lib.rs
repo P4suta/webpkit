@@ -6,8 +6,9 @@
 mod decisions;
 
 pub use decisions::{
-    Association, Candidate, Event, JobReport, Outcome, Qualified, Refusal, Repository, Revision,
-    Role, SourceFacts, candidate, final_summary, ordinary_summary, qualify, source,
+    AffectedWork, Association, Candidate, CodeqlScope, Event, JobReport, Outcome, Qualified,
+    QualityWork, Refusal, Repository, Revision, Role, SourceFacts, affected_work, candidate,
+    final_summary, ordinary_summary, qualify, source,
 };
 
 #[cfg(test)]

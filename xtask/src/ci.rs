@@ -19,6 +19,146 @@ pub enum Refusal {
     Qualification,
 }
 
+/// The ordinary quality work required by the changed source paths.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QualityWork {
+    /// Run only the source-bound workflow checks.
+    Workflows,
+    /// Run the complete ordinary quality gate.
+    Full,
+}
+
+/// The `CodeQL` languages selected by the changed source paths.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CodeqlScope {
+    /// Analyze Rust only.
+    Rust,
+    /// Analyze GitHub Actions only.
+    Actions,
+    /// Analyze both languages.
+    Both,
+}
+
+/// Independent ordinary-quality and `CodeQL` work selected for a complete path set.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AffectedWork {
+    /// The ordinary quality gate to run.
+    pub quality: QualityWork,
+    /// The `CodeQL` languages to analyze.
+    pub codeql: CodeqlScope,
+}
+
+/// Select affected work from a complete set of repository-relative Git paths.
+///
+/// Workflow YAML other than the ordinary CI definition selects workflow-only quality.
+/// The `CodeQL` workflow selects both analysis languages.
+/// Unknown, empty, invalid, and mixed path sets select full quality and both analyses.
+#[must_use]
+pub fn affected_work(paths: &[&str]) -> AffectedWork {
+    if paths.is_empty() {
+        return full_both();
+    }
+
+    let mut workflows_only = true;
+    let mut rust = false;
+    let mut actions = false;
+    for path in paths {
+        if !valid_repository_path(path) {
+            return full_both();
+        }
+        if let Some(name) = workflow_yaml(path) {
+            actions = true;
+            if name == "ci.yml" || name == "ci.yaml" {
+                workflows_only = false;
+                rust = true;
+            }
+            if name == "codeql.yml" || name == "codeql.yaml" {
+                rust = true;
+            }
+            continue;
+        }
+        workflows_only = false;
+        if action_definition(path) {
+            actions = true;
+            continue;
+        }
+        if rust_input(path) {
+            rust = true;
+        } else {
+            return full_both();
+        }
+    }
+
+    AffectedWork {
+        quality: if workflows_only {
+            QualityWork::Workflows
+        } else {
+            QualityWork::Full
+        },
+        codeql: match (rust, actions) {
+            (true, true) => CodeqlScope::Both,
+            (true, false) => CodeqlScope::Rust,
+            (false, true) => CodeqlScope::Actions,
+            (false, false) => return full_both(),
+        },
+    }
+}
+
+const fn full_both() -> AffectedWork {
+    AffectedWork {
+        quality: QualityWork::Full,
+        codeql: CodeqlScope::Both,
+    }
+}
+
+fn valid_repository_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains('\\')
+        && !path.contains(':')
+        && !path.bytes().any(|byte| byte.is_ascii_control())
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+fn workflow_yaml(path: &str) -> Option<&str> {
+    let name = path.strip_prefix(".github/workflows/")?;
+    if name.contains('/') {
+        return None;
+    }
+    let stem = name
+        .strip_suffix(".yml")
+        .or_else(|| name.strip_suffix(".yaml"))?;
+    (!stem.is_empty()).then_some(name)
+}
+
+fn action_definition(path: &str) -> bool {
+    let Some(name) = path.strip_prefix(".github/actions/") else {
+        return false;
+    };
+    name.contains('/') && (name.ends_with("/action.yml") || name.ends_with("/action.yaml"))
+}
+
+fn rust_input(path: &str) -> bool {
+    matches!(
+        path,
+        "Cargo.toml"
+            | "Cargo.lock"
+            | "rust-toolchain"
+            | "rust-toolchain.toml"
+            | "rustfmt.toml"
+            | "clippy.toml"
+            | ".cargo/config"
+            | ".cargo/config.toml"
+            | "build.rs"
+    ) || ((path.starts_with("crates/") || path.starts_with("xtask/"))
+        && (path
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extension == "rs")
+            || path.ends_with("/Cargo.toml")))
+}
+
 /// A complete, normalized Git SHA-1 identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Revision([u8; Self::LENGTH]);
@@ -325,9 +465,220 @@ pub fn qualify(revision: Revision, reports: &[JobReport]) -> Result<Qualified, R
 #[cfg(kani)]
 mod proofs {
     use super::{
-        Association, Event, JobReport, Outcome, Repository, Revision, Role, SourceFacts, candidate,
-        final_summary, ordinary_summary, qualify, source,
+        AffectedWork, Association, CodeqlScope, Event, JobReport, Outcome, QualityWork, Repository,
+        Revision, Role, SourceFacts, affected_work, candidate, final_summary, ordinary_summary,
+        qualify, source,
     };
+
+    #[kani::proof]
+    #[kani::unwind(64)]
+    fn affected_work_routes_recognized_workflow_boundaries() {
+        assert_eq!(
+            affected_work(&[".github/workflows/release-plz.yml"]),
+            AffectedWork {
+                quality: QualityWork::Workflows,
+                codeql: CodeqlScope::Actions,
+            }
+        );
+        assert_eq!(
+            affected_work(&[".github/workflows/ci.yml"]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Both,
+            }
+        );
+        assert_eq!(
+            affected_work(&[".github/workflows/codeql.yml"]),
+            AffectedWork {
+                quality: QualityWork::Workflows,
+                codeql: CodeqlScope::Both,
+            }
+        );
+
+        // The bounded ASCII suffix keeps the generated path outside the reserved workflow names.
+        let suffix: [u8; 8] = kani::any();
+        for byte in suffix {
+            kani::assume(byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+        }
+        let prefix = b".github/workflows/release-";
+        let extension = b".yml";
+        let mut path_bytes = [0u8; b".github/workflows/release-".len() + 8 + b".yml".len()];
+        let suffix_start = prefix.len();
+        let extension_start = suffix_start + suffix.len();
+        path_bytes[..suffix_start].copy_from_slice(prefix);
+        path_bytes[suffix_start..extension_start].copy_from_slice(&suffix);
+        path_bytes[extension_start..].copy_from_slice(extension);
+        let path = core::str::from_utf8(&path_bytes).expect("bounded ASCII path is UTF-8");
+        assert_eq!(
+            affected_work(&[path]),
+            AffectedWork {
+                quality: QualityWork::Workflows,
+                codeql: CodeqlScope::Actions,
+            }
+        );
+        kani::cover!(suffix[0] == b'a');
+    }
+
+    #[kani::proof]
+    #[kani::unwind(64)]
+    fn affected_work_routes_recognized_rust_and_action_inputs() {
+        assert_eq!(
+            affected_work(&["crates/webpkit/src/lib.rs"]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Rust,
+            }
+        );
+        assert_eq!(
+            affected_work(&[".github/actions/setup/action.yml"]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Actions,
+            }
+        );
+        assert_eq!(
+            affected_work(&[
+                ".github/workflows/release-plz.yml",
+                "crates/webpkit/src/lib.rs"
+            ]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Both,
+            }
+        );
+
+        // Fixed suffixes place the bounded ASCII component inside recognized source namespaces.
+        let component: [u8; 8] = kani::any();
+        for byte in component {
+            kani::assume(byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+        }
+        let crate_prefix = b"crates/";
+        let crate_suffix = b"/src/lib.rs";
+        let mut crate_path_bytes = [0u8; b"crates/".len() + 8 + b"/src/lib.rs".len()];
+        let crate_component_end = crate_prefix.len() + component.len();
+        crate_path_bytes[..crate_prefix.len()].copy_from_slice(crate_prefix);
+        crate_path_bytes[crate_prefix.len()..crate_component_end].copy_from_slice(&component);
+        crate_path_bytes[crate_component_end..].copy_from_slice(crate_suffix);
+        let crate_path =
+            core::str::from_utf8(&crate_path_bytes).expect("bounded ASCII path is UTF-8");
+        assert_eq!(
+            affected_work(&[crate_path]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Rust,
+            }
+        );
+
+        let action_prefix = b".github/actions/";
+        let action_suffix = b"/action.yml";
+        let mut action_path_bytes = [0u8; b".github/actions/".len() + 8 + b"/action.yml".len()];
+        let action_component_end = action_prefix.len() + component.len();
+        action_path_bytes[..action_prefix.len()].copy_from_slice(action_prefix);
+        action_path_bytes[action_prefix.len()..action_component_end].copy_from_slice(&component);
+        action_path_bytes[action_component_end..].copy_from_slice(action_suffix);
+        let action_path =
+            core::str::from_utf8(&action_path_bytes).expect("bounded ASCII path is UTF-8");
+        assert_eq!(
+            affected_work(&[action_path]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Actions,
+            }
+        );
+        kani::cover!(component[0] == b'a');
+    }
+
+    #[kani::proof]
+    #[kani::unwind(64)]
+    fn affected_work_unknown_and_empty_inputs_keep_full_selection() {
+        assert_eq!(
+            affected_work(&[]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Both,
+            }
+        );
+        assert_eq!(
+            affected_work(&["docs/unknown-format.md"]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Both,
+            }
+        );
+        assert_eq!(
+            affected_work(&[
+                ".github/workflows/release-plz.yml",
+                "docs/unknown-format.md"
+            ]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Both,
+            }
+        );
+
+        // Category indices select recognized paths; bounded ASCII names under `notes/` remain unknown.
+        let categories: [u8; 4] = kani::any();
+        for category in categories {
+            kani::assume(category < 5);
+        }
+        let prefix_count: usize = kani::any();
+        kani::assume(prefix_count <= categories.len());
+        let mut paths = [""; 5];
+        for index in 0..prefix_count {
+            paths[index] = match categories[index] {
+                0 => ".github/workflows/release-plz.yml",
+                1 => ".github/workflows/ci.yml",
+                2 => ".github/workflows/codeql.yml",
+                3 => "crates/webpkit/src/lib.rs",
+                _ => ".github/actions/setup/action.yml",
+            };
+        }
+        let suffix: [u8; 8] = kani::any();
+        for byte in suffix {
+            kani::assume(byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+        }
+        let prefix = b"notes/";
+        let mut unknown_bytes = [0u8; b"notes/".len() + 8];
+        unknown_bytes[..prefix.len()].copy_from_slice(prefix);
+        unknown_bytes[prefix.len()..].copy_from_slice(&suffix);
+        let unknown = core::str::from_utf8(&unknown_bytes).expect("bounded ASCII path is UTF-8");
+        assert_eq!(
+            affected_work(&[unknown]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Both,
+            }
+        );
+        paths[prefix_count] = unknown;
+        assert_eq!(
+            affected_work(&paths[..prefix_count + 1]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Both,
+            }
+        );
+        kani::cover!(prefix_count == categories.len());
+
+        // A symbolic choice ranges over independently stated malformed path shapes.
+        let malformed_kind: u8 = kani::any();
+        kani::assume(malformed_kind < 7);
+        let malformed = match malformed_kind {
+            0 => "",
+            1 => "../notes/file.txt",
+            2 => "/notes/file.txt",
+            3 => "notes//file.txt",
+            4 => "notes\\file.txt",
+            5 => "notes/file:name.txt",
+            _ => "notes/file\nname.txt",
+        };
+        assert_eq!(
+            affected_work(&[malformed]),
+            AffectedWork {
+                quality: QualityWork::Full,
+                codeql: CodeqlScope::Both,
+            }
+        );
+    }
 
     #[kani::proof]
     #[kani::unwind(42)]

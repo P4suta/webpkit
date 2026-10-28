@@ -1,14 +1,4 @@
-# CodeQL security analysis (Advanced Setup). Scans the Rust codec source and the
-# repository's own GitHub Actions workflows, uploading results to Security > Code
-# scanning. Advanced (not Default) setup so the language set, query suite, and
-# SHA-pinned action versions live in-repo under the same review as the code —
-# matching this repo's "pin every action" convention.
-#
-# Languages:
-#   - rust    the codec itself (build-mode: none — the only mode the Rust analysis
-#             supports; it resolves the cargo workspace without a traced build).
-#   - actions the workflows under .github/workflows (catches injection / unsafe
-#             checkout / token-scope issues in CI YAML).
+# Analyze affected Rust and GitHub Actions source.
 name: CodeQL
 
 on:
@@ -16,33 +6,57 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    # Weekly re-scan (Mon 03:27 UTC) so newly-published CodeQL queries run against
-    # unchanged code, not only on new commits.
-    - cron: "27 3 * * 1"
 
 permissions:
-  contents: read
+  contents: read # check out the source
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: 1.99.1
 
 jobs:
+  plan:
+    name: select analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.selection.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: install the repository Rust toolchain
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - name: select affected analysis languages
+        id: selection
+        shell: bash
+        env:
+          CI_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_REVISION: ${{ github.sha }}
+        run: |
+          matrix=$(cargo run --locked --quiet -p webpkit-ci-select --bin ci-select -- codeql-matrix)
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+
   analyze:
     name: analyze (${{ matrix.language }})
+    needs: [plan]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       security-events: write # upload the SARIF results to code scanning
-      actions: read
-      contents: read
+      actions: read # inspect workflow metadata
+      contents: read # check out the source
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - language: rust
-            build-mode: none
-          - language: actions
-            build-mode: none
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: initialize CodeQL
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:

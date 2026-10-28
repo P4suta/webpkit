@@ -1623,6 +1623,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "webpkit-ci-select"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "webpkit-ci-core",
+]
+
+[[package]]
 name = "webpkit-cli"
 version = "0.1.0"
 dependencies = [

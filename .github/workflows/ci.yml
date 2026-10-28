@@ -29,6 +29,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: install the repository Rust toolchain
         run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -63,7 +64,10 @@ jobs:
             | tar xz -C /tmp ./typos
           echo /tmp >> "$GITHUB_PATH"
       - name: run the ordinary quality gate
-        run: npx --yes --package="@biomejs/biome@2.6.2" -- just check
+        env:
+          CI_BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          CI_HEAD_REVISION: ${{ github.sha }}
+        run: npx --yes --package="@biomejs/biome@2.6.2" -- just check-changes
 
   conventional-commits:
     name: conventional commits
