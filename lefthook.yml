@@ -66,4 +66,4 @@ pre-push:
   commands:
     check:
       tags: check
-      run: just check
+      run: just check-changes

@@ -297,11 +297,45 @@ fn ordinary_contract(source: &Yaml) -> Result<()> {
         "ordinary work inventory must remain lean"
     );
     let jobs = &source["jobs"];
+    let quality = &jobs["quality"];
+    let steps = quality["steps"]
+        .as_vec()
+        .context("ordinary quality steps")?;
+    let dispatch = steps
+        .iter()
+        .find(|step| {
+            step["run"]
+                .as_str()
+                .is_some_and(|run| run.ends_with("-- just check-changes"))
+        })
+        .context("ordinary checked dispatch")?;
     ensure!(
-        runs(&jobs["quality"])
-            .iter()
-            .any(|run| run.ends_with("-- just check")),
-        "ordinary quality must execute the complete project gate"
+        dispatch["env"]["CI_BASE_REVISION"].as_str()
+            == Some(
+                "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
+            )
+            && dispatch["env"]["CI_HEAD_REVISION"].as_str() == Some("${{ github.sha }}"),
+        "ordinary dispatch must compare the checked event source"
+    );
+    ensure!(
+        dispatch["if"].is_badvalue()
+            && dispatch["continue-on-error"].is_badvalue()
+            && quality["if"].is_badvalue()
+            && quality["continue-on-error"].is_badvalue(),
+        "ordinary dispatch cannot skip work or ignore its failure"
+    );
+    let checkout = steps
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("actions/checkout@"))
+        })
+        .context("ordinary source checkout")?;
+    ensure!(
+        checkout["with"]["fetch-depth"].as_i64() == Some(0)
+            && checkout["with"]["persist-credentials"].as_bool() == Some(false),
+        "ordinary selection needs comparison history without retained credentials"
     );
     let required = &jobs["ci-required"];
     ensure!(
@@ -342,6 +376,226 @@ fn ordinary_contract(source: &Yaml) -> Result<()> {
         "required context must use strict final admission"
     );
     Ok(())
+}
+
+fn codeql_contract(source: &Yaml) -> Result<()> {
+    let jobs = &source["jobs"];
+    ensure!(
+        jobs.as_hash().context("CodeQL jobs")?.len() == 2,
+        "CodeQL requires one planner and one analysis matrix"
+    );
+    let plan = &jobs["plan"];
+    ensure!(
+        plan["outputs"]["matrix"].as_str() == Some("${{ steps.selection.outputs.matrix }}")
+            && plan["if"].is_badvalue()
+            && plan["continue-on-error"].is_badvalue(),
+        "CodeQL must expose an unconditional checked selection"
+    );
+    let steps = plan["steps"].as_vec().context("CodeQL planner steps")?;
+    let selection = steps
+        .iter()
+        .find(|step| step["id"].as_str() == Some("selection"))
+        .context("CodeQL selection producer")?;
+    ensure!(
+        selection["env"]["CI_BASE_REVISION"].as_str()
+            == Some("${{ github.event.pull_request.base.sha }}")
+            && selection["env"]["CI_HEAD_REVISION"].as_str() == Some("${{ github.sha }}"),
+        "CodeQL must bind PR changes and select both languages for the main baseline"
+    );
+    let commands = selection["run"]
+        .as_str()
+        .context("CodeQL planner command")?;
+    let commands = commands.lines().map(str::trim).collect::<Vec<_>>();
+    ensure!(
+        commands
+            == [
+                "matrix=$(cargo run --locked --quiet -p webpkit-ci-select --bin ci-select -- codeql-matrix)",
+                "printf 'matrix=%s\\n' \"$matrix\" >> \"$GITHUB_OUTPUT\"",
+            ]
+            && selection["shell"].as_str() == Some("bash")
+            && selection["if"].is_badvalue()
+            && selection["continue-on-error"].is_badvalue(),
+        "CodeQL must propagate selector failures before publishing its matrix"
+    );
+    let checkout = steps
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("actions/checkout@"))
+        })
+        .context("CodeQL planner checkout")?;
+    ensure!(
+        checkout["with"]["fetch-depth"].as_i64() == Some(0)
+            && checkout["with"]["persist-credentials"].as_bool() == Some(false),
+        "CodeQL selection needs comparison history without retained credentials"
+    );
+    let analyze = &jobs["analyze"];
+    ensure!(
+        analyze["needs"].as_vec() == Some(&vec![Yaml::String("plan".to_owned())])
+            && analyze["strategy"]["matrix"].as_str()
+                == Some("${{ fromJSON(needs.plan.outputs.matrix) }}")
+            && analyze["if"].is_badvalue()
+            && analyze["continue-on-error"].is_badvalue(),
+        "CodeQL analysis must consume the successful planner matrix"
+    );
+    let steps = analyze["steps"].as_vec().context("CodeQL analysis steps")?;
+    let init = steps
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("github/codeql-action/init@"))
+        })
+        .context("CodeQL initialization")?;
+    ensure!(
+        init["with"]["languages"].as_str() == Some("${{ matrix.language }}")
+            && init["with"]["build-mode"].as_str() == Some("${{ matrix.build-mode }}")
+            && init["with"]["queries"].as_str() == Some("security-extended")
+            && init["if"].is_badvalue()
+            && init["continue-on-error"].is_badvalue(),
+        "CodeQL must analyze the selected language with the security suite"
+    );
+    let upload = steps
+        .iter()
+        .find(|step| {
+            step["uses"]
+                .as_str()
+                .is_some_and(|uses| uses.starts_with("github/codeql-action/analyze@"))
+        })
+        .context("CodeQL result upload")?;
+    ensure!(
+        upload["with"]["category"].as_str() == Some("/language:${{ matrix.language }}")
+            && upload["if"].is_badvalue()
+            && upload["continue-on-error"].is_badvalue(),
+        "CodeQL must publish each successful language analysis"
+    );
+    ensure!(
+        source["on"]["schedule"].is_badvalue()
+            && source["on"]["push"]["branches"].as_vec()
+                == Some(&vec![Yaml::String("main".to_owned())])
+            && !source["on"]["pull_request"].is_badvalue(),
+        "CodeQL must check changes and publish the main baseline without a schedule"
+    );
+    Ok(())
+}
+
+#[test]
+fn codeql_uses_the_checked_source_selection() {
+    codeql_contract(&workflow("codeql.yml").unwrap()).unwrap();
+}
+
+#[test]
+fn disconnected_or_failure_masking_codeql_selection_is_rejected() {
+    let original = workflow("codeql.yml").unwrap();
+    codeql_contract(&original).unwrap();
+    let mut changed = original.clone();
+    changed["jobs"]["analyze"]["strategy"]["matrix"] = Yaml::String("{}".to_owned());
+    assert!(codeql_contract(&changed).is_err());
+    let mut changed = original.clone();
+    let Yaml::Array(steps) = &mut changed["jobs"]["plan"]["steps"] else {
+        unreachable!()
+    };
+    let selection = steps
+        .iter_mut()
+        .find(|step| step["id"].as_str() == Some("selection"))
+        .unwrap();
+    selection["run"] = Yaml::String("printf 'matrix={}\\n' >> \"$GITHUB_OUTPUT\"".to_owned());
+    assert!(codeql_contract(&changed).is_err());
+    let mut changed = original;
+    let Yaml::Array(steps) = &mut changed["jobs"]["plan"]["steps"] else {
+        unreachable!()
+    };
+    let selection = steps
+        .iter_mut()
+        .find(|step| step["id"].as_str() == Some("selection"))
+        .unwrap();
+    selection["env"]["CI_HEAD_REVISION"] = Yaml::String("main".to_owned());
+    assert!(codeql_contract(&changed).is_err());
+    let mut changed = workflow("codeql.yml").unwrap();
+    let Yaml::Array(steps) = &mut changed["jobs"]["plan"]["steps"] else {
+        unreachable!()
+    };
+    let selection = steps
+        .iter_mut()
+        .find(|step| step["id"].as_str() == Some("selection"))
+        .unwrap();
+    selection["env"]["CI_BASE_REVISION"] =
+        Yaml::String("${{ github.event.pull_request.base.sha || github.event.before }}".to_owned());
+    assert!(codeql_contract(&changed).is_err());
+    for job in ["plan", "analyze"] {
+        let mut changed = workflow("codeql.yml").unwrap();
+        let Yaml::Hash(job) = &mut changed["jobs"][job] else {
+            unreachable!()
+        };
+        job.insert(
+            Yaml::String("continue-on-error".to_owned()),
+            Yaml::Boolean(true),
+        );
+        assert!(codeql_contract(&changed).is_err());
+    }
+}
+
+fn changed_gate_contract(source: &str, hooks: &Yaml) -> Result<()> {
+    ensure!(
+        source.contains("\nactionlint:\n    actionlint\n"),
+        "workflow lint must discover both supported YAML extensions"
+    );
+    let (_, tail) = source
+        .split_once("\ncheck-workflows:\n")
+        .context("workflow check recipe")?;
+    let commands = tail
+        .lines()
+        .take_while(|line| line.is_empty() || line.starts_with(' '))
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    for command in [
+        "just actionlint",
+        "yamlfmt --lint .github/workflows",
+        "just typos",
+        "cargo test --locked -p xtask --test ci_workflow",
+    ] {
+        ensure!(commands.contains(&command), "workflow gate lacks {command}");
+    }
+    let (_, tail) = source
+        .split_once("\ncheck-changes:\n")
+        .context("checked selection recipe")?;
+    ensure!(
+        tail.lines().next()
+            == Some("    cargo run --locked --quiet -p webpkit-ci-select --bin ci-select -- check"),
+        "local selection must run the production adapter"
+    );
+    ensure!(
+        hooks["pre-push"]["commands"]["check"]["run"].as_str() == Some("just check-changes"),
+        "pre-push must share the hosted selection entry point"
+    );
+    Ok(())
+}
+
+#[test]
+fn local_selection_retains_workflow_contracts_and_the_full_gate() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let source = fs::read_to_string(root.join("Justfile"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    let hooks = fs::read_to_string(root.join("lefthook.yml")).unwrap();
+    let hooks = YamlLoader::load_from_str(&hooks).unwrap().remove(0);
+    just_check_contract(&source).unwrap();
+    changed_gate_contract(&source, &hooks).unwrap();
+    let missing_contracts = source.replacen(
+        "    cargo test --locked -p xtask --test ci_workflow\n",
+        "",
+        1,
+    );
+    assert!(changed_gate_contract(&missing_contracts, &hooks).is_err());
+    let disconnected = source.replacen("--bin ci-select -- check", "--bin ci-select -- help", 1);
+    assert!(changed_gate_contract(&disconnected, &hooks).is_err());
+    let missing_yaml = source.replacen(
+        "\nactionlint:\n    actionlint\n",
+        "\nactionlint:\n    actionlint .github/workflows/*.yml\n",
+        1,
+    );
+    assert!(changed_gate_contract(&missing_yaml, &hooks).is_err());
 }
 
 fn just_check_contract(source: &str) -> Result<()> {
@@ -434,7 +688,7 @@ fn deleting_ordinary_tests_or_weakening_required_is_rejected() {
     steps.retain(|step| {
         !step["run"]
             .as_str()
-            .is_some_and(|run| run.ends_with("-- just check"))
+            .is_some_and(|run| run.ends_with("-- just check-changes"))
     });
     assert!(ordinary_contract(&changed).is_err());
     let source = fs::read_to_string(
@@ -568,6 +822,9 @@ fn proof_role_binds_the_exact_canonical_source_and_complete_inventory() {
         "production::proofs::candidate_selection_preserves_source",
         "production::proofs::ordinary_summary_requires_complete_work",
         "production::proofs::publication_requires_complete_same_source_qualification",
+        "production::proofs::affected_work_routes_recognized_workflow_boundaries",
+        "production::proofs::affected_work_routes_recognized_rust_and_action_inputs",
+        "production::proofs::affected_work_unknown_and_empty_inputs_keep_full_selection",
     ];
     let names: Vec<String> =
         serde_json::from_str(invocation["env"]["REQUIRED_HARNESSES"].as_str().unwrap()).unwrap();

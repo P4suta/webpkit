@@ -113,7 +113,7 @@ typos-fix:
     typos --write-changes
 
 actionlint:
-    actionlint .github/workflows/*.yml
+    actionlint
 
 # Build rustdoc under `RUSTDOCFLAGS=-D warnings` (mirrors CI's doc gate).
 doc:
@@ -127,12 +127,23 @@ lint:
     just typos
     just actionlint
 
-# The ordinary PR and merge-group gate, kept to checks that are useful on every change.
+# The complete source gate, also required for release qualification.
 check:
     just lint
     just test
     just doc
     just no-std-host
+
+# Workflow syntax and production workflow contracts.
+check-workflows:
+    just actionlint
+    yamlfmt --lint .github/workflows
+    just typos
+    cargo test --locked -p xtask --test ci_workflow
+
+# Select work from a clean checkout and a complete Git comparison.
+check-changes:
+    cargo run --locked --quiet -p webpkit-ci-select --bin ci-select -- check
 
 # ----- conformance / verification (webp) -----
 

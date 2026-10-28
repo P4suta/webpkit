@@ -16,6 +16,7 @@ members = [
     "crates/webpkit-samples",
     "xtask",
     "xtask/ci-core",
+    "xtask/ci-select",
     "xtask/fuzz",
 ]
 default-members = ["crates/webpkit"]

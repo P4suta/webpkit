@@ -1,0 +1,23 @@
+[package]
+name = "webpkit-ci-select"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Checked Git and command adapter for webpkit verification selection."
+publish = false
+
+[[bin]]
+name = "ci-select"
+path = "src/main.rs"
+
+[dependencies]
+webpkit-ci-core = { path = "../ci-core" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

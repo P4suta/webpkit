@@ -11,13 +11,21 @@ Use Git Bash for Just recipes on Windows.
 
 ## Development
 
-Run `mise x -- just check` before pushing.
+Run `mise x -- just check-changes` before pushing.
 The pre-push hook runs the same command.
-The gate checks formatting, Clippy, dependencies, spelling, workflows, workspace tests and doctests, documentation, the image feature, and the host `no_std` build.
+The selector compares a clean checkout with `origin/main`, or the event's base commit in CI.
+A nonempty change confined to workflow YAML runs Actionlint, YAML formatting, spelling, and workflow contract tests.
+Changes to `.github/workflows/ci.yml` and uncertain comparisons run the complete gate.
+Use `just check` to run the complete gate directly.
+The complete gate checks formatting, Clippy, dependencies, spelling, workflows, workspace tests and doctests, documentation, the image feature, and the host `no_std` build.
 Workspace checks explicitly enable `webpkit/image` and `webpkit/rayon`.
 Workspace tests include conformance ledgers, stable fuzz seeds, image conversions, and the Rayon paths.
 The revision corpus replay shares acceptance and round-trip assertions with its release-only fuzz target.
 Pull requests and merge groups run one Linux quality job instead of repeating those suites in separate jobs.
+CodeQL selects Rust or Actions analysis for recognized changes and analyzes both for unknown or mixed changes.
+A change to the CodeQL workflow analyzes both languages.
+Main-branch analysis runs both languages to maintain the pull-request comparison baseline without a scheduled scan.
+Read [affected-work selection](docs/adr/affected-work-selection.md) for the comparison boundary and fallback behavior.
 
 Use `just lint`, `just test`, or `just doc` for a narrower development check.
 The supported Rust floor is 1.88.

@@ -490,7 +490,7 @@ jobs:
       - name: prove the production policy module
         env:
           POLICY_TOOL: ${{ steps.policy.outputs.executable }}
-          REQUIRED_HARNESSES: '["production::proofs::commit_identity_is_exact","production::proofs::candidate_selection_preserves_source","production::proofs::ordinary_summary_requires_complete_work","production::proofs::publication_requires_complete_same_source_qualification"]'
+          REQUIRED_HARNESSES: '["production::proofs::commit_identity_is_exact","production::proofs::candidate_selection_preserves_source","production::proofs::ordinary_summary_requires_complete_work","production::proofs::publication_requires_complete_same_source_qualification","production::proofs::affected_work_routes_recognized_workflow_boundaries","production::proofs::affected_work_routes_recognized_rust_and_action_inputs","production::proofs::affected_work_unknown_and_empty_inputs_keep_full_selection"]'
           COUNTEREXAMPLE: production::proofs::reject_incomplete_qualification_probe
         run: '"$POLICY_TOOL" prove-source --source xtask/src/ci.rs --require-json "$REQUIRED_HARNESSES" --counterexample "$COUNTEREXAMPLE"'
       - name: verify the candidate source after proofs
