@@ -3,10 +3,25 @@
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
-      "matchStrings": ["CARGO_SORT_VERSION:\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "managerFilePatterns": ["/^\\.github/workflows/(ci|release-plz)\\.yml$/"],
+      "matchStrings": [
+        "CARGO_SORT_VERSION:\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "cargo install --locked --version (?<currentValue>\\d+\\.\\d+\\.\\d+) cargo-sort"
+      ],
       "datasourceTemplate": "crate",
       "depNameTemplate": "cargo-sort"
+    },
+    {
+      "customType": "jsonata",
+      "fileFormat": "toml",
+      "managerFilePatterns": ["/^mise\\.toml$/"],
+      "matchStrings": [
+        "tools.`http:libwebp`.{\"depName\": \"http:libwebp\", \"currentValue\": version}"
+      ],
+      "datasourceTemplate": "github-tags",
+      "packageNameTemplate": "webmproject/libwebp",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>\\d+\\.\\d+\\.\\d+)$"
     }
   ]
 }
