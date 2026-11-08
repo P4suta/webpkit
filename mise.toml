@@ -1,5 +1,5 @@
-# Native dev toolchain (mirrors what CI installs). The Rust toolchain itself is
-# owned by rust-toolchain.toml. Install with `mise install`, then `just doctor`.
+# rust-toolchain.toml selects the Rust compiler.
+# Install developer tools with mise, then run just doctor.
 
 [tools]
 # Task runner, git hooks, and the format/lint tools the recipes shell out to.
@@ -8,7 +8,7 @@ lefthook = "latest"
 taplo = "latest"
 biome = "latest"
 yamlfmt = "0.21.0"    # pinned for format stability
-actionlint = "latest"
+actionlint = "1.7.12"
 typos = "latest"
 jq = "latest"
 
@@ -22,21 +22,14 @@ cargo-binstall = "latest"
 "cargo:cargo-fuzz" = "latest"
 "cargo:cargo-insta" = "latest"
 "cargo:cargo-llvm-cov" = "latest"
-# Conventional-Commits linter for the lefthook commit-msg hook — the local guard
-# that keeps release tooling fed with well-formed commit messages. cargo backend,
-# binstalled.
+# Validate commit messages with Conventional Commits.
 "cargo:committed" = "1"
 # Pinned (not `latest`): cargo-mutants gates PRs, and its generated mutants and output can shift across releases, so reproducibility beats an implicit floating version.
 # Review Renovate proposals for this pin deliberately against the mutation suite, as with yamlfmt and libwebp.
 "cargo:cargo-mutants" = "27.1.0"
 
-# libwebp's `cwebp` / `dwebp` — the conformance oracle used to generate and
-# verify golden fixtures. webmproject/libwebp publishes NO GitHub release assets
-# (only git tags), so the ubi / github / aqua backends cannot fetch binaries;
-# the official prebuilt archives on Google storage are pulled via the `http`
-# backend instead. `strip_components = 1` drops the top-level
-# `libwebp-<ver>-<platform>/` directory so `bin/` (cwebp, dwebp, ...) is what
-# lands on PATH. Verified working on this host (cwebp/dwebp resolve to 1.6.0).
+# Official libwebp archives provide the reference executables.
+# Drop the archive's top-level directory before exposing bin/.
 [tools."http:libwebp"]
 version = "1.6.0"
 strip_components = 1

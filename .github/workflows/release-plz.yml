@@ -580,14 +580,26 @@ jobs:
   release-plz-release:
     name: release-plz release
     needs: [candidate, qualify]
-    if: needs.candidate.outputs.candidate == 'true' && needs.qualify.result == 'success' && needs.qualify.outputs.revision == needs.candidate.outputs.revision
+    if: >-
+      github.event_name == 'push' &&
+      github.repository_id == '1300766683' &&
+      github.ref == 'refs/heads/main' &&
+      needs.candidate.outputs.candidate == 'true' &&
+      needs.qualify.result == 'success' &&
+      needs.qualify.outputs.revision == needs.candidate.outputs.revision
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
     permissions:
-      contents: write # Create the git tag, GitHub release, and package release commit.
+      contents: read # The App token authorizes publication under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
       pull-requests: read # Revalidate the associated release pull request.
-      id-token: write # Authenticate to the automation credential source.
+      id-token: write # Keep registry authentication under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
+    env:
+      APP_INPUTS_VALID: >-
+        ${{ secrets.RELEASE_APP_CLIENT_ID != '' &&
+        !startsWith(secrets.RELEASE_APP_CLIENT_ID, '${') &&
+        secrets.RELEASE_APP_PRIVATE_KEY != '' &&
+        !startsWith(secrets.RELEASE_APP_PRIVATE_KEY, '${') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -604,30 +616,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_CONFIG: ${{ runner.temp }}/qualified-release-plz.toml
         run: cargo run --locked --quiet -p xtask -- ci publish-source --repository "$GH_REPO" --revision "$CANDIDATE_SHA" --config "$RELEASE_CONFIG" --output "$GITHUB_OUTPUT"
-      - name: Fetch automation credentials
-        id: doppler_automation_0
-        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534
-        with:
-          auth-method: oidc
-          doppler-identity-id: ${{ vars.DOPPLER_AUTOMATION_IDENTITY_ID }}
-          doppler-project: webpkit
-          doppler-config: automation
-          inject-env-vars: false
       - name: Reject missing or unresolved automation credentials
-        if: >-
-          ${{ steps.doppler_automation_0.outcome == 'success' && (
-          steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') ||
-          steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')
-          ) }}
+        if: env.APP_INPUTS_VALID != 'true'
         shell: bash
         run: exit 1
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
         with:
-          client-id: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID }}
-          private-key: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY }}
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: webpkit
           permission-contents: write
           permission-pull-requests: read
       - name: verify the publisher source immediately before release
@@ -644,50 +643,44 @@ jobs:
 
   release-plz-pr:
     name: release-plz pr
+    if: >-
+      github.event_name == 'push' &&
+      github.repository_id == '1300766683' &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: release
     permissions:
-      contents: write # Open and update the release pull request.
-      pull-requests: write # Create and update the release pull request.
-      id-token: write # Authenticate to the automation credential source.
+      contents: read # The App token authorizes proposals under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
+    env:
+      APP_INPUTS_VALID: >-
+        ${{ secrets.RELEASE_APP_CLIENT_ID != '' &&
+        !startsWith(secrets.RELEASE_APP_CLIENT_ID, '${') &&
+        secrets.RELEASE_APP_PRIVATE_KEY != '' &&
+        !startsWith(secrets.RELEASE_APP_PRIVATE_KEY, '${') }}
     concurrency:
       group: release-plz-pr
       cancel-in-progress: false
     steps:
-      - name: Fetch automation credentials
-        id: doppler_automation_0
-        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534
-        with:
-          auth-method: oidc
-          doppler-identity-id: ${{ vars.DOPPLER_AUTOMATION_IDENTITY_ID }}
-          doppler-project: webpkit
-          doppler-config: automation
-          inject-env-vars: false
       - name: Reject missing or unresolved automation credentials
-        if: >-
-          ${{ steps.doppler_automation_0.outcome == 'success' && (
-          steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') ||
-          steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')
-          ) }}
+        if: env.APP_INPUTS_VALID != 'true'
         shell: bash
         run: exit 1
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        id: app-token
-        with:
-          client-id: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID }}
-          private-key: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
       - name: install the repository Rust toolchain
         run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: webpkit
+          permission-contents: write
+          permission-pull-requests: write
       - uses: release-plz/action@8b5bf233ecb5779f63508db7cd050e948ee77cc2 # v0.5.144
         with:
           command: release-pr
