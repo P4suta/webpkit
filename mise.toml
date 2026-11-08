@@ -13,17 +13,17 @@ typos = "1.52.0"
 jq = "1.8.2"
 
 # Lets the cargo: backend fetch prebuilt binaries instead of compiling.
-cargo-binstall = "1.26.0"
+cargo-binstall = "1.26.2"
 
 # Cargo subcommands via the cargo: backend (no mise registry short names exist).
-"cargo:cargo-nextest" = "0.9.149"
+"cargo:cargo-nextest" = "0.9.151"
 "cargo:cargo-deny" = "0.20.2"
 "cargo:cargo-sort" = "2.1.4"
 "cargo:cargo-fuzz" = "0.13.2"
 "cargo:cargo-insta" = "1.49.0"
 "cargo:cargo-llvm-cov" = "0.9.1"
 # Validate commit messages with Conventional Commits.
-"cargo:committed" = "1.1.11"
+"cargo:committed" = "1.1.12"
 # Pinned (not `latest`): cargo-mutants gates PRs, and its generated mutants and output can shift across releases, so reproducibility beats an implicit floating version.
 # Review Renovate proposals for this pin deliberately against the mutation suite, as with yamlfmt and libwebp.
 "cargo:cargo-mutants" = "27.1.0"
