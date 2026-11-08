@@ -3,10 +3,26 @@
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
-      "matchStrings": ["CARGO_SORT_VERSION:\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "managerFilePatterns": ["/^\\.github/workflows/(ci|release-plz)\\.yml$/"],
+      "matchStrings": [
+        "CARGO_SORT_VERSION:\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "cargo install --locked --version (?<currentValue>\\d+\\.\\d+\\.\\d+) cargo-sort"
+      ],
       "datasourceTemplate": "crate",
       "depNameTemplate": "cargo-sort"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^mise\\.toml$/"],
+      "matchStrings": [
+        "\\[tools\\.\"http:libwebp\"\\]\\s*version\\s*=\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "https://storage\\.googleapis\\.com/downloads\\.webmproject\\.org/releases/webp/libwebp-(?<currentValue>\\d+\\.\\d+\\.\\d+)-"
+      ],
+      "datasourceTemplate": "git-tags",
+      "depNameTemplate": "libwebp",
+      "packageNameTemplate": "https://chromium.googlesource.com/webm/libwebp",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>\\d+\\.\\d+\\.\\d+)$"
     }
   ]
 }
