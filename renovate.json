@@ -7,6 +7,22 @@
       "matchStrings": ["CARGO_SORT_VERSION:\\s*(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
       "datasourceTemplate": "crate",
       "depNameTemplate": "cargo-sort"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^xtask/tests/ci_workflow\\.rs$/"],
+      "matchStrings": [
+        "/// renovate: datasource=github-tags depName=release-plz/action currentValue=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\s+const PUBLISHER_ACTION: &str =\\s*\"release-plz/action@(?<currentDigest>[a-f0-9]{40})\";"
+      ],
+      "datasourceTemplate": "github-tags",
+      "depNameTemplate": "release-plz/action"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDepNames": ["release-plz/action"],
+      "matchManagers": ["github-actions", "custom.regex"],
+      "groupName": "release-plz action bindings"
     }
   ]
 }
