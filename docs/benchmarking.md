@@ -8,8 +8,8 @@ adding a perf number, a gate, or a benchmark.
 
 | Plane | What it measures | Reproducible? | Committed & gated? | Where |
 |-------|------------------|---------------|--------------------|-------|
-| **Deterministic ledgers** | Encoded size, compression ratio, peak memory, decode/re-encode stability; **lossy** size / ratio / reconstruction SSE / peak memory | Yes — integer-only, byte-identical across runs | Yes — `committed == fresh` drift gate | `corpus/metrics.json`, `corpus/metrics-lossy.json`, `corpus/baseline.json` |
-| **Deterministic work-cost** | Algorithmic work in the encoders (histogram passes, match-finder hops, cluster scans, fdct/quantize/trellis/SSE calls, …) **and the lossy decoder** (bool reads, coeff-token walks, IDCT / loop-filter / upsample calls) — a proxy for time | Yes — integer event tallies, toolchain- AND profile-independent | Yes — `committed == fresh` drift gate | `corpus/work.json` |
+| **Deterministic ledgers** | Encoded size, compression ratio, peak memory, decode/re-encode stability; **lossy** size / ratio / reconstruction SSE / peak memory; **vs-libwebp** our-vs-cwebp size / centi-dB PSNR (requires pinned `cwebp`, fails closed) | Yes — integer-only, byte-identical across runs | Yes — `committed == fresh` drift gate | `corpus/metrics.json`, `corpus/metrics-lossy.json`, `corpus/vs-libwebp.json`, `corpus/baseline.json` |
+| **Deterministic work-cost** | Algorithmic work in both encoders (histogram passes, match-finder hops, cluster scans, fdct/quantize/trellis/SSE calls, …) and both decoders (VP8L bit refills, Huffman/LZ/inverse-transform work; VP8 bool reads, coeff-token walks, IDCT / loop-filter / upsample calls) — a proxy for time | Yes — integer event tallies, toolchain- AND profile-independent | Yes — `committed == fresh` drift gate | `corpus/work.json` |
 | **Timing** | Wall-clock throughput (lossless AND lossy encode/decode) | No — noisy, hardware- and load-dependent | **Never** — local/dev only | `webpkit-bench` (criterion) |
 
 The **deterministic ledgers** are the load-bearing regression signal. Every
@@ -31,12 +31,12 @@ Criterion benchmarks are a **local developer tool** for comparing two runs on
 one machine, never a merge gate.
 
 **Speed is gated deterministically, not by the clock.** To keep a *speed*
-regression signal in CI without the noise, the encoders are instrumented with
-integer **work counters** (the `work_count` module, behind the `work-count`
-feature) — one per hot path
-(histogram passes, LZ77 match-finder hops, meta-Huffman cluster scans, `fdct` /
-`quantize` / `trellis` / `sse_block` calls, k-means comparisons, …). The counts
-are a pure function of the input, so they are byte-reproducible across
+regression signal in CI without the noise, both encoders and decoders are
+instrumented with integer **work counters** (the `work_count` module, behind the
+`work-count` feature) — one per hot path (histogram passes, LZ77 match-finder
+hops, meta-Huffman cluster scans, `fdct` / `quantize` / `trellis` / `sse_block`
+calls, VP8L Huffman/LZ/inverse-transform operations, VP8 bool reads, …). The
+counts are a pure function of the input, so they are byte-reproducible across
 platforms, toolchains, and optimization levels, and `corpus/work.json` is
 drift-gated exactly like `corpus/metrics.json`. They are a *proxy* for time: an
 optimization that removes redundant work drops a counter, and the drop is a
@@ -116,6 +116,64 @@ diff via `cargo run -p xtask -- metrics --lossy --explain`; it ends with a
 byte-invariance verdict (did the encoded bytes / `sse` move, or only peak
 memory?) — the lossy loop's "did ONLY my intended field change" check.
 
+### cwebp comparison ledger — `just vs-libwebp`
+
+```
+just vs-libwebp          # gate: fail if committed corpus/vs-libwebp.json drifts
+just vs-libwebp-bless     # (re)author it after an intended size/fidelity change
+```
+
+The committed, drift-gated counterpart of the print-only `metrics --vs-libwebp` aid: it gates `corpus/vs-libwebp.json`, one row per synthetic sample for our `l9` lossless (`Best`, capped to `edge <= 256`) versus single-threaded `cwebp -lossless -exact -m 6 -q 100` (`-mt` omitted), and per `(sample, quality)` for our zero-knob `AUTO` lossy versus `cwebp -q Q -noalpha` at qualities `50 / 75 / 90` (66 rows).
+Every field is an integer: `our_bytes`, `cwebp_bytes`, `size_permille` (`our_bytes * 1000 / cwebp_bytes`; below 1000 = our stream is smaller), and `our_psnr_centidb` / `cwebp_psnr_centidb` — reconstruction PSNR as fixed-point centi-dB (`round(dB * 100)`; `9900` = identical, i.e. every lossless row).
+**Both** outputs are decoded by *our own* decoder before the PSNR, so the fidelity column is apples-to-apples (lossless compares full-WebP sizes, lossy compares bare `VP8 ` payloads).
+The pinned reference (`1.6.0`) is recorded in the top-level `libwebp_version`.
+
+Unlike the other ledgers this one **needs libwebp** (`cwebp`).
+The gate/bless **fails closed** when `cwebp` is absent or does not report exactly `1.6.0`; a reference-free or version-mismatched run cannot validate or rewrite the ledger.
+Its rows are integer sizes and centi-dB PSNR (no peak memory), which are deterministic and profile-independent, so the recipe builds `--release` for runtime budget only and needs **no `+1.96` pin** (cwebp's own output is pinned by the `1.6.0` version guard).
+If a non-libwebp `cwebp` shadows libwebp on `PATH`, point `WEBPKIT_CWEBP` at the libwebp `1.6.0` binary.
+
+### Private matched-fidelity campaign — `surpass`
+
+```
+cargo run --release -p xtask --features scoreboard-libwebp -- \
+  surpass --real <dir> --max-edge 1024
+```
+
+`surpass` is the local, auditable comparison used for the libwebp-surpass gate.
+It requires both the linked and command-line libwebp references to report exactly `1.6.0`; missing or mismatched references fail the command.
+`--max-edge` reads source dimensions without decoding pixels, then asks cwebp to cap the longer image dimension while preserving aspect ratio.
+
+- **Lossless basis:** deepest webpkit effort versus single-threaded `cwebp -lossless -exact -m 6 -q 100` (`-mt` omitted), including the WebP container on both sides.
+- **Lossy basis:** for each libwebp quality 50, 75, and 90, build webpkit's full quality 0–100 RD curve.
+  Select the smallest payload whose RGB-PSNR and SSIM are both at least the libwebp reconstruction.
+  Quality-number remapping alone cannot count as an improvement.
+- **Coverage:** size and matched-fidelity RD are evaluated on every recognized image entry using a fixed four-worker corpus wave (each codec invocation remains scalar).
+  Before that expensive wave starts, all pinned cwebp lossy references are generated and validated so a reference-process failure is reported without discarding completed 101-point curves.
+  An unreadable recognized image fails measurement completion; unrelated files and subdirectories are excluded.
+  After that wave, timing and process-peak memory are measured serially for every recognized image without rebuilding its 101-point RD curve.
+  The schema-4 report records the worker count, all-image resource policy, and sample count.
+- **Timing basis:** portable safe scalar webpkit (Rayon disabled), alternating paired A/B runs on each image: one deterministic warm-up per implementation,
+  then three AB/BA pairs (six timed samples per implementation).
+  The upper median is taken per image, then across each category and the full corpus.
+  Lossy encode timing supplies the same opaque RGBA8 buffer to both codecs (alpha forced to 255 and excluded from the comparison).
+- **Memory basis:** every webpkit/libwebp encode and decode runs in a fresh invocation of the identical internal xtask worker executable and observer wrapper.
+  The parent records OS process peak working set on Windows or maximum RSS on Linux, so the process baseline is the same while allocations from one codec cannot leak into the other codec's sample.
+  Lossy encoders receive the same opaque RGBA8 input layout, and both lossy decoders receive the same WebP container rather than comparing a raw `VP8 ` payload with a container.
+- **Environment:** OS, architecture, CPU model, logical CPU count, Rust toolchain, source commit and dirty state, corpus-worker count, timing-pair count, warm-up count, timed-sample count, and resolved scalar feature policy are recorded with the aggregates.
+- **Privacy:** the report contains only `flat-icon`, `transparent`, `graphic`,
+  `photo`, and overall aggregates.
+  It records no source path, file name, or per-image result.
+  The only output is the gitignored `target/surpass/latest.json`.
+
+All size, time, and peak ratios are represented in integer permille and rounded up, so a value just above a threshold cannot be rounded into a pass.
+The report evaluates the measurement thresholds directly: lossless median `<=100.5%` with at least half no larger than libwebp; matched-fidelity lossy median `<=105%` in every band and photo `<=103%`; scalar encode `<=2.0x`,
+decode `<=1.5x`; and identical-worker peak memory `<=1.5x`.
+`measurement_complete` is true only when every measurement threshold passes,
+every recognized image completed size/RD evaluation, and every present category and every matched lossy band completed resources for every recognized image.
+It is not the WK-400 completion bit: conformance, golden, oracle, fuzz, mutation,
+and ledger gates remain separate requirements.
+
 ### Work-cost ledger — `just work`
 
 ```
@@ -130,23 +188,25 @@ counters into both codecs and the xtask `work` command):
   event tallies that do not depend on the toolchain or optimization level, so any
   compiler reproduces them; `--release` is only for the runtime budget. This is
   the key simplification over the peak-memory ledger.
-- **Both codecs, encode AND lossy decode** (schema `version: 2`) — every
-  `(sample, method)` is measured for both the `lossless` and `lossy` codecs
-  encode, plus **one `lossy-decode` row per sample** that isolates the VP8 decode
-  hot paths (`bool_read`, `bool_renorm`, `coeff_token`, `idct_call`,
-  `loop_filter_edge`, `upsample_row`, plus the shared `predict_*`). Counters name
+- **Both codecs, encode AND decode** (schema `version: 3`) — every
+  `(sample, method)` is measured for both the `lossless` and `lossy` encoders,
+  plus one `lossless-decode` and one `lossy-decode` row per sample. The VP8L row
+  isolates bit-reader, Huffman/LZ, inverse-transform, and output-pack work; the
+  VP8 row isolates `bool_read`, `bool_renorm`, `coeff_token`, `idct_call`,
+  `loop_filter_edge`, `upsample_row`, plus shared `predict_*` work. Counters name
   the *operation*, not the phase; which pass populates them is fixed by the
-  reset→run→snapshot discipline, so the decode-only counters stay zero in the
-  encode rows and the encode-only counters stay zero in the decode rows (the two
-  shared-kernel counters `idct_call`/`loop_filter_edge` fire in both, since the
-  encoder reconstructs and deblocks its own output). The decode row is produced
-  from a fixed mid-quality `Balanced` encode (decode work is method-independent).
+  reset→run→snapshot discipline, so decode-only counters stay zero in encoder
+  rows and encode-only counters stay zero in decoder rows (the shared VP8 kernel
+  counters `idct_call`/`loop_filter_edge` fire in both, since that encoder
+  reconstructs and deblocks its own output). The VP8L decode row reuses the
+  sample's already-measured `AUTO` output; the VP8 row is produced from a fixed
+  mid-quality `Balanced` encode.
 - **`Best` capped to `edge <= 256`** — the counter increments slow the `Best`
   search several-fold, and its `Best@512` cases dominate the run; 64/256 fully
   capture `Best`'s algorithmic signature (the counts scale predictably with
-  size). `Fast`/`Balanced` run at every size. Plus the 18 `lossy-decode` rows.
+  size). `Fast`/`Balanced` run at every size. Plus 18 rows for each decoder.
 - **Serial by construction** — the counters are process-global statics, so the
-  `work` loop measures one encode at a time (reset → encode → snapshot). Totals
+  `work` loop measures one operation at a time (reset → run → snapshot). Totals
   are `fetch_add`-order-independent, so an in-encode `rayon` region does not
   perturb them, but the ledger is generated `rayon`-off regardless.
 
@@ -304,6 +364,36 @@ or recorded** — keep a private corpus out of git and report only the category
 rollup. If a non-libwebp `cwebp` (e.g. this repo's own CLI) shadows libwebp on
 `PATH`, point `WEBPKIT_CWEBP` / `WEBPKIT_DWEBP` at the libwebp `1.6.0` binaries.
 
+### Real-image multi-axis scoreboard — `scoreboard --real <dir>`
+
+```
+cargo run --profile quick --features scoreboard-libwebp -p xtask -- scoreboard --real <dir> [--max-edge N]
+```
+
+One print-only scoreboard that puts **four axes** side by side over the real corpus — size, fidelity, encode/decode speed, and webpkit peak memory — rolled up by pixel-derived content category (`flat-icon` / `transparent` / `graphic` / `photo`, plus an `overall` row), with a **lossless** section and a **lossy** (`q75`) section.
+Both sides run their **shipped defaults**: webpkit `AUTO`, libwebp's simple-API defaults (`WebPEncodeLosslessRGBA`, `WebPEncodeRGB`).
+This deliberately **builds the scoreboard, not a verdict** — no win-condition is preset; the numbers describe what a user gets out of the box on identical resized pixels.
+
+**The columns are not equally rigorous, and the tool says so.** Read them by tier:
+
+- **Size — rigorous.** Exact encoded byte counts (`ours B`, `lib B`) and the integer-permille `size%` = `ours * 100 / lib` (`< 100` = ours smaller).
+  libwebp is the **in-process libwebp-sys reference**, which vendors the **same libwebp `1.6.0`** as the pinned `cwebp` binary (the tool prints the runtime version it linked), so the bytes are a true apples-to-apples default-vs-default comparison.
+- **Fidelity (lossy) — rigorous.** `+dB` / `+SSIM` = ours − libwebp reconstruction PSNR / MSSIM (`> 0` = ours better).
+  **Both** encoders' `VP8 ` payloads are decoded by *webpkit's own* decoder, so the YUV→RGB path is identical on both sides (`cwebp -noalpha`-equivalent RGB basis; lossless is exact, so it has no fidelity columns).
+- **webpkit peak memory — rigorous (exact).** `encKiB` / `decKiB` are the peak *additional* requested bytes during a webpkit encode / decode, measured by the `webpkit-alloc-count` counting allocator (the same instrument as the memory ledger), reported as the bucket's worst case.
+- **Speed — the timing plane (noisy, approximate, never gated).** `encO/encL MB/s` (raw-input MB/s) and `decO/decL MP/s` (Mpixels/s) are the **median of repeated in-process passes**. libwebp is timed **in-process via libwebp-sys on identical buffers** (no process/startup/IO overhead), the most rigorous method available —
+  but it is still wall-clock: hardware- and load-dependent, non-deterministic, and reported for reading, never as a gate.
+  Encode times the same effort as the size column; decode times the **same `VP8`/WebP bytes** on both decoders (our payload,
+  wrapped in a container for libwebp).
+- **libwebp peak memory — omitted, by construction.** libwebp allocates through C `malloc`, which bypasses the Rust counting allocator, so it **cannot** be measured on the same basis.
+  Rather than fabricate a number or mix in a coarse OS peak-RSS from a different process model, the scoreboard shows **no** libwebp memory column and states why.
+
+libwebp columns need the **`scoreboard-libwebp`** feature, which links the in-process reference; a plain build never compiles it, and without it the libwebp columns print `n/a` (webpkit size/speed/memory still show).
+Like the other `--real` paths it is **print-only** (temp files in a dropped `tempfile::tempdir()`, no repo file written, **never gated**), needs `cwebp` only to **read** source images into RGBA, and **soft-skips** when it is absent.
+**Privacy:** `<dir>` is a pure runtime argument and every image is bucketed by **pixels** (alpha presence, then a capped distinct-color count), never by filename, so **no file name is ever printed or recorded** — report only the category rollup.
+Content note: the pixel classifier cannot separate a museum scan from an ordinary photograph (both are opaque,
+high-distinct-color), so both land in the `photo` bucket.
+
 ## Reading results
 
 **Compression (the ledger).** The measured impact of an encoder change is the
@@ -330,11 +420,12 @@ its own output — the working-set high-water marks (measured by the process-wid
 counting allocator; the input buffer is excluded from the decode window).
 
 **Work (the ledger).** Each `corpus/work.json` row's `counts` map is the
-algorithmic work of one `(codec, sample, method)` encode. Read it per counter:
-a large or fast-growing count is a candidate hot path, and the measured impact
-of an optimization is the **git diff of `corpus/work.json`** (a counter that
-drops is work removed). Because the counts are a deterministic proxy for time, a
-drop should track a wall-clock improvement in `just bench` — cross-check the two.
+algorithmic work of one `(codec, sample, method)` operation. Encoder rows name
+their method; decoder rows use `method = "decode"`. Read it per counter: a large
+or fast-growing count is a candidate hot path, and the measured impact of an
+optimization is the **git diff of `corpus/work.json`** (a counter that drops is
+work removed). Because the counts are a deterministic proxy for time, a drop
+should track a wall-clock improvement in `just bench` — cross-check the two.
 
 **Timing (criterion).** After `just bench`, open the HTML report at
 `target/criterion/**/report/index.html`. Read the throughput figures

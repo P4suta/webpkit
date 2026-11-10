@@ -8,6 +8,7 @@ members = [
     "crates/webpkit-cli",
     "crates/webpkit-conformance",
     "crates/webpkit-fuzz",
+    "crates/webpkit-libwebp-timing",
     "crates/webpkit-lossless-conformance",
     "crates/webpkit-lossless-fuzz",
     "crates/webpkit-lossy-conformance",

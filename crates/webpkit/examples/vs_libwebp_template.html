@@ -181,11 +181,11 @@
     </div>
     <div class="panel">
       <h3>Lossy — VP8, our Best vs libwebp method 6</h3>
-      <p class="cap">At the same quality our scale quantizes more aggressively, so read size and PSNR together (not rate-distortion-matched). Size ratio is ours ÷ libwebp bytes; ΔPSNR is ours − libwebp dB.</p>
+      <p class="cap">At the same quality our scale quantizes more aggressively, so read size and PSNR together (not rate-distortion-matched). Both size columns are raw <code>VP8 </code> payload bytes; size ratio is ours ÷ libwebp; ΔPSNR is ours − libwebp dB.</p>
       <div class="scroll">
         <table>
           <thead>
-            <tr><th>content</th><th>ours&nbsp;bytes</th><th>libwebp&nbsp;bytes</th><th>size&nbsp;ratio</th><th>ours&nbsp;dB</th><th>libwebp&nbsp;dB</th><th>ΔPSNR</th></tr>
+            <tr><th>content</th><th>ours VP8&nbsp;bytes</th><th>libwebp VP8&nbsp;bytes</th><th>size&nbsp;ratio</th><th>ours&nbsp;dB</th><th>libwebp&nbsp;dB</th><th>ΔPSNR</th></tr>
           </thead>
           <tbody id="lossyBody"></tbody>
         </table>

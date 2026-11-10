@@ -39,4 +39,5 @@ Options:
   -v                     verbose output (repeatable)
   -color <when>          auto (default), always, or never
   -version               print version
+  -hint <type>           image type hint: picture, photo, or graph
   -pre <int>             preprocessing filter: 0=none, 1=segment-map smoothing (2=dithering unsupported)

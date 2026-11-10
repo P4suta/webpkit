@@ -65,12 +65,9 @@ const INF: i64 = i64::MAX / 4;
 /// table.
 const TRELLIS_FREQ_WEIGHTING: bool = true;
 
-/// Right shift turning `7 * q_ac^2` into the trellis `lambda`. libwebp's weighted base
-/// is `(7 * q^2) >> 3`; we use `>> 2` — double the lambda, so the trellis charges the
-/// rate more aggressively. That is a measured rate-distortion Pareto win over `cwebp`
-/// default shaping on a real-image corpus (smaller at matched quality, reconstruction
-/// still at or above `cwebp`). With [`TRELLIS_FREQ_WEIGHTING`] off an unweighted
-/// squared error is balanced against the rate by a larger `>> 6` shift instead.
+/// Right shift turning `7 * q_ac^2` into the trellis `lambda`.
+/// `>> 2` doubles the lambda relative to libwebp's weighted base `(7 * q^2) >> 3`, charging rate more aggressively.
+/// With [`TRELLIS_FREQ_WEIGHTING`] off an unweighted squared error is balanced against the rate by a larger `>> 6` shift instead.
 const LAMBDA_SHIFT: u32 = if TRELLIS_FREQ_WEIGHTING { 2 } else { 6 };
 
 /// Per-frequency trellis distortion weights (libwebp `kWeightTrellis`, the `USE_TDISTO`
@@ -382,7 +379,8 @@ pub(crate) fn trellis_quantize_block(
         let cands = &cands[..ncand];
 
         for ci in 0..3 {
-            if prev_cost[ci] >= INF {
+            // Branch-and-bound: the cumulative cost only grows, so a context whose incoming cost already meets the best terminate-here total can never win (this also filters the INF unreachable state, since best_total <= INF).
+            if prev_cost[ci] >= best_total {
                 continue;
             }
             let p = pb[BANDS[n]][ci];

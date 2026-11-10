@@ -1,0 +1,5 @@
+feature = "loop-filter-simple"
+level = "must"
+width = 48
+height = 48
+note = "48x48 synthetic source; input.vp8 via cwebp 1.6.0 `-q 55 -nostrong -f 40 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"

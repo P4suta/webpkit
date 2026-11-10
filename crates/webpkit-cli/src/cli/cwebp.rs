@@ -9,7 +9,7 @@
 
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
-use webpkit::{AlphaFilterMode, AlphaMethod, Image, LossyTuning, Preset};
+use webpkit::{AlphaFilterMode, AlphaMethod, Image, ImageHint, LossyTuning, Preset};
 
 use crate::{
     codec::EncodeMode,
@@ -47,6 +47,8 @@ enum Disposition {
     CompatNoop {
         /// Whether the flag consumes the next argument.
         takes_value: bool,
+        /// A one-line stderr note when the flag drops an optimization or diagnostic the user might expect to act; `None` for runtime toggles ignored silently.
+        warn: Option<&'static str>,
     },
     /// Not supported; rejected with a tailored `cause` and `help` under a caret.
     Rejected {
@@ -64,12 +66,6 @@ struct FlagSpec {
     /// What the parser does with it.
     disposition: Disposition,
 }
-
-/// A helpful line, factored out so the two generic-tuning rejections share one text.
-const TUNE_HELP: &[&str] = &[
-    "the encoder is tuned through effort and quality only:",
-    "  cwebp -m <0-6> -q <0-100> <in> -o <out.webp>",
-];
 
 /// Shorthand for an [`Disposition::Active`] flag with a rendered help line.
 const fn active(usage: &'static str, blurb: &'static str) -> Disposition {
@@ -250,17 +246,27 @@ const FLAGS: &[FlagSpec] = &[
         disposition: active("-version", "print version"),
     },
     // Accepted for libwebp compatibility, ignored here.
+    // Runtime/threading toggles a user does not expect to change output, so they are ignored silently (no warn).
     FlagSpec {
         name: "-low_memory",
-        disposition: Disposition::CompatNoop { takes_value: false },
+        disposition: Disposition::CompatNoop {
+            takes_value: false,
+            warn: None,
+        },
     },
     FlagSpec {
         name: "-noasm",
-        disposition: Disposition::CompatNoop { takes_value: false },
+        disposition: Disposition::CompatNoop {
+            takes_value: false,
+            warn: None,
+        },
     },
     FlagSpec {
         name: "-mt",
-        disposition: Disposition::CompatNoop { takes_value: false },
+        disposition: Disposition::CompatNoop {
+            takes_value: false,
+            warn: None,
+        },
     },
     // The true residue of genuinely-unsupported flags.
     FlagSpec {
@@ -276,16 +282,18 @@ const FLAGS: &[FlagSpec] = &[
     },
     FlagSpec {
         name: "-hint",
-        disposition: Disposition::Rejected {
-            cause: GENERIC_TUNE_CAUSE,
-            help: TUNE_HELP,
-        },
+        disposition: active("-hint <type>", "image type hint: picture, photo, or graph"),
     },
+    // Auto-filter is a quality-only optimization (auto-tuning the deblocking strength);
+    // accepted so drop-in scripts run, warned so its effect is not silently assumed.
     FlagSpec {
         name: "-af",
-        disposition: Disposition::Rejected {
-            cause: GENERIC_TUNE_CAUSE,
-            help: TUNE_HELP,
+        disposition: Disposition::CompatNoop {
+            takes_value: false,
+            warn: Some(
+                "`-af` (auto-filter) is not modeled; the in-loop filter strength is taken \
+                 from -f (or the default)",
+            ),
         },
     },
     FlagSpec {
@@ -295,17 +303,15 @@ const FLAGS: &[FlagSpec] = &[
             "preprocessing filter: 0=none, 1=segment-map smoothing (2=dithering unsupported)",
         ),
     },
+    // `-map` only prints a per-block debug visualization; it has no effect on the encoded bytes, so it is accepted (consuming its integer) and warned rather than errored.
     FlagSpec {
         name: "-map",
-        disposition: Disposition::Rejected {
-            cause: GENERIC_TUNE_CAUSE,
-            help: TUNE_HELP,
+        disposition: Disposition::CompatNoop {
+            takes_value: true,
+            warn: Some("`-map` is a debug visualization that is unavailable; it is ignored"),
         },
     },
 ];
-
-/// The shared cause for the internal-tuning-knob rejections.
-const GENERIC_TUNE_CAUSE: &str = "this is an internal encoder-tuning knob webpkit does not expose.";
 
 /// The [`FlagSpec`] for `name`, or `None` when the flag is unknown.
 fn spec(name: &str) -> Option<&'static FlagSpec> {
@@ -384,6 +390,8 @@ struct Config {
     /// `-preset <name>`: a content preset expanded into a base [`LossyTuning`] that the
     /// explicit knobs above override.
     preset: Option<Preset>,
+    /// `-hint <type>`: caller-supplied image classification.
+    image_hint: Option<ImageHint>,
     /// `-exact`: preserve the RGB under fully-transparent pixels (webpkit's default).
     exact: bool,
     /// `-jpeg_like`: bias quantization toward a JPEG-like size curve.
@@ -428,6 +436,9 @@ impl Config {
         let mut tuning = self
             .preset
             .map_or_else(LossyTuning::default, Preset::tuning);
+        if let Some(hint) = self.image_hint {
+            tuning = tuning.with_image_hint(hint);
+        }
         if let Some(sns) = self.sns {
             tuning = tuning.with_sns_strength(sns);
         }
@@ -502,7 +513,7 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
 
     // Crop-then-resize preprocessing. Project from the header first so an
     // out-of-bounds crop fails before the image is even decoded.
-    let pipeline = Pipeline::new(config.crop, config.resize);
+    let pipeline = Pipeline::new(config.crop, config.resize).with_exact(config.exact);
     if !pipeline.is_empty()
         && let Some(dims) = format::dimensions_of(&bytes, format)
     {
@@ -630,6 +641,9 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
             // A content preset: expanded into a base `LossyTuning`, overridden by any
             // explicit knob above. `default` (or no preset) is byte-identical.
             "-preset" => config.preset = Some(parse_preset(&value(args, &mut index, "-preset")?)?),
+            "-hint" => {
+                config.image_hint = Some(parse_image_hint(&value(args, &mut index, "-hint")?)?);
+            },
             // Luminance-guided chroma subsampling (a boolean flag), mapped onto
             // `LossyTuning::with_sharp_yuv`. Off by default, so omitting it is byte-identical.
             "-sharp_yuv" => config.sharp_yuv = true,
@@ -693,9 +707,12 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
             // skipped (consuming its value if any), a rejected flag draws its caret and
             // cause, and an unrecognized dash-flag draws a did-you-mean.
             other => match spec(other).map(|f| &f.disposition) {
-                Some(Disposition::CompatNoop { takes_value }) => {
+                Some(Disposition::CompatNoop { takes_value, warn }) => {
                     if *takes_value {
                         let _ = value_os(args, &mut index, other)?;
+                    }
+                    if let Some(note) = warn {
+                        crate::report::warn(note);
                     }
                 },
                 Some(Disposition::Rejected { cause, help }) => {
@@ -747,6 +764,18 @@ fn parse_preset(text: &str) -> Result<Preset, CliError> {
         "text" => Ok(Preset::Text),
         _ => Err(CliError::Usage(format!(
             "`-preset` expects default, photo, picture, drawing, icon, or text, got `{text}`"
+        ))),
+    }
+}
+
+/// Parse a `-hint` name into an [`ImageHint`] classification.
+fn parse_image_hint(text: &str) -> Result<ImageHint, CliError> {
+    match text {
+        "picture" => Ok(ImageHint::Picture),
+        "photo" => Ok(ImageHint::Photo),
+        "graph" => Ok(ImageHint::Graph),
+        _ => Err(CliError::Usage(format!(
+            "`-hint` expects picture, photo, or graph, got `{text}`"
         ))),
     }
 }
@@ -943,15 +972,13 @@ mod tests {
 
     #[test]
     fn rejected_residue_is_exactly_the_true_unsupported_flags() {
-        // The rejected set is the true residue only: the genuinely-unsupported knobs.
-        // Everything the audit called out (`-preset`, `-jpeg_like`, `-partition_limit`,
-        // `-exact`) and P6b's rate control (`-size`/`-psnr`/`-pass`) is now Active, as is
-        // `-pre` (bit 0 = segment-map smoothing; the dithering bit is rejected at parse).
+        // The rejected set is the true residue only: `-blend_alpha` changes source pixels by compositing.
+        // `-hint` is represented by `ImageHint`; `-af` and `-map` are compatibility no-ops, and `-pre`'s dithering bit is rejected at parse rather than by table disposition.
         let rejected: Vec<&str> = FLAGS
             .iter()
             .filter(|f| matches!(f.disposition, Disposition::Rejected { .. }))
             .map(|f| f.name)
             .collect();
-        assert_eq!(rejected, ["-blend_alpha", "-hint", "-af", "-map"]);
+        assert_eq!(rejected, ["-blend_alpha"]);
     }
 }

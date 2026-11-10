@@ -11,7 +11,7 @@
 //! that `inverse` inverts it losslessly.
 
 use crate::lossless::constants::{ARGB_BLACK, subsample_size};
-use crate::lossless::histogram::shannon_bits;
+use crate::lossless::histogram::bin_weight;
 use crate::lossless::prelude::*;
 use crate::lossless::transform::{add_pixels, sub_pixels};
 use crate::lossless::work::work;
@@ -22,6 +22,7 @@ pub(crate) fn inverse(argb: &mut [u32], width: u32, bits: u32, tile_data: &[u32]
     if width == 0 || argb.is_empty() {
         return;
     }
+    work!(Vp8lPredictorPixel, argb.len() as u64);
     let tiles_per_row = subsample_size(width, bits) as usize;
     let width = width as usize;
     let height = argb.len() / width;
@@ -97,6 +98,7 @@ pub(crate) fn reconstruct_row_into(
     if width == 0 {
         return;
     }
+    work!(Vp8lPredictorPixel, width as u64);
     if y == 0 {
         // Row 0: origin against opaque black (mode 0), then left (mode 1).
         out[0] = add_pixels(residual[0], ARGB_BLACK);
@@ -139,21 +141,26 @@ pub(crate) fn reconstruct_row_into(
 /// `tile_data` carries one pixel per tile with the mode packed as
 /// `(mode & 0x0f) << 8`, exactly where [`reconstruct_row`] reads it back.
 ///
-/// Reused per-`forward` scratch for the predictor's per-tile entropy scoring: a
-/// residual-byte histogram per channel (in `residual.to_le_bytes()` order —
-/// blue, green, red, alpha), each paired with a touched-bin list so a mode's
-/// accumulate + Shannon-finalize + reset is O(interior pixels), never a 256-bin
-/// scan, plus a shared `used_counts` staging buffer. Allocated once in
-/// [`forward`] and threaded through every `best_mode` call so mode scoring does
-/// zero per-mode/per-tile heap work — every buffer is cleared and reused.
+/// Reused per-`forward` scratch for the predictor's per-tile mode scoring: a
+/// candidate residual-byte histogram per channel (in `residual.to_le_bytes()`
+/// order — blue, green, red, alpha), each paired with a touched-bin list so a
+/// mode's accumulate + score + reset is O(interior pixels), never a 256-bin scan,
+/// plus the running image-wide histogram every candidate is scored against.
+/// Allocated once in [`forward`] and threaded through every `best_mode` call so
+/// mode scoring does zero per-mode/per-tile heap work.
 struct EntropyScratch {
     counts: [[u32; 256]; 4],
     touched: [Vec<u8>; 4],
-    used_counts: Vec<u32>,
     /// The interior pixels of the tile currently being scored, each as
     /// `(value, left, top_left, top, top_right)`. Gathered once per tile so all
     /// 14 modes reuse the same neighbor loads instead of re-reading `argb`.
     neighbors: Vec<(u32, u32, u32, u32, u32)>,
+    /// Per-channel residual-byte histogram of every tile already committed by [`forward`], in scan order.
+    /// One image-wide histogram is what actually gets entropy-coded, so tile modes are scored against it rather than in isolation.
+    committed: [[u32; 256]; 4],
+    /// How many committed tiles carry each mode.
+    /// The tile-mode sub-image is coded too, so a mode's own symbol cost is part of its score.
+    mode_counts: [u32; 16],
 }
 
 impl EntropyScratch {
@@ -161,8 +168,9 @@ impl EntropyScratch {
         Self {
             counts: [[0u32; 256]; 4],
             touched: core::array::from_fn(|_| Vec::new()),
-            used_counts: Vec::new(),
             neighbors: Vec::new(),
+            committed: [[0u32; 256]; 4],
+            mode_counts: [0u32; 16],
         }
     }
 }
@@ -172,24 +180,26 @@ impl EntropyScratch {
 /// use fixed modes 0/1/2 and are excluded, exactly as [`reconstruct_row`]
 /// decodes them.
 ///
-/// Cost is the ENTROPY of the mode's residual over the tile interior:
-/// `Σ_channel shannon_bits(total, used_counts)`, where `total` is the interior
-/// pixel count (constant across modes) and `used_counts` are the residual-byte
-/// histogram's nonzero bins. This rewards residuals that reduce to FEW distinct
-/// symbols — a constant residual costs exactly 0 bits (a single symbol), so a
-/// flat / periodic tile picks the LZ77-friendly mode instead of the one with
-/// the tightest magnitude. The magnitude proxy this replaced misjudged those,
-/// picking clip255-spiky gradient modes that break row-to-row back-references.
+/// Cost is the mode's marginal contribution to the ONE image-wide residual
+/// histogram that is actually entropy-coded: the increase in
+/// `Σ_channel shannon(committed + tile)` over `Σ_channel shannon(committed)`,
+/// where `scratch.committed` holds every earlier tile's residual bytes. Both
+/// normalizer terms are mode-invariant (the interior pixel count is fixed), so
+/// the argmin reduces to the argmax of `Σ_bin [w(committed+tile) - w(committed)]`
+/// over the bins the tile touches. Scoring against the running histogram removes
+/// the small-sample bias of a per-tile-local estimate and charges a mode for
+/// fragmenting the global symbol distribution.
 ///
-/// There is NO per-tile header term: a constant channel must score exactly 0
-/// so flat tiles tie. Ties resolve to the lowest mode index (strict `<` keeps
-/// the first, ascending, winner), so a 0-entropy tile resolves to mode 1
-/// (mode 0 predicts opaque black, never constant on a non-black tile).
+/// There is NO per-tile header term: a constant channel must contribute the same
+/// weight for every mode so flat tiles tie. Ties resolve to the lowest mode index
+/// (strict `>` keeps the first, ascending, winner).
 ///
 /// `scratch` is reused across every call so this allocates nothing; each mode
 /// only touches, then resets, the histogram bins it actually hit. The four
 /// neighbors are the same for every mode at a given pixel, so they are gathered
-/// once into `scratch.neighbors` and reused across all 14 modes.
+/// once into `scratch.neighbors` and reused across all 14 modes. The winning
+/// mode's residual is folded into `scratch.committed` before returning, so
+/// [`forward`]'s scan-order tile loop scores each tile against its predecessors.
 fn best_mode(
     argb: &[u32],
     width: usize,
@@ -204,7 +214,6 @@ fn best_mode(
     let y0 = (ty << bits).max(1);
     let x1 = ((tx << bits) + tile).min(width);
     let y1 = ((ty << bits) + tile).min(height);
-    let total = (y1.saturating_sub(y0) * x1.saturating_sub(x0)) as u64;
     // Gather each interior pixel's value and its four neighbors once. They are
     // identical across all 14 modes, so this replaces 14 re-reads of `argb` per
     // pixel with a single pass — the scored order (row-major over the interior)
@@ -224,7 +233,7 @@ fn best_mode(
         }
     }
     let mut best = 0u32;
-    let mut best_cost = u64::MAX;
+    let mut best_gain = 0u64;
     for mode in 0..=13u32 {
         work!(PredictorModeEval);
         // Accumulate the per-channel residual-byte histogram over the interior,
@@ -239,27 +248,33 @@ fn best_mode(
                 scratch.counts[c][idx] += 1;
             }
         }
-        // Finalize the Shannon cost per channel, then reset only touched bins.
-        let mut cost = 0u64;
+        // Merge gain against the committed histogram, then reset only touched bins.
+        let mut gain = 0u64;
         for c in 0..4 {
-            scratch.used_counts.clear();
             let n = scratch.touched[c].len();
             for k in 0..n {
-                let byte = scratch.touched[c][k];
-                scratch
-                    .used_counts
-                    .push(scratch.counts[c][usize::from(byte)]);
-            }
-            cost += shannon_bits(total, &scratch.used_counts);
-            for k in 0..n {
-                let byte = scratch.touched[c][k];
-                scratch.counts[c][usize::from(byte)] = 0;
+                let idx = usize::from(scratch.touched[c][k]);
+                let committed = u64::from(scratch.committed[c][idx]);
+                let merged = committed + u64::from(scratch.counts[c][idx]);
+                gain += bin_weight(merged) - bin_weight(committed);
+                scratch.counts[c][idx] = 0;
             }
             scratch.touched[c].clear();
         }
-        if cost < best_cost {
-            best_cost = cost;
+        // The tile's own mode symbol lands in the mode sub-image histogram.
+        let seen = u64::from(scratch.mode_counts[mode as usize]);
+        gain += bin_weight(seen + 1) - bin_weight(seen);
+        if gain > best_gain {
+            best_gain = gain;
             best = mode;
+        }
+    }
+    scratch.mode_counts[best as usize] += 1;
+    // Commit the winner so later tiles score against the histogram they extend.
+    for &(cur, left, top_left, top, top_right) in &scratch.neighbors {
+        let residual = sub_pixels(cur, predict(best, left, top_left, top, top_right));
+        for (c, &byte) in residual.to_le_bytes().iter().enumerate() {
+            scratch.committed[c][usize::from(byte)] += 1;
         }
     }
     best
@@ -440,9 +455,10 @@ mod tests {
     use super::{
         EntropyScratch, add_sub_full, add_sub_half, average2, average3, average4, best_mode,
         clamped_add_subtract_full, clamped_add_subtract_half, clip255, forward, inverse, predict,
-        reconstruct_row_into, select, shannon_bits, sub_pixels,
+        reconstruct_row_into, select, sub_pixels,
     };
     use crate::lossless::constants::subsample_size;
+    use crate::lossless::histogram::bin_weight;
     use proptest::prelude::*;
 
     /// Pre-hoist reference for [`best_mode`]: re-reads the four neighbors from
@@ -462,9 +478,8 @@ mod tests {
         let y0 = (ty << bits).max(1);
         let x1 = ((tx << bits) + tile).min(width);
         let y1 = ((ty << bits) + tile).min(height);
-        let total = (y1.saturating_sub(y0) * x1.saturating_sub(x0)) as u64;
         let mut best = 0u32;
-        let mut best_cost = u64::MAX;
+        let mut best_gain = 0u64;
         for mode in 0..=13u32 {
             for y in y0..y1 {
                 let row = y * width;
@@ -485,26 +500,43 @@ mod tests {
                     }
                 }
             }
-            let mut cost = 0u64;
+            let mut gain = 0u64;
             for c in 0..4 {
-                scratch.used_counts.clear();
                 let n = scratch.touched[c].len();
                 for k in 0..n {
-                    let byte = scratch.touched[c][k];
-                    scratch
-                        .used_counts
-                        .push(scratch.counts[c][usize::from(byte)]);
-                }
-                cost += shannon_bits(total, &scratch.used_counts);
-                for k in 0..n {
-                    let byte = scratch.touched[c][k];
-                    scratch.counts[c][usize::from(byte)] = 0;
+                    let idx = usize::from(scratch.touched[c][k]);
+                    let committed = u64::from(scratch.committed[c][idx]);
+                    let merged = committed + u64::from(scratch.counts[c][idx]);
+                    gain += bin_weight(merged) - bin_weight(committed);
+                    scratch.counts[c][idx] = 0;
                 }
                 scratch.touched[c].clear();
             }
-            if cost < best_cost {
-                best_cost = cost;
+            let seen = u64::from(scratch.mode_counts[mode as usize]);
+            gain += bin_weight(seen + 1) - bin_weight(seen);
+            if gain > best_gain {
+                best_gain = gain;
                 best = mode;
+            }
+        }
+        scratch.mode_counts[best as usize] += 1;
+        for y in y0..y1 {
+            let row = y * width;
+            for x in x0..x1 {
+                let i = row + x;
+                let residual = sub_pixels(
+                    argb[i],
+                    predict(
+                        best,
+                        argb[i - 1],
+                        argb[i - width - 1],
+                        argb[i - width],
+                        argb[i - width + 1],
+                    ),
+                );
+                for (c, &byte) in residual.to_le_bytes().iter().enumerate() {
+                    scratch.committed[c][usize::from(byte)] += 1;
+                }
             }
         }
         best
@@ -1207,30 +1239,25 @@ mod tests {
 
     #[test]
     fn forward_roundtrips_multi_tile_with_mixed_modes() {
-        // An 8x8 image at bits=2 is a 2x2 tile grid; the top rows form a
-        // horizontal gradient (tile-row 0 -> modes 1,1) and the bottom rows a
-        // per-column ramp (tile-row 1 -> modes 2,12), so tile_row is non-zero and
-        // adjacent tiles differ. This pins forward's residual-loop tile index
-        // (`tile_row + (x>>bits)`, line 304) and stride (`(y>>bits)*tiles_per_row`,
-        // line 301): any `+`/`*`/`/` there reads a different tile's mode than the
-        // untouched inverse, so the round-trip breaks.
-        let h = [0i32, 5, 9, 20, 26, 35, 41];
+        // An 8x8 image at bits=2 is a 2x2 tile grid; the diagonal quadrants ramp horizontally (mode 1) and the anti-diagonal ones vertically (mode 2), so every tile differs from both its row and its column neighbor.
+        // This pins forward's residual-loop tile index (`tile_row + (x>>bits)`) and stride (`(y>>bits)*tiles_per_row`): any `+`/`*`/`/` there reads a different tile's mode than the untouched inverse, so the round-trip breaks.
         let img: Vec<u32> = (0..8i32)
             .flat_map(|y| {
                 (0..8i32).map(move |x| {
-                    let b = if y < 4 {
+                    let horizontal = (x < 4) == (y < 4);
+                    let b = if horizontal {
                         (13 * x) & 0xff
                     } else {
-                        (7 * y + h[(x % 7) as usize]) & 0xff
+                        (11 * y) & 0xff
                     };
                     0xff00_0000 | (b as u32)
                 })
             })
             .collect();
         let (residual, tile_data) = forward(&img, 8, 8, 2);
-        // Guard the premise: tile-row 0 and tile-row 1 must carry different modes.
+        // Guard the premise: no two adjacent tiles may share a mode.
         let modes: Vec<u32> = tile_data.iter().map(|&d| (d >> 8) & 0x0f).collect();
-        assert_eq!(modes, vec![1, 1, 2, 12]);
+        assert_eq!(modes, vec![1, 2, 2, 1]);
         let mut round = residual;
         inverse(&mut round, 8, 2, &tile_data);
         assert_eq!(round, img);

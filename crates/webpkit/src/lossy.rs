@@ -197,7 +197,7 @@ pub use encoder::{
 };
 pub use frame_header::FrameHeader;
 pub use rate::{Attempt, RateSearch, RateTarget};
-pub use tuning::{AlphaFilterMode, AlphaMethod, LossyTuning, Preset};
+pub use tuning::{AlphaFilterMode, AlphaMethod, ImageHint, LossyTuning, Preset};
 
 use crate::lossy::prelude::*;
 
@@ -234,7 +234,7 @@ pub fn decode(payload: &[u8]) -> Result<Image> {
 }
 
 /// Decode a WebP lossy `VP8` key-frame `payload` into an [`Image`] with explicit
-/// [`DecodeOptions`] (output layout, pixel limit).
+/// [`DecodeOptions`] (output layout, pixel limit, and opt-in chroma dithering).
 ///
 /// Symmetric with [`crate::lossless::decode_with`]: the header dimensions are
 /// checked against `options.max_pixels` *before* the reconstruction planes are
@@ -248,7 +248,7 @@ pub fn decode(payload: &[u8]) -> Result<Image> {
 /// `options.max_pixels` is exceeded.
 pub fn decode_with(payload: &[u8], options: &DecodeOptions) -> Result<Image> {
     check_pixel_limit(payload, options)?;
-    let image = decode::decode_frame(payload)?;
+    let image = decode::decode_frame_with_dithering(payload, options.dithering_strength)?;
     Ok(repack(image, options.layout))
 }
 
@@ -268,9 +268,10 @@ pub fn decode_argb(payload: &[u8]) -> Result<(Dimensions, Vec<u32>)> {
 /// Decode a baseline VP8 key-frame to native ARGB pixels with explicit
 /// [`DecodeOptions`].
 ///
-/// Checks `options.max_pixels` before the planes are allocated. The ARGB output is
-/// always native `0xAARRGGBB`, so `options.layout` is not consulted (use
-/// [`decode_with`] for a byte layout).
+/// Checks `options.max_pixels` before the planes are allocated and applies the
+/// requested chroma dithering strength. The ARGB output is always native
+/// `0xAARRGGBB`, so `options.layout` is not consulted (use [`decode_with`] for a
+/// byte layout).
 ///
 /// # Errors
 ///
@@ -278,13 +279,13 @@ pub fn decode_argb(payload: &[u8]) -> Result<(Dimensions, Vec<u32>)> {
 /// `options.max_pixels` is exceeded.
 pub fn decode_argb_with(payload: &[u8], options: &DecodeOptions) -> Result<(Dimensions, Vec<u32>)> {
     check_pixel_limit(payload, options)?;
-    let image = decode::decode_frame(payload)?;
+    let image = decode::decode_frame_with_dithering(payload, options.dithering_strength)?;
     let argb = crate::image::unpack_pixels(PixelLayout::Rgba8, image.as_bytes());
     Ok((image.dimensions(), argb))
 }
 
 /// Reconstruct a VP8 key-frame `payload` into native **YUV 4:2:0** planes as a
-/// [`YuvImage`], stopping before the YUV→RGB conversion `decode` performs.
+/// [`crate::YuvImage`], stopping before the YUV→RGB conversion `decode` performs.
 ///
 /// The luma plane is `width × height`; the chroma planes are
 /// `⌈width/2⌉ × ⌈height/2⌉`, all packed with no row padding. Checks
@@ -296,9 +297,10 @@ pub fn decode_argb_with(payload: &[u8], options: &DecodeOptions) -> Result<(Dime
 /// # Errors
 ///
 /// The same errors as [`decode_with`].
-pub(crate) fn decode_yuv_with(payload: &[u8], options: &DecodeOptions) -> Result<crate::YuvImage> {
+pub fn decode_yuv_with(payload: &[u8], options: &DecodeOptions) -> Result<crate::YuvImage> {
     check_pixel_limit(payload, options)?;
-    let (planes, w, h) = decode::reconstruct_to_planes(payload)?;
+    let (planes, w, h) =
+        decode::reconstruct_to_planes_with_dithering(payload, options.dithering_strength)?;
     let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
     let dims = Dimensions::new(
         u32::try_from(w).map_err(|_| Error::InvalidDimensions)?,

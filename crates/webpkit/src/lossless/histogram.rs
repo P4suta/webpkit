@@ -285,20 +285,12 @@ fn channel_bits(bins: &[u32]) -> (u64, u64) {
     (acc >> LOG2_FRAC_BITS, used)
 }
 
-/// Shannon cost (whole bits) of a channel from its total count and the counts of
-/// just its used (nonzero) symbols. Σ n·log2(total/n) = total·log2(total) − Σ n·log2(n),
-/// fixed point — the O(used) sibling of [`channel_bits`], for the predictor's
-/// per-tile mode-entropy scoring (avoids a 256-bin scan per mode).
-pub(crate) fn shannon_bits(total: u64, used_counts: &[u32]) -> u64 {
-    if total == 0 {
-        return 0;
-    }
-    let mut acc = total * fixed_log2(total);
-    for &n in used_counts {
-        let n64 = u64::from(n);
-        acc -= n64 * fixed_log2(n64);
-    }
-    acc >> LOG2_FRAC_BITS
+/// One bin's `n·log2(n)` term of a Shannon cost, in `fixed_log2`'s Q16 fixed point; `0` for an empty or single-count bin.
+///
+/// A channel's cost is `total·log2(total) − Σ_bin bin_weight`, so merging a candidate into a running histogram changes the cost by a mode-invariant normalizer minus `Σ_bin [bin_weight(base + add) − bin_weight(base)]`.
+/// The predictor's tile-mode search ranks candidates by that sum, touching only the bins the candidate hits instead of rescoring a 256-bin channel.
+pub(crate) fn bin_weight(n: u64) -> u64 {
+    n * fixed_log2(n)
 }
 
 /// Shannon cost (whole bits) and used-symbol count of the element-wise SUM of two
@@ -364,7 +356,7 @@ pub(crate) fn fixed_log2(x: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Histogram, LOG2_FRAC_BITS, auto_level, channel_bits, fixed_log2, header_bits, shannon_bits,
+        Histogram, LOG2_FRAC_BITS, auto_level, bin_weight, channel_bits, fixed_log2, header_bits,
         size_cap,
     };
     use crate::effort::MAX_LEVEL;
@@ -525,13 +517,37 @@ mod tests {
     }
 
     proptest! {
-        /// `shannon_bits(total, used_counts)` — fed the total and just the nonzero
-        /// bins — must equal the pixel-data term of the full-slice `channel_bits`.
+        /// `bin_weight` merge-gain must rank two equal-mass candidates exactly as merged `channel_bits` cost does: more gain is a cheaper merged channel.
+        /// The 1-bit guard skips pairs whose costs collide under Q16 truncation.
         #[test]
-        fn shannon_bits_matches_channel_bits(bins in prop::collection::vec(0u32..=5000, 0..=300)) {
-            let total: u64 = bins.iter().map(|&n| u64::from(n)).sum();
-            let used: Vec<u32> = bins.iter().copied().filter(|&n| n > 0).collect();
-            prop_assert_eq!(shannon_bits(total, &used), channel_bits(&bins).0);
+        fn merge_gain_ranks_like_merged_channel_cost(
+            base in prop::collection::vec(0u32..=500, 256..=256),
+            a_syms in prop::collection::vec(0u8..=255, 1..=200),
+            b_syms in prop::collection::vec(0u8..=255, 1..=200),
+        ) {
+            let histo = |syms: &[u8]| {
+                let mut h = vec![0u32; 256];
+                for &s in syms.iter().take(a_syms.len().min(b_syms.len())) {
+                    h[usize::from(s)] += 1;
+                }
+                h
+            };
+            let (a, b) = (histo(&a_syms), histo(&b_syms));
+            let gain = |add: &[u32]| -> u64 {
+                base.iter()
+                    .zip(add)
+                    .map(|(&x, &y)| {
+                        bin_weight(u64::from(x) + u64::from(y)) - bin_weight(u64::from(x))
+                    })
+                    .sum()
+            };
+            let merged = |add: &[u32]| -> u64 {
+                let sum: Vec<u32> = base.iter().zip(add).map(|(&x, &y)| x + y).collect();
+                channel_bits(&sum).0
+            };
+            if merged(&a) + 1 < merged(&b) {
+                prop_assert!(gain(&a) > gain(&b));
+            }
         }
 
         /// The entropy estimate is a lower bound on a real fixed-length coding:

@@ -1,0 +1,5 @@
+feature = "chroma-edge"
+level = "must"
+width = 23
+height = 31
+note = "23x31 synthetic source; input.vp8 via cwebp 1.6.0 `-q 75 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"

@@ -81,8 +81,11 @@ pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
 ///
 /// Build one with [`DecodeOptions::new`] / [`Default`] and the consuming builder
 /// methods ([`layout`](Self::layout), [`max_pixels`](Self::max_pixels),
-/// [`read_metadata`](Self::read_metadata)); the fields are private so new options
-/// can be added without a breaking change (reinforced by `#[non_exhaustive]`).
+/// [`read_metadata`](Self::read_metadata),
+/// [`with_dithering_strength`](Self::with_dithering_strength), and
+/// [`with_alpha_dithering_strength`](Self::with_alpha_dithering_strength)); the
+/// fields are private so new options can be added without a breaking change
+/// (reinforced by `#[non_exhaustive]`).
 ///
 /// A default-constructed `DecodeOptions` caps the canvas at
 /// [`DEFAULT_MAX_PIXELS`] — so a plain [`decode`](crate::decode) is safe on
@@ -96,6 +99,10 @@ pub struct DecodeOptions {
     pub(crate) max_pixels: Option<u64>,
     /// Whether to extract ICC/Exif/XMP metadata. See [`read_metadata`](Self::read_metadata).
     pub(crate) read_metadata: bool,
+    /// Lossy VP8 chroma-plane dithering strength (`0..=100`).
+    pub(crate) dithering_strength: u8,
+    /// Quantized `ALPH` plane smoothing strength (`0..=100`).
+    pub(crate) alpha_dithering_strength: u8,
 }
 
 impl Default for DecodeOptions {
@@ -104,6 +111,8 @@ impl Default for DecodeOptions {
             layout: PixelLayout::Rgba8,
             max_pixels: Some(DEFAULT_MAX_PIXELS),
             read_metadata: true,
+            dithering_strength: 0,
+            alpha_dithering_strength: 0,
         }
     }
 }
@@ -155,6 +164,26 @@ impl DecodeOptions {
     #[must_use]
     pub const fn read_metadata(mut self, read: bool) -> Self {
         self.read_metadata = read;
+        self
+    }
+
+    /// Set lossy VP8 chroma dithering strength (`0..=100`, clamped).
+    ///
+    /// Dithering is a deterministic post-process over low-amplitude U/V macroblocks.
+    /// `0` (the default) preserves the exact decoded pixels of the normal path; `100` selects the full reference amplitude.
+    #[must_use]
+    pub const fn with_dithering_strength(mut self, strength: u8) -> Self {
+        self.dithering_strength = if strength > 100 { 100 } else { strength };
+        self
+    }
+
+    /// Set quantized-alpha dithering strength (`0..=100`, clamped).
+    ///
+    /// This only affects an `ALPH` chunk whose header declares level quantization.
+    /// It smooths the reconstructed alpha levels like libwebp's `alpha_dithering_strength`; ordinary lossless alpha is unchanged.
+    #[must_use]
+    pub const fn with_alpha_dithering_strength(mut self, strength: u8) -> Self {
+        self.alpha_dithering_strength = if strength > 100 { 100 } else { strength };
         self
     }
 }
@@ -339,10 +368,26 @@ mod tests {
         let opts = DecodeOptions::new()
             .layout(PixelLayout::Bgra8)
             .max_pixels(1024)
-            .read_metadata(false);
+            .read_metadata(false)
+            .with_dithering_strength(73)
+            .with_alpha_dithering_strength(41);
         assert_eq!(opts.layout, PixelLayout::Bgra8);
         assert_eq!(opts.max_pixels, Some(1024));
         assert!(!opts.read_metadata);
+        assert_eq!(opts.dithering_strength, 73);
+        assert_eq!(opts.alpha_dithering_strength, 41);
+        assert_eq!(
+            DecodeOptions::new()
+                .with_dithering_strength(u8::MAX)
+                .dithering_strength,
+            100
+        );
+        assert_eq!(
+            DecodeOptions::new()
+                .with_alpha_dithering_strength(u8::MAX)
+                .alpha_dithering_strength,
+            100
+        );
     }
 
     #[test]

@@ -85,8 +85,8 @@
       "height": 32,
       "decoded_hash": 14606322490691510853,
       "reencode_ok": true,
-      "reencode_len": 84,
-      "reencode_hash": 16276054770118723875,
+      "reencode_len": 80,
+      "reencode_hash": 5036386195150727325,
       "self_roundtrip": true
     },
     {
@@ -228,8 +228,8 @@
       "height": 32,
       "decoded_hash": 16666787168084109780,
       "reencode_ok": true,
-      "reencode_len": 2880,
-      "reencode_hash": 15581092113230976398,
+      "reencode_len": 2710,
+      "reencode_hash": 18282578891653707315,
       "self_roundtrip": true
     },
     {

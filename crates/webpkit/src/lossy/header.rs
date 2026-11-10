@@ -165,7 +165,8 @@ impl Frame {
             // x * 155 / 100, computed exactly as (x * 101581) >> 16.
             m.y2[1] = ((ac_quant(clip_q(q + dqy2_ac)) * 101_581) >> 16).max(8);
             m.uv[0] = dc_quant(clip_uv(q + dquv_dc));
-            m.uv[1] = ac_quant(clip_q(q + dquv_ac));
+            m.uv_quant = clip_q(q + dquv_ac);
+            m.uv[1] = ac_quant(m.uv_quant);
         }
     }
 

@@ -6,9 +6,11 @@
 //! through [`IncrementalDecoder::drain_rows`]. A bare `VP8 ` still is always
 //! opaque (alpha lives only in the extended `VP8X` form), so the streamed rows
 //! and [`IncrementalDecoder::into_image`] are byte-identical to a one-shot
-//! [`crate::lossy::decode`] of the same chunk. `Read`-free, so it works on
-//! `no_std + alloc`. Animation and alpha compositing belong to the umbrella
-//! `webp` crate, which routes only bare-lossy stills here.
+//! [`crate::lossy::decode`] of the same chunk. Chroma dithering runs only after
+//! the full-frame loop filter, so a non-zero dithering strength buffers the
+//! complete image and deliberately yields no early row views. `Read`-free, so
+//! it works on `no_std + alloc`. Animation and alpha compositing belong to the
+//! umbrella `webp` crate, which routes only bare-lossy stills here.
 
 use crate::container::fourcc::FourCc;
 use crate::container::reader::{ImageChunk, locate_image_with_alpha};
@@ -155,7 +157,10 @@ impl StillState {
 ///
 /// The image is streamed row-by-row through a `Vp8Stream`; [`Self::drain_rows`]
 /// yields finalized rows early and [`Self::into_image`] returns the complete
-/// picture. `Read`-free, so it works on `no_std + alloc`.
+/// picture. With non-zero chroma dithering, reconstruction is buffered until the
+/// whole frame is available and `drain_rows` returns `None`, because dithering is
+/// applied after the full-frame loop filter. `Read`-free, so it works on
+/// `no_std + alloc`.
 ///
 /// The pixel limit follows [`DecodeOptions`], the single source of truth: a
 /// default-constructed one caps at [`DEFAULT_MAX_PIXELS`](crate::DEFAULT_MAX_PIXELS)
@@ -244,6 +249,16 @@ impl IncrementalDecoder {
         let pixels = info.dimensions.pixel_count();
         if let Some(limit) = self.options.max_pixels.filter(|&limit| pixels > limit) {
             return Err(Error::LimitExceeded { pixels, limit });
+        }
+        // Chroma dithering is defined over the fully filtered U/V planes and its deterministic PRNG advances in macroblock raster order.
+        // Rows already converted to RGBA by `Vp8Stream` therefore cannot be patched exactly.
+        // Preserve byte equality with the one-shot decoder by buffering this option until the complete-file branch above can run `decode_image`.
+        if self.options.dithering_strength != 0 {
+            if self.reported_header {
+                return Ok(Some(Progress::NeedMoreInput));
+            }
+            self.reported_header = true;
+            return Ok(Some(Progress::HeaderReady(info)));
         }
         let Some((start, end)) = locate_vp8(&self.buf) else {
             return Ok(Some(Progress::NeedMoreInput));
@@ -349,6 +364,8 @@ impl IncrementalDecoder {
     /// [`PixelLayout`], as a non-consuming early view. `None` if none are pending.
     /// The borrowed bytes are freed on the next [`Self::push`], yet
     /// [`Self::into_image`] still returns the complete image (see [`RowDrain`]).
+    /// A non-zero chroma dithering strength buffers the full frame and always
+    /// returns `None` here.
     pub fn drain_rows(&mut self) -> Option<RowDrain<'_>> {
         self.still.as_mut()?.take_drain()
     }
@@ -382,7 +399,15 @@ impl IncrementalDecoder {
             // were freed (so `packed` still holds every row). Otherwise defer to
             // the one-shot decode, which reconstructs any freed rows from `buf` or
             // surfaces the same error.
-            Some(st) if st.done && st.packed_base == 0 && is_complete(&buf) => st.assemble(&buf),
+            Some(st)
+                if st.done
+                    && st.packed_base == 0
+                    && options.dithering_strength == 0
+                    && options.alpha_dithering_strength == 0
+                    && is_complete(&buf) =>
+            {
+                st.assemble(&buf)
+            },
             _ => decode_image(&buf, &options),
         }
     }
@@ -410,7 +435,7 @@ fn decode_image(buf: &[u8], options: &DecodeOptions) -> Result<Image> {
     if let Some(limit) = options.max_pixels.filter(|&limit| pixels > limit) {
         return Err(Error::LimitExceeded { pixels, limit });
     }
-    let image = decode::decode_frame(payload)?;
+    let image = decode::decode_frame_with_dithering(payload, options.dithering_strength)?;
     if let Some(vp8x) = located.vp8x
         && vp8x.canvas != image.dimensions()
     {
@@ -583,6 +608,57 @@ mod tests {
         assert_eq!(drained, expected, "drained rows differ from one-shot");
         // into_image reconstructs the whole image even after rows were freed.
         assert_eq!(dec.into_image().unwrap().as_bytes(), expected);
+    }
+
+    #[test]
+    fn dithered_incremental_decode_buffers_and_matches_one_shot() {
+        let (width, height) = (32u32, 32u32);
+        let dims = Dimensions::new(width, height).unwrap();
+        let colors = [
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+            [0, 0, 255, 255],
+            [255, 255, 0, 255],
+        ];
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                rgba.extend_from_slice(&colors[((x / 16 + 2 * (y / 16)) % 4) as usize]);
+            }
+        }
+        let input = ImageRef::new(dims, PixelLayout::Rgba8, &rgba).unwrap();
+        let config = LossyConfig::new().with_quality(100);
+        let payload = encode_vp8(input, &config).unwrap().1;
+        let options = DecodeOptions::new().with_dithering_strength(100);
+        let expected = decode_with(&payload, &options).unwrap();
+        assert_ne!(
+            expected.as_bytes(),
+            decode(&payload).unwrap().as_bytes(),
+            "fixture must exercise chroma dithering"
+        );
+
+        let file = riff_vp8(&payload);
+        let mut dec = IncrementalDecoder::with_options(options);
+        let mut headers = 0u32;
+        let mut finished = false;
+        for chunk in file.chunks(7) {
+            match dec.push(chunk).unwrap() {
+                Progress::HeaderReady(_) => headers += 1,
+                Progress::RowsDecoded { .. } => {
+                    panic!("dithered decode must not expose undithered rows")
+                },
+                Progress::Finished => finished = true,
+                Progress::FrameComplete(_) => panic!("a still image emits no frames"),
+                Progress::NeedMoreInput => {},
+            }
+            assert!(
+                dec.drain_rows().is_none(),
+                "dithered decode must not expose an undithered row view"
+            );
+        }
+        assert_eq!(headers, 1, "HeaderReady must be reported exactly once");
+        assert!(finished, "dithered stream never Finished");
+        assert_eq!(dec.into_image().unwrap().as_bytes(), expected.as_bytes());
     }
 
     #[test]

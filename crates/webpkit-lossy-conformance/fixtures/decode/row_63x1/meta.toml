@@ -1,0 +1,5 @@
+feature = "row-edge"
+level = "must"
+width = 63
+height = 1
+note = "63x1 synthetic source; input.vp8 via cwebp 1.6.0 `-q 75 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"

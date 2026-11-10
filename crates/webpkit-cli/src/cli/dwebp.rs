@@ -7,10 +7,9 @@
 
 use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 
-use webpkit::{Image, PixelLayout};
+use webpkit::{DecodeOptions, Image, PixelLayout};
 
 use crate::{
-    codec,
     diag::{self, Diagnostic},
     error::CliError,
     format::{self, OutputFormat},
@@ -99,9 +98,10 @@ struct Config {
     crop: Option<Crop>,
     /// `-scale`/`-resize w h`, applied after `-crop` (a `0` axis keeps aspect).
     resize: Option<Resize>,
-    /// A dithering flag was requested; this exact decoder has nothing to dither, so a
-    /// verbose note explains the no-op rather than the tool staying silent.
-    dither_requested: bool,
+    /// `-dither N`: lossy VP8 chroma-plane dithering strength.
+    dithering_strength: u8,
+    /// `-alpha_dither`: smoothing strength for level-quantized `ALPH`.
+    alpha_dithering_strength: u8,
     flip: bool,
     alpha: bool,
     verbose: u8,
@@ -124,6 +124,11 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
     let source = Source::from_arg(&input);
     let sink = Sink::from_arg(&output);
     let bytes = source.read()?;
+    let options = DecodeOptions::new()
+        .layout(PixelLayout::Rgba8)
+        .max_pixels(webpkit::DEFAULT_MAX_PIXELS)
+        .with_dithering_strength(config.dithering_strength)
+        .with_alpha_dithering_strength(config.alpha_dithering_strength);
     // The YUV planes are the lossy decoder's native reconstruction, so this path
     // is distinct from the RGBA one (there is no `Image` to flip or recolor here).
     if let Some(layout) = config.yuv {
@@ -135,7 +140,7 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
                 layout.flag(),
             )));
         }
-        let yuv = decode_yuv(&bytes, layout)?;
+        let yuv = decode_yuv(&bytes, layout, &options)?;
         let out = match layout {
             YuvOut::Planar => format::yuv::write_yuv(&yuv),
             YuvOut::Pgm => format::yuv::write_pgm(&yuv),
@@ -151,21 +156,11 @@ fn run(args: &[OsString]) -> Result<(), CliError> {
         ));
         return Ok(());
     }
-    let mut image = codec::decode(
-        &bytes,
-        PixelLayout::Rgba8,
-        Some(webpkit::DEFAULT_MAX_PIXELS),
-    )?;
+    let mut image = webpkit::decode_with(&bytes, &options)?;
     // Geometry first (crop, then scale), on the decoded RGBA via the core rescaler.
     let pipeline = Pipeline::new(config.crop, config.resize);
     if !pipeline.is_empty() {
         image = pipeline.apply(image)?;
-    }
-    if config.dither_requested {
-        reporter.detail(
-            "-dither/-alpha_dither have no effect: this decoder reconstructs the exact \
-             stored pixels, so there is no lossy banding to hide",
-        );
     }
     if config.alpha {
         image = alpha_as_gray(&image)?;
@@ -250,10 +245,7 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                 let height = value_u32(args, &mut index, &token)?;
                 config.resize = Some(Resize::new(width, height)?);
             },
-            // Dithering hides banding in *lossy* reconstruction; this decoder rebuilds
-            // the exact stored pixels, so there is nothing to perturb. The flags are
-            // accepted (and their strength validated) rather than rejected, and are a
-            // documented no-op — see the `-v` note emitted at decode time.
+            // Chroma dithering strength is applied during VP8 plane reconstruction.
             "-dither" => {
                 let strength = value_u32(args, &mut index, "-dither")?;
                 if strength > 100 {
@@ -261,10 +253,10 @@ fn parse(args: &[OsString]) -> Result<Parsed, CliError> {
                         "`-dither` strength is 0-100, got `{strength}`"
                     )));
                 }
-                config.dither_requested |= strength > 0;
+                config.dithering_strength = u8::try_from(strength).unwrap_or(100);
             },
-            "-alpha_dither" => config.dither_requested = true,
-            "-nodither" => {},
+            "-alpha_dither" => config.alpha_dithering_strength = 100,
+            "-nodither" => config.dithering_strength = 0,
             #[cfg(feature = "formats")]
             "-bmp" => config.format = Some(OutputFormat::Bmp),
             #[cfg(feature = "formats")]
@@ -317,8 +309,12 @@ fn reject(args: &[String], index: usize, flag: &str) -> CliError {
 /// Decode a lossy WebP to its native YUV 4:2:0 planes, turning the lossless or
 /// animated case — which has no YUV form — into a message that names the RGBA
 /// formats to reach for instead. Other decode failures pass through unchanged.
-fn decode_yuv(bytes: &[u8], layout: YuvOut) -> Result<webpkit::YuvImage, CliError> {
-    webpkit::decode_yuv(bytes).map_err(|err| match err {
+fn decode_yuv(
+    bytes: &[u8],
+    layout: YuvOut,
+    options: &DecodeOptions,
+) -> Result<webpkit::YuvImage, CliError> {
+    webpkit::decode_yuv_with_options(bytes, options).map_err(|err| match err {
         webpkit::Error::UnsupportedFeature => CliError::Rejected(Box::new(
             Diagnostic::new(format!(
                 "`{}` needs a lossy WebP; this input is lossless or animated",
