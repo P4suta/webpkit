@@ -42,13 +42,33 @@ fn libwebp_encode_lossy_rgba(
     alpha_compression: i32,
     alpha_filtering: i32,
 ) -> Vec<u8> {
+    libwebp_encode_lossy_rgba_with_alpha_quality(
+        rgba,
+        width,
+        height,
+        quality,
+        alpha_compression,
+        alpha_filtering,
+        100,
+    )
+}
+
+fn libwebp_encode_lossy_rgba_with_alpha_quality(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    quality: f32,
+    alpha_compression: i32,
+    alpha_filtering: i32,
+    alpha_quality: i32,
+) -> Vec<u8> {
     let mut config = libwebp_sys::WebPConfig::new().unwrap();
     config.lossless = 0;
     config.quality = quality;
     config.method = 4;
     config.alpha_compression = alpha_compression;
     config.alpha_filtering = alpha_filtering;
-    config.alpha_quality = 100;
+    config.alpha_quality = alpha_quality;
     // SAFETY: `config` is a fully-initialized WebPConfig.
     assert!(
         unsafe { libwebp_sys::WebPValidateConfig(&raw const config) } != 0,
@@ -103,6 +123,45 @@ fn libwebp_decode_rgba(webp: &[u8]) -> (u32, u32, Vec<u8>) {
     // SAFETY: `ptr` was allocated by libwebp and is freed exactly once here.
     unsafe { libwebp_sys::WebPFree(ptr.cast()) };
     (u32::try_from(w).unwrap(), u32::try_from(h).unwrap(), rgba)
+}
+
+/// Decode through libwebp's advanced API so both decoder dithering controls are observable.
+/// The output buffer is Rust-owned, avoiding allocator ownership at the FFI boundary.
+fn libwebp_decode_rgba_with_dither(
+    webp: &[u8],
+    width: u32,
+    height: u32,
+    dithering_strength: i32,
+    alpha_dithering_strength: i32,
+) -> Vec<u8> {
+    let rgba_stride = usize::try_from(width).unwrap().checked_mul(4).unwrap();
+    let rgba_len = rgba_stride
+        .checked_mul(usize::try_from(height).unwrap())
+        .unwrap();
+    let rgba_stride = i32::try_from(rgba_stride).unwrap();
+    let mut rgba = vec![0u8; rgba_len];
+    let mut config = libwebp_sys::WebPDecoderConfig::new().unwrap();
+    config.options.dithering_strength = dithering_strength;
+    config.options.alpha_dithering_strength = alpha_dithering_strength;
+    config.output.colorspace = libwebp_sys::WEBP_CSP_MODE::MODE_RGBA;
+    config.output.is_external_memory = 1;
+    config.output.u.RGBA = libwebp_sys::WebPRGBABuffer {
+        rgba: rgba.as_mut_ptr(),
+        stride: rgba_stride,
+        size: rgba.len(),
+    };
+    // SAFETY: `webp` is live for the call; `config` is initialized and points to
+    // the exactly-sized Rust-owned RGBA buffer above.
+    let status = unsafe { libwebp_sys::WebPDecode(webp.as_ptr(), webp.len(), &raw mut config) };
+    // SAFETY: `config.output` was initialized by libwebp. This is its required final
+    // cleanup call; external RGBA storage remains owned by the Rust `Vec`.
+    unsafe { libwebp_sys::WebPFreeDecBuffer(&raw mut config.output) };
+    assert_eq!(
+        status,
+        libwebp_sys::VP8StatusCode::VP8_STATUS_OK,
+        "libwebp advanced decode failed"
+    );
+    rgba
 }
 
 /// Deterministic synthetic RGBA (`width * height * 4`) whose alpha channel is an
@@ -201,6 +260,90 @@ fn decode_matches_libwebp_on_transparent_lossy_images() {
     assert!(
         filters_hit >= 2,
         "matrix must exercise more than one spatial un-filter (saw {seen_filter:?})"
+    );
+}
+
+#[test]
+fn decoder_dithering_matches_libwebp_for_chroma_and_quantized_alpha() {
+    // Saturated 2x2 color cells give the chroma-dither gate plenty of non-zero AC energy.
+    // Quality 100 keeps UV quantization in libwebp's dither table.
+    let (w, h) = (32u32, 32u32);
+    let mut opaque = Vec::with_capacity(usize::try_from(w * h * 4).unwrap());
+    let colors = [
+        [255, 0, 0, 255],
+        [0, 255, 0, 255],
+        [0, 0, 255, 255],
+        [255, 255, 0, 255],
+    ];
+    for y in 0..h {
+        for x in 0..w {
+            opaque
+                .extend_from_slice(&colors[usize::try_from((x / 16 + 2 * (y / 16)) % 4).unwrap()]);
+        }
+    }
+    let color_file = libwebp_encode_lossy_rgba(&opaque, w, h, 100.0, 0, 0);
+    let color_golden = libwebp_decode_rgba_with_dither(&color_file, w, h, 100, 0);
+    let color_plain = libwebp_decode_rgba_with_dither(&color_file, w, h, 0, 0);
+    let color_ours = webpkit::decode_with(
+        &color_file,
+        &webpkit::DecodeOptions::new().with_dithering_strength(100),
+    )
+    .unwrap();
+    assert_ne!(
+        color_golden, color_plain,
+        "fixture must exercise chroma dithering"
+    );
+    assert_eq!(color_ours.as_bytes(), color_golden);
+    let mut color_incremental = webpkit::IncrementalDecoder::with_options(
+        webpkit::DecodeOptions::new().with_dithering_strength(100),
+    );
+    color_incremental.push(&color_file).unwrap();
+    assert_eq!(
+        color_incremental.into_image().unwrap().as_bytes(),
+        color_golden,
+        "incremental lossy decode must retain color dithering options"
+    );
+
+    // Alpha quality below 100 marks the ALPH stream for level dequantization.
+    // Its RGB is intentionally flat so only the alpha option can change output.
+    let (aw, ah) = (17u32, 19u32);
+    let mut transparent = synth_rgba(aw, ah, 2);
+    for px in transparent.chunks_exact_mut(4) {
+        px[0] = 40;
+        px[1] = 80;
+        px[2] = 120;
+    }
+    let alpha_file =
+        libwebp_encode_lossy_rgba_with_alpha_quality(&transparent, aw, ah, 90.0, 1, 2, 30);
+    let alph = locate_image_with_alpha(&alpha_file)
+        .unwrap()
+        .alpha
+        .expect("quantized alpha fixture has ALPH");
+    assert_eq!(
+        parse_header(alph).unwrap().0.preprocessing,
+        1,
+        "fixture must request alpha level dequantization"
+    );
+    let alpha_golden = libwebp_decode_rgba_with_dither(&alpha_file, aw, ah, 0, 100);
+    let alpha_plain = libwebp_decode_rgba_with_dither(&alpha_file, aw, ah, 0, 0);
+    let alpha_ours = webpkit::decode_with(
+        &alpha_file,
+        &webpkit::DecodeOptions::new().with_alpha_dithering_strength(100),
+    )
+    .unwrap();
+    assert_ne!(
+        alpha_golden, alpha_plain,
+        "fixture must exercise alpha dequantization"
+    );
+    assert_eq!(alpha_ours.as_bytes(), alpha_golden);
+    let mut alpha_incremental = webpkit::IncrementalDecoder::with_options(
+        webpkit::DecodeOptions::new().with_alpha_dithering_strength(100),
+    );
+    alpha_incremental.push(&alpha_file).unwrap();
+    assert_eq!(
+        alpha_incremental.into_image().unwrap().as_bytes(),
+        alpha_golden,
+        "deferred incremental decode must retain alpha dithering options"
     );
 }
 

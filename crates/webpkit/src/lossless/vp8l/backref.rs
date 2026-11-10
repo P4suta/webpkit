@@ -21,7 +21,7 @@ use crate::lossless::constants::{
     WINDOW_SIZE,
 };
 use crate::lossless::histogram::{Histogram, fixed_log2};
-use crate::lossless::lz77::{PlaneCodeMap, prefix_encode};
+use crate::lossless::lz77::{PlaneCodeMap, near_distances, prefix_encode};
 use crate::lossless::prelude::*;
 use crate::lossless::work::work;
 
@@ -132,6 +132,76 @@ fn parse_with_chain(pixels: &[u32], chain: &HashChain) -> Vec<Token> {
         }
     }
     tokens
+}
+
+/// Greedy one-step-lazy parse restricted to the *near* distances of [`near_distances`]: a copy may only reference the pixel to its left, or a pixel within `+/-3` columns of the same position up to three rows above.
+/// Every distance it emits therefore codes as a low plane code (one prefix symbol, at most one extra bit) instead of a raw offset.
+///
+/// Positions with no near match become literals rather than reaching for a distant one, so this trades match coverage for distance cost.
+/// It is a whole extra token stream, ranked against the others by real emitted bytes, never a replacement.
+pub(crate) fn parse_local(pixels: &[u32], width: u32) -> Vec<Token> {
+    let n = pixels.len();
+    if n < MIN_MATCH as usize {
+        return pixels.iter().map(|&p| Token::Literal(p)).collect();
+    }
+    let dists = near_distances(width);
+    let mut tokens = Vec::new();
+    let mut i = 0usize;
+    // Same carried-lookahead shape as `parse_with_chain`: the lazy probe at `i + 1` becomes the next iteration's current match when a literal is coded.
+    let mut here = find_near(pixels, i, &dists);
+    while i < n {
+        let ahead = if i + 1 < n {
+            find_near(pixels, i + 1, &dists)
+        } else {
+            None
+        };
+        let matched = here.filter(|&(_, len)| ahead.is_none_or(|(_, next)| next <= len));
+        if let Some((distance, length)) = matched {
+            tokens.push(Token::Copy {
+                length: length as u32,
+                distance: distance as u32,
+            });
+            i += length;
+            here = find_near(pixels, i, &dists); // jumped past the lookahead
+        } else {
+            tokens.push(Token::Literal(pixels[i]));
+            i += 1;
+            here = ahead;
+        }
+    }
+    tokens
+}
+
+/// The longest match at `i` over the fixed near-distance set `dists`, or `None` when none reaches [`MIN_MATCH`].
+/// `dists` is in ascending plane-code order and only a strict improvement replaces the winner, so equal-length matches keep the cheapest plane code.
+fn find_near(pixels: &[u32], i: usize, dists: &[u32]) -> Option<(usize, usize)> {
+    let max_len = (MAX_COPY_LENGTH as usize).min(pixels.len() - i);
+    if max_len < MIN_MATCH as usize {
+        return None;
+    }
+    let (mut best_len, mut best_dist) = (0usize, 0usize);
+    for &dist in dists {
+        let d = dist as usize;
+        if d > i {
+            continue; // no earlier position at this distance yet
+        }
+        work!(MatchHop);
+        let pos = i - d;
+        // Quick reject: to strictly beat `best_len` this distance must at least match at index `best_len`.
+        // `best_len < max_len` (the loop breaks at the cap) and `pos < i`, so both reads are in bounds.
+        if pixels[pos + best_len] != pixels[i + best_len] {
+            continue;
+        }
+        let len = match_length(pixels, pos, i, max_len);
+        if len > best_len {
+            best_len = len;
+            best_dist = d;
+            if best_len >= max_len {
+                break; // cannot improve on the capped length
+            }
+        }
+    }
+    (best_len >= MIN_MATCH as usize).then_some((best_dist, best_len))
 }
 
 /// Walk `tokens` in output order, applying a `cache_bits`-wide color cache
@@ -545,12 +615,37 @@ fn channel_costs_arr<const N: usize>(counts: &[u32]) -> [u64; N] {
     core::array::from_fn(|s| total_log2.saturating_sub(fixed_log2(u64::from(counts[s]))))
 }
 
-/// The optimal-parse decision at one position: code a literal, or take a copy of
-/// `len` at `dist`. Recorded per position by the backward DP and replayed forward.
+/// The optimal-parse decision at one position, packed into one `u32`.
+///
+/// Copies store zero-based `(distance, length)` in 20 + 12 bits.
+/// The format bounds guarantee `distance <= WINDOW_SIZE < 2^20` and `length <= MAX_COPY_LENGTH == 2^12`; the all-ones word is therefore unused by a valid copy and represents a literal.
+/// Keeping this scratch word-sized is especially important for the paired DP, which holds two decision arrays.
 #[derive(Clone, Copy)]
-enum Choice {
-    Literal,
-    Copy { len: u32, dist: u32 },
+struct Choice(u32);
+
+const _: () = assert!(MAX_COPY_LENGTH == 1 << 12);
+const _: () = assert!(WINDOW_SIZE < 1 << 20);
+
+impl Choice {
+    const LENGTH_BITS: u32 = 12;
+    const LENGTH_MASK: u32 = (1 << Self::LENGTH_BITS) - 1;
+    const LITERAL: Self = Self(u32::MAX);
+
+    fn copy(len: u32, dist: u32) -> Self {
+        debug_assert!((MIN_MATCH..=MAX_COPY_LENGTH).contains(&len));
+        debug_assert!((1..=WINDOW_SIZE).contains(&dist));
+        Self(((dist - 1) << Self::LENGTH_BITS) | (len - 1))
+    }
+
+    const fn copy_parts(self) -> Option<(u32, u32)> {
+        if self.0 == Self::LITERAL.0 {
+            None
+        } else {
+            let len = (self.0 & Self::LENGTH_MASK) + 1;
+            let dist = (self.0 >> Self::LENGTH_BITS) + 1;
+            Some((len, dist))
+        }
+    }
 }
 
 /// Cost-model-driven near-optimal LZ77 parse: a backward dynamic program that,
@@ -558,24 +653,27 @@ enum Choice {
 /// self-information of the remaining stream, then reconstructs the token list
 /// forward.
 ///
-/// The cost model is a pass-1 histogram of the already-computed `greedy_tokens`
-/// (the same cache-agnostic distribution the greedy stream emits), so the DP
-/// prices exactly what the encoder will code. The near/far distance tradeoff is
-/// supplied by [`HashChain::find_candidates`]; the length/distance caps,
-/// window, and overlap (RLE) handling are inherited from [`match_length`] via
-/// that method. The result is a valid cache-agnostic [`Token`] stream — the same
-/// `Literal` / `Copy` shape [`resolve`] already handles — so it round-trips by
-/// construction, and (wired as a self-floored extra candidate) can only ever
-/// replace the greedy stream when it is strictly smaller.
+/// The cost model is a pass-1 histogram of the already-computed `seed_tokens`, so
+/// the DP prices a distribution the encoder really emits. Which seed is used is a
+/// free choice: the greedy stream reproduces its own distance spread, the
+/// near-restricted [`parse_local`] stream biases the model toward cheap plane
+/// codes, and re-seeding from a previous DP output iterates the model off its
+/// starting point. The near/far distance tradeoff is supplied by
+/// [`HashChain::find_candidates`]; the length/distance caps, window, and overlap
+/// (RLE) handling are inherited from [`match_length`] via that method. The result
+/// is a valid cache-agnostic [`Token`] stream — the same `Literal` / `Copy` shape
+/// [`resolve`] already handles — so it round-trips by construction, and (wired as
+/// a self-floored extra candidate) can only ever replace the seed when it is
+/// strictly smaller.
 pub(crate) fn parse_optimal(
     pixels: &[u32],
     width: u32,
-    greedy_tokens: &[Token],
+    seed_tokens: &[Token],
     chain: &HashChain,
 ) -> Vec<Token> {
     let n = pixels.len();
     if n < MIN_MATCH as usize {
-        return greedy_tokens.to_vec();
+        return seed_tokens.to_vec();
     }
     // Backward pass: the `cost`/`chain`/`cands` scratch and the cost model exist
     // only to fill `choice`. Scope them so they drop before the forward
@@ -584,11 +682,10 @@ pub(crate) fn parse_optimal(
     // `choice` escapes, so the recorded decisions — and the emitted tokens — are
     // unchanged.
     let choice = {
-        // Pass-1 histogram of the greedy stream, cache-agnostic (cache_bits = 0) —
-        // reusing the encoder's own model so the DP prices the identical
-        // distribution the emit pass sees before any cache decision.
+        // Pass-1 histogram of the seed stream, cache-agnostic (cache_bits = 0) —
+        // reusing the encoder's own model so the DP prices the identical distribution the emit pass sees before any cache decision.
         let histogram =
-            crate::lossless::vp8l::encode::RefModel::new(greedy_tokens, pixels, width).histogram(0);
+            crate::lossless::vp8l::encode::RefModel::new(seed_tokens, pixels, width).histogram(0);
         let cost_model = CostModel::from_histogram(&histogram);
         // `chain` is threaded in by the caller (built once by the greedy parse). It
         // is a pure function of `pixels`, so a shared chain is bit-identical to one
@@ -607,7 +704,7 @@ pub(crate) fn parse_optimal(
         // the reads yields the identical values a full `cost[0..=n]` array would.
         let ring = (n + 1).min(MAX_COPY_LENGTH as usize + 1);
         let mut cost = vec![0u64; ring];
-        let mut choice = vec![Choice::Literal; n];
+        let mut choice = vec![Choice::LITERAL; n];
         let mut cands: Vec<(u32, u32)> = Vec::new();
         // Carries each position's per-distance match lengths to the next (`i - 1`)
         // iteration so `find_candidates` can shift them instead of re-scanning
@@ -620,7 +717,7 @@ pub(crate) fn parse_optimal(
             let mut best = cost_model
                 .literal_cost(pixels[i])
                 .saturating_add(cost[(i + 1) % ring]);
-            let mut best_choice = Choice::Literal;
+            let mut best_choice = Choice::LITERAL;
             chain.find_candidates(pixels, i, &mut cands, &mut memo);
             for &(dist, len) in &cands {
                 let (length_symbol, length_bits, _) = prefix_encode(len);
@@ -631,7 +728,7 @@ pub(crate) fn parse_optimal(
                     .saturating_add(cost[(i + len as usize) % ring]);
                 if c < best {
                     best = c;
-                    best_choice = Choice::Copy { len, dist };
+                    best_choice = Choice::copy(len, dist);
                 }
             }
             cost[i % ring] = best;
@@ -642,22 +739,109 @@ pub(crate) fn parse_optimal(
         choice
     };
 
-    // Forward reconstruction from the recorded choices.
+    replay_choices(pixels, &choice)
+}
+
+/// Run two optimal parses over the same pixels while sharing the hash-chain candidate walk.
+///
+/// This is equivalent to two independent [`parse_optimal`] calls seeded by `seed_a` and `seed_b`: each state has its own cost model, cost ring, and strict-less-than decisions.
+/// Only [`HashChain::find_candidates`] and its backward shift memo are shared, because their results depend solely on the pixels and position.
+pub(crate) fn parse_optimal_pair(
+    pixels: &[u32],
+    width: u32,
+    seed_a: &[Token],
+    seed_b: &[Token],
+    chain: &HashChain,
+) -> (Vec<Token>, Vec<Token>) {
+    let n = pixels.len();
+    if n < MIN_MATCH as usize {
+        return (seed_a.to_vec(), seed_b.to_vec());
+    }
+
+    // Keep the two cost models, rings, and candidate scratch scoped to the backward pass.
+    // They are dead before either token stream is reconstructed,
+    // just as in the single-state path.
+    let (choice_a, choice_b) = {
+        let histogram_a =
+            crate::lossless::vp8l::encode::RefModel::new(seed_a, pixels, width).histogram(0);
+        let histogram_b =
+            crate::lossless::vp8l::encode::RefModel::new(seed_b, pixels, width).histogram(0);
+        let model_a = CostModel::from_histogram(&histogram_a);
+        let model_b = CostModel::from_histogram(&histogram_b);
+        let plane_map = PlaneCodeMap::new(width);
+
+        let ring = (n + 1).min(MAX_COPY_LENGTH as usize + 1);
+        let mut cost_a = vec![0u64; ring];
+        let mut cost_b = vec![0u64; ring];
+        let mut choice_a = vec![Choice::LITERAL; n];
+        let mut choice_b = vec![Choice::LITERAL; n];
+        let mut cands: Vec<(u32, u32)> = Vec::new();
+        let mut memo = ShiftMemo::default();
+
+        for i in (0..n).rev() {
+            // Preserve the work-counter meaning of two DP states even though their candidate discovery is now performed once.
+            work!(OptimalDpStep, 2);
+            let mut best_a = model_a
+                .literal_cost(pixels[i])
+                .saturating_add(cost_a[(i + 1) % ring]);
+            let mut best_b = model_b
+                .literal_cost(pixels[i])
+                .saturating_add(cost_b[(i + 1) % ring]);
+            let mut best_choice_a = Choice::LITERAL;
+            let mut best_choice_b = Choice::LITERAL;
+
+            chain.find_candidates(pixels, i, &mut cands, &mut memo);
+            for &(dist, len) in &cands {
+                let (length_symbol, length_bits, _) = prefix_encode(len);
+                let plane_code = plane_map.plane_code(dist);
+                let (dist_symbol, dist_bits, _) = prefix_encode(plane_code);
+
+                let candidate_a = model_a
+                    .copy_cost(length_symbol, length_bits, dist_symbol, dist_bits)
+                    .saturating_add(cost_a[(i + len as usize) % ring]);
+                if candidate_a < best_a {
+                    best_a = candidate_a;
+                    best_choice_a = Choice::copy(len, dist);
+                }
+
+                let candidate_b = model_b
+                    .copy_cost(length_symbol, length_bits, dist_symbol, dist_bits)
+                    .saturating_add(cost_b[(i + len as usize) % ring]);
+                if candidate_b < best_b {
+                    best_b = candidate_b;
+                    best_choice_b = Choice::copy(len, dist);
+                }
+            }
+
+            cost_a[i % ring] = best_a;
+            cost_b[i % ring] = best_b;
+            choice_a[i] = best_choice_a;
+            choice_b[i] = best_choice_b;
+            memo.advance();
+        }
+        (choice_a, choice_b)
+    };
+
+    let tokens_a = replay_choices(pixels, &choice_a);
+    drop(choice_a);
+    let tokens_b = replay_choices(pixels, &choice_b);
+    (tokens_a, tokens_b)
+}
+
+/// Forward reconstruction from a DP decision array.
+fn replay_choices(pixels: &[u32], choice: &[Choice]) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut i = 0usize;
-    while i < n {
-        match choice[i] {
-            Choice::Literal => {
-                tokens.push(Token::Literal(pixels[i]));
-                i += 1;
-            },
-            Choice::Copy { len, dist } => {
-                tokens.push(Token::Copy {
-                    length: len,
-                    distance: dist,
-                });
-                i += len as usize;
-            },
+    while i < pixels.len() {
+        if let Some((len, dist)) = choice[i].copy_parts() {
+            tokens.push(Token::Copy {
+                length: len,
+                distance: dist,
+            });
+            i += len as usize;
+        } else {
+            tokens.push(Token::Literal(pixels[i]));
+            i += 1;
         }
     }
     tokens
@@ -665,7 +849,10 @@ pub(crate) fn parse_optimal(
 
 #[cfg(test)]
 mod tests {
-    use super::{Resolved, Token, parse, parse_lz77, parse_optimal, resolve};
+    use super::{
+        Choice, Resolved, Token, parse, parse_local, parse_lz77, parse_optimal, parse_optimal_pair,
+        resolve,
+    };
     use crate::lossless::color_cache::ColorCache;
     use proptest::prelude::*;
 
@@ -956,6 +1143,55 @@ mod tests {
         }
     }
 
+    /// Sharing one candidate walk across two cost states must be token-identical to running the same greedy- and local-seeded DPs independently.
+    /// The long cases cross `MAX_COPY_LENGTH` (4096) and exercise both RLE overlap and a short-period hash chain.
+    #[test]
+    fn parse_optimal_pair_matches_independent_calls() {
+        let tiny = vec![0x1122_3344u32; 3];
+        let solid = vec![0xff22_4466u32; 4200];
+        let periodic: Vec<u32> = (0u32..4200)
+            .map(|i| 0xff00_0000 | ((i % 7) * 0x0001_0101))
+            .collect();
+
+        for (pixels, width) in [(&tiny, 1u32), (&solid, 60), (&periodic, 70)] {
+            let (greedy, chain) = parse_lz77(pixels);
+            let local = parse_local(pixels, width);
+            let expected_greedy = parse_optimal(pixels, width, &greedy, &chain);
+            let expected_local = parse_optimal(pixels, width, &local, &chain);
+            let (paired_greedy, paired_local) =
+                parse_optimal_pair(pixels, width, &greedy, &local, &chain);
+
+            assert_eq!(
+                paired_greedy,
+                expected_greedy,
+                "greedy-seeded pair mismatch at {} pixels",
+                pixels.len()
+            );
+            assert_eq!(
+                paired_local,
+                expected_local,
+                "local-seeded pair mismatch at {} pixels",
+                pixels.len()
+            );
+        }
+    }
+
+    #[test]
+    fn packed_choice_round_trips_format_bounds() {
+        use crate::lossless::constants::{MAX_COPY_LENGTH, MIN_MATCH, WINDOW_SIZE};
+
+        assert_eq!(core::mem::size_of::<Choice>(), 4);
+        assert_eq!(Choice::LITERAL.copy_parts(), None);
+        for (len, dist) in [
+            (MIN_MATCH, 1),
+            (MAX_COPY_LENGTH, 1),
+            (MIN_MATCH, WINDOW_SIZE),
+            (MAX_COPY_LENGTH, WINDOW_SIZE),
+        ] {
+            assert_eq!(Choice::copy(len, dist).copy_parts(), Some((len, dist)));
+        }
+    }
+
     #[test]
     fn literal_cost_is_the_exact_four_channel_sum() {
         // `literal_cost` reads the four channel bytes of `argb` at the exact shifts
@@ -1222,6 +1458,26 @@ mod tests {
             let pixels = seeded_pixels(seed, len, palette);
             prop_assert_eq!(&decode_tokens(&parse(&pixels, false)), &pixels);
             prop_assert_eq!(&decode_tokens(&parse(&pixels, true)), &pixels);
+        }
+
+        /// `parse_local` is lossless, and every copy it emits carries one of the `NEAR_PLANE_CODES` leading distance plane codes — the property the whole candidate exists for.
+        #[test]
+        fn parse_local_round_trips_within_the_near_plane(
+            seed in any::<u64>(),
+            width in 1u32..=20,
+            rows in 1usize..=20,
+            palette in 1u32..=6,
+        ) {
+            use crate::lossless::lz77::{NEAR_PLANE_CODES, PlaneCodeMap};
+            let pixels = seeded_pixels(seed, width as usize * rows, palette);
+            let tokens = super::parse_local(&pixels, width);
+            prop_assert_eq!(&decode_tokens(&tokens), &pixels);
+            let map = PlaneCodeMap::new(width);
+            for token in &tokens {
+                if let Token::Copy { distance, .. } = *token {
+                    prop_assert!(map.plane_code(distance) <= NEAR_PLANE_CODES);
+                }
+            }
         }
 
         /// The guard-hoisted `find` returns the byte-identical `(best_dist,

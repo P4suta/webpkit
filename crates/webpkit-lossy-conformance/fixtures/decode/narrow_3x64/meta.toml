@@ -1,0 +1,5 @@
+feature = "narrow"
+level = "must"
+width = 3
+height = 64
+note = "3x64 synthetic source; input.vp8 via cwebp 1.6.0 `-q 75 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"

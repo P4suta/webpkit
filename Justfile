@@ -103,6 +103,11 @@ fmt-check:
 clippy:
     cargo clippy --workspace --all-targets --features webpkit/image,webpkit/rayon -- -D warnings
 
+# Fail on narrative / history / measurement-boast phrasing in library + CLI comments.
+# A comment states the constraint in one line; the rationale record lives in Linear/ADR.
+lint-comments:
+    cargo run --quiet -p xtask -- lint-comments
+
 deny:
     cargo deny check advisories bans licenses sources
 
@@ -203,6 +208,19 @@ metrics-lossy:
 metrics-lossy-bless:
     cargo +1.96 run --release --quiet -p xtask -- metrics --lossy --bless
 
+# Compare our encoder against libwebp over the synthetic corpus and gate
+# corpus/vs-libwebp.json (our l9 lossless + AUTO lossy sizes + centi-dB PSNR vs
+# cwebp, both decoded by our own decoder). --release only for runtime budget: the
+# rows are integer sizes + centi-dB PSNR, deterministic and profile-independent
+# (no peak memory), so NO +1.96 pin is needed. NEEDS cwebp 1.6.0; a missing or
+# version-mismatched reference fails closed.
+vs-libwebp:
+    cargo run --release --quiet -p xtask -- vs-libwebp
+
+# (Re)author the cwebp/dwebp comparison ledger after an intended size/fidelity change.
+vs-libwebp-bless:
+    cargo run --release --quiet -p xtask -- vs-libwebp --bless
+
 # Measure deterministic algorithmic-work counters and gate corpus/work.json.
 # --release for runtime budget only; unlike `metrics`, the counts are integer
 # event tallies that are toolchain- AND profile-independent, so NO +1.96 pin is
@@ -251,7 +269,8 @@ bench-kernels filter="":
 
 # In-process comparison vs the libwebp C reference -> self-contained HTML
 # dashboard (size, lossy quality, and wall-clock speed). Links libwebp via
-# `libwebp-sys` and measures both codecs in the same process (no CLI/IO skew).
+# `libwebp-sys`, measures both codecs in the same process (no CLI/IO skew), and
+# compares lossy `VP8 ` payload bytes on both sides.
 # Local-only (timing is machine-dependent); the report is written under target/.
 #   just report-vs-libwebp                    # -> target/vs-libwebp.html
 # just report-vs-libwebp out.html
@@ -369,7 +388,7 @@ _hook-yamlfmt +files:
     yamlfmt {{ files }}
 
 _hook-typos-fix +files:
-    typos --write-changes {{ files }}
+    typos --force-exclude --write-changes {{ files }}
 
 _hook-actionlint +files:
     actionlint {{ files }}

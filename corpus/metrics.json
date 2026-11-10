@@ -10,7 +10,7 @@
       "encoded_len": 48,
       "ratio_permille": 2,
       "encoded_hash": 14606360518551429122,
-      "encode_peak_bytes": 4450944,
+      "encode_peak_bytes": 4391456,
       "decode_peak_bytes": 32768
     },
     {
@@ -22,7 +22,7 @@
       "encoded_len": 48,
       "ratio_permille": 2,
       "encoded_hash": 10074923605720275346,
-      "encode_peak_bytes": 255104,
+      "encode_peak_bytes": 221240,
       "decode_peak_bytes": 32768
     },
     {
@@ -34,7 +34,7 @@
       "encoded_len": 48,
       "ratio_permille": 2,
       "encoded_hash": 14606360518551429122,
-      "encode_peak_bytes": 4450944,
+      "encode_peak_bytes": 4391456,
       "decode_peak_bytes": 32768
     },
     {
@@ -43,10 +43,10 @@
       "edge": 256,
       "method": "auto",
       "raw_len": 262144,
-      "encoded_len": 72,
+      "encoded_len": 70,
       "ratio_permille": 0,
-      "encoded_hash": 7437409027669007438,
-      "encode_peak_bytes": 4319616,
+      "encoded_hash": 2381832034210974153,
+      "encode_peak_bytes": 6812304,
       "decode_peak_bytes": 524288
     },
     {
@@ -58,7 +58,7 @@
       "encoded_len": 72,
       "ratio_permille": 0,
       "encoded_hash": 11478166848529266526,
-      "encode_peak_bytes": 2135168,
+      "encode_peak_bytes": 1836928,
       "decode_peak_bytes": 524288
     },
     {
@@ -67,10 +67,10 @@
       "edge": 256,
       "method": "l9",
       "raw_len": 262144,
-      "encoded_len": 72,
+      "encoded_len": 70,
       "ratio_permille": 0,
-      "encoded_hash": 7437409027669007438,
-      "encode_peak_bytes": 4319616,
+      "encoded_hash": 2381832034210974153,
+      "encode_peak_bytes": 6812304,
       "decode_peak_bytes": 524288
     },
     {
@@ -79,10 +79,10 @@
       "edge": 512,
       "method": "auto",
       "raw_len": 1048576,
-      "encoded_len": 146,
+      "encoded_len": 142,
       "ratio_permille": 0,
-      "encoded_hash": 14243579108915922498,
-      "encode_peak_bytes": 7243840,
+      "encoded_hash": 4337772350110927355,
+      "encode_peak_bytes": 10756816,
       "decode_peak_bytes": 2097152
     },
     {
@@ -103,10 +103,10 @@
       "edge": 512,
       "method": "l9",
       "raw_len": 1048576,
-      "encoded_len": 146,
+      "encoded_len": 142,
       "ratio_permille": 0,
-      "encoded_hash": 14243579108915922498,
-      "encode_peak_bytes": 7243840,
+      "encoded_hash": 4337772350110927355,
+      "encode_peak_bytes": 10756816,
       "decode_peak_bytes": 2097152
     },
     {
@@ -118,7 +118,7 @@
       "encoded_len": 12416,
       "ratio_permille": 757,
       "encoded_hash": 4397543384991770754,
-      "encode_peak_bytes": 273584,
+      "encode_peak_bytes": 238696,
       "decode_peak_bytes": 32768
     },
     {
@@ -130,7 +130,7 @@
       "encoded_len": 12416,
       "ratio_permille": 757,
       "encoded_hash": 4397543384991770754,
-      "encode_peak_bytes": 257152,
+      "encode_peak_bytes": 221240,
       "decode_peak_bytes": 32768
     },
     {
@@ -142,7 +142,7 @@
       "encoded_len": 12416,
       "ratio_permille": 757,
       "encoded_hash": 4397543384991770754,
-      "encode_peak_bytes": 6715184,
+      "encode_peak_bytes": 6614720,
       "decode_peak_bytes": 32768
     },
     {
@@ -154,7 +154,7 @@
       "encoded_len": 196688,
       "ratio_permille": 750,
       "encoded_hash": 10614248086587253036,
-      "encode_peak_bytes": 4351152,
+      "encode_peak_bytes": 3817576,
       "decode_peak_bytes": 524288
     },
     {
@@ -166,7 +166,7 @@
       "encoded_len": 196688,
       "ratio_permille": 750,
       "encoded_hash": 10614248086587253036,
-      "encode_peak_bytes": 4072576,
+      "encode_peak_bytes": 3539000,
       "decode_peak_bytes": 524288
     },
     {
@@ -178,7 +178,7 @@
       "encoded_len": 196688,
       "ratio_permille": 750,
       "encoded_hash": 10614248086587253036,
-      "encode_peak_bytes": 8243744,
+      "encode_peak_bytes": 7438784,
       "decode_peak_bytes": 524288
     },
     {
@@ -190,7 +190,7 @@
       "encoded_len": 786512,
       "ratio_permille": 750,
       "encoded_hash": 9214316020504461142,
-      "encode_peak_bytes": 17376432,
+      "encode_peak_bytes": 15269992,
       "decode_peak_bytes": 2097152
     },
     {
@@ -202,7 +202,7 @@
       "encoded_len": 786512,
       "ratio_permille": 750,
       "encoded_hash": 9214316020504461142,
-      "encode_peak_bytes": 16262272,
+      "encode_peak_bytes": 14155832,
       "decode_peak_bytes": 2097152
     },
     {
@@ -214,7 +214,7 @@
       "encoded_len": 786512,
       "ratio_permille": 750,
       "encoded_hash": 9214316020504461142,
-      "encode_peak_bytes": 17376448,
+      "encode_peak_bytes": 21561464,
       "decode_peak_bytes": 2097152
     },
     {
@@ -226,7 +226,7 @@
       "encoded_len": 2162,
       "ratio_permille": 131,
       "encoded_hash": 9110948604003149871,
-      "encode_peak_bytes": 5496864,
+      "encode_peak_bytes": 5621704,
       "decode_peak_bytes": 32768
     },
     {
@@ -238,7 +238,7 @@
       "encoded_len": 2162,
       "ratio_permille": 131,
       "encoded_hash": 9110948604003149871,
-      "encode_peak_bytes": 233088,
+      "encode_peak_bytes": 196664,
       "decode_peak_bytes": 32768
     },
     {
@@ -250,7 +250,7 @@
       "encoded_len": 2162,
       "ratio_permille": 131,
       "encoded_hash": 9110948604003149871,
-      "encode_peak_bytes": 5496864,
+      "encode_peak_bytes": 5621704,
       "decode_peak_bytes": 32768
     },
     {
@@ -262,7 +262,7 @@
       "encoded_len": 32864,
       "ratio_permille": 125,
       "encoded_hash": 2068593557044878499,
-      "encode_peak_bytes": 11822944,
+      "encode_peak_bytes": 14566280,
       "decode_peak_bytes": 524288
     },
     {
@@ -274,7 +274,7 @@
       "encoded_len": 32864,
       "ratio_permille": 125,
       "encoded_hash": 2068593557044878499,
-      "encode_peak_bytes": 3802752,
+      "encode_peak_bytes": 3145784,
       "decode_peak_bytes": 524288
     },
     {
@@ -286,7 +286,7 @@
       "encoded_len": 32864,
       "ratio_permille": 125,
       "encoded_hash": 2068593557044878499,
-      "encode_peak_bytes": 11822944,
+      "encode_peak_bytes": 14566280,
       "decode_peak_bytes": 524288
     },
     {
@@ -298,7 +298,7 @@
       "encoded_len": 131168,
       "ratio_permille": 125,
       "encoded_hash": 7835227823585378801,
-      "encode_peak_bytes": 22994400,
+      "encode_peak_bytes": 32865416,
       "decode_peak_bytes": 2097152
     },
     {
@@ -310,7 +310,7 @@
       "encoded_len": 131168,
       "ratio_permille": 125,
       "encoded_hash": 7835227823585378801,
-      "encode_peak_bytes": 15730304,
+      "encode_peak_bytes": 12582968,
       "decode_peak_bytes": 2097152
     },
     {
@@ -322,7 +322,7 @@
       "encoded_len": 131168,
       "ratio_permille": 125,
       "encoded_hash": 7835227823585378801,
-      "encode_peak_bytes": 22994400,
+      "encode_peak_bytes": 32865416,
       "decode_peak_bytes": 2097152
     },
     {
@@ -334,7 +334,7 @@
       "encoded_len": 9242,
       "ratio_permille": 564,
       "encoded_hash": 857663790811136786,
-      "encode_peak_bytes": 280752,
+      "encode_peak_bytes": 238696,
       "decode_peak_bytes": 32768
     },
     {
@@ -346,7 +346,7 @@
       "encoded_len": 9242,
       "ratio_permille": 564,
       "encoded_hash": 857663790811136786,
-      "encode_peak_bytes": 263296,
+      "encode_peak_bytes": 221240,
       "decode_peak_bytes": 32768
     },
     {
@@ -358,7 +358,7 @@
       "encoded_len": 9242,
       "ratio_permille": 564,
       "encoded_hash": 857663790811136786,
-      "encode_peak_bytes": 5525024,
+      "encode_peak_bytes": 5457344,
       "decode_peak_bytes": 32768
     },
     {
@@ -369,8 +369,8 @@
       "raw_len": 262144,
       "encoded_len": 144990,
       "ratio_permille": 553,
-      "encoded_hash": 7256391066050103155,
-      "encode_peak_bytes": 4343472,
+      "encoded_hash": 8089291678391903291,
+      "encode_peak_bytes": 3817576,
       "decode_peak_bytes": 524288
     },
     {
@@ -382,7 +382,7 @@
       "encoded_len": 144990,
       "ratio_permille": 553,
       "encoded_hash": 7256391066050103155,
-      "encode_peak_bytes": 4064392,
+      "encode_peak_bytes": 3539000,
       "decode_peak_bytes": 524288
     },
     {
@@ -393,8 +393,8 @@
       "raw_len": 262144,
       "encoded_len": 144990,
       "ratio_permille": 553,
-      "encoded_hash": 7256391066050103155,
-      "encode_peak_bytes": 7170848,
+      "encoded_hash": 8089291678391903291,
+      "encode_peak_bytes": 6374080,
       "decode_peak_bytes": 524288
     },
     {
@@ -403,10 +403,10 @@
       "edge": 512,
       "method": "auto",
       "raw_len": 1048576,
-      "encoded_len": 579118,
+      "encoded_len": 578974,
       "ratio_permille": 552,
-      "encoded_hash": 9958802527480970027,
-      "encode_peak_bytes": 17368256,
+      "encoded_hash": 11626991128039079400,
+      "encode_peak_bytes": 15269992,
       "decode_peak_bytes": 2097152
     },
     {
@@ -415,10 +415,10 @@
       "edge": 512,
       "method": "l0",
       "raw_len": 1048576,
-      "encoded_len": 579118,
+      "encoded_len": 578974,
       "ratio_permille": 552,
-      "encoded_hash": 9958802527480970027,
-      "encode_peak_bytes": 16254088,
+      "encoded_hash": 11626991128039079400,
+      "encode_peak_bytes": 14155832,
       "decode_peak_bytes": 2097152
     },
     {
@@ -429,8 +429,8 @@
       "raw_len": 1048576,
       "encoded_len": 578974,
       "ratio_permille": 552,
-      "encoded_hash": 13944555446728732688,
-      "encode_peak_bytes": 17368272,
+      "encoded_hash": 11626991128039079400,
+      "encode_peak_bytes": 21561464,
       "decode_peak_bytes": 2097152
     },
     {
@@ -442,7 +442,7 @@
       "encoded_len": 32,
       "ratio_permille": 1,
       "encoded_hash": 12564815948471088500,
-      "encode_peak_bytes": 1175472,
+      "encode_peak_bytes": 1173104,
       "decode_peak_bytes": 32768
     },
     {
@@ -454,7 +454,7 @@
       "encoded_len": 32,
       "ratio_permille": 1,
       "encoded_hash": 12564815948471088500,
-      "encode_peak_bytes": 135832,
+      "encode_peak_bytes": 101904,
       "decode_peak_bytes": 32768
     },
     {
@@ -466,7 +466,7 @@
       "encoded_len": 32,
       "ratio_permille": 1,
       "encoded_hash": 12564815948471088500,
-      "encode_peak_bytes": 1175472,
+      "encode_peak_bytes": 1173104,
       "decode_peak_bytes": 32768
     },
     {
@@ -478,7 +478,7 @@
       "encoded_len": 32,
       "ratio_permille": 0,
       "encoded_hash": 15258434529653969540,
-      "encode_peak_bytes": 1699216,
+      "encode_peak_bytes": 1696112,
       "decode_peak_bytes": 524288
     },
     {
@@ -490,7 +490,7 @@
       "encoded_len": 32,
       "ratio_permille": 0,
       "encoded_hash": 15258434529653969540,
-      "encode_peak_bytes": 1610920,
+      "encode_peak_bytes": 1384496,
       "decode_peak_bytes": 524288
     },
     {
@@ -502,7 +502,7 @@
       "encoded_len": 32,
       "ratio_permille": 0,
       "encoded_hash": 15258434529653969540,
-      "encode_peak_bytes": 1699216,
+      "encode_peak_bytes": 1696112,
       "decode_peak_bytes": 524288
     },
     {
@@ -514,7 +514,7 @@
       "encoded_len": 32,
       "ratio_permille": 0,
       "encoded_hash": 790988056304228601,
-      "encode_peak_bytes": 6464952,
+      "encode_peak_bytes": 5717080,
       "decode_peak_bytes": 2097152
     },
     {
@@ -526,7 +526,7 @@
       "encoded_len": 32,
       "ratio_permille": 0,
       "encoded_hash": 790988056304228601,
-      "encode_peak_bytes": 6331432,
+      "encode_peak_bytes": 5494832,
       "decode_peak_bytes": 2097152
     },
     {
@@ -538,7 +538,7 @@
       "encoded_len": 32,
       "ratio_permille": 0,
       "encoded_hash": 790988056304228601,
-      "encode_peak_bytes": 6464952,
+      "encode_peak_bytes": 5717080,
       "decode_peak_bytes": 2097152
     },
     {
@@ -547,10 +547,10 @@
       "edge": 64,
       "method": "auto",
       "raw_len": 16384,
-      "encoded_len": 88,
+      "encoded_len": 86,
       "ratio_permille": 5,
-      "encoded_hash": 17849160317125822639,
-      "encode_peak_bytes": 1230112,
+      "encoded_hash": 4448925606828131889,
+      "encode_peak_bytes": 1458800,
       "decode_peak_bytes": 32768
     },
     {
@@ -562,7 +562,7 @@
       "encoded_len": 88,
       "ratio_permille": 5,
       "encoded_hash": 17849160317125822639,
-      "encode_peak_bytes": 138536,
+      "encode_peak_bytes": 105056,
       "decode_peak_bytes": 32768
     },
     {
@@ -571,10 +571,10 @@
       "edge": 64,
       "method": "l9",
       "raw_len": 16384,
-      "encoded_len": 88,
+      "encoded_len": 86,
       "ratio_permille": 5,
-      "encoded_hash": 17849160317125822639,
-      "encode_peak_bytes": 1230112,
+      "encoded_hash": 4448925606828131889,
+      "encode_peak_bytes": 1458800,
       "decode_peak_bytes": 32768
     },
     {
@@ -583,10 +583,10 @@
       "edge": 256,
       "method": "auto",
       "raw_len": 262144,
-      "encoded_len": 134,
+      "encoded_len": 132,
       "ratio_permille": 0,
-      "encoded_hash": 17315346349709203316,
-      "encode_peak_bytes": 2159120,
+      "encoded_hash": 234905882766249058,
+      "encode_peak_bytes": 4014944,
       "decode_peak_bytes": 524288
     },
     {
@@ -598,7 +598,7 @@
       "encoded_len": 134,
       "ratio_permille": 0,
       "encoded_hash": 17315346349709203316,
-      "encode_peak_bytes": 1615528,
+      "encode_peak_bytes": 1424488,
       "decode_peak_bytes": 524288
     },
     {
@@ -607,10 +607,10 @@
       "edge": 256,
       "method": "l9",
       "raw_len": 262144,
-      "encoded_len": 134,
+      "encoded_len": 132,
       "ratio_permille": 0,
-      "encoded_hash": 17315346349709203316,
-      "encode_peak_bytes": 2159120,
+      "encoded_hash": 234905882766249058,
+      "encode_peak_bytes": 4014944,
       "decode_peak_bytes": 524288
     },
     {
@@ -619,10 +619,10 @@
       "edge": 512,
       "method": "auto",
       "raw_len": 1048576,
-      "encoded_len": 210,
+      "encoded_len": 208,
       "ratio_permille": 0,
-      "encoded_hash": 8209894277142791847,
-      "encode_peak_bytes": 6527080,
+      "encoded_hash": 3714207409566099409,
+      "encode_peak_bytes": 5998560,
       "decode_peak_bytes": 2097152
     },
     {
@@ -634,7 +634,7 @@
       "encoded_len": 290,
       "ratio_permille": 0,
       "encoded_hash": 14517539101935122167,
-      "encode_peak_bytes": 6392104,
+      "encode_peak_bytes": 5651944,
       "decode_peak_bytes": 2097152
     },
     {
@@ -643,10 +643,10 @@
       "edge": 512,
       "method": "l9",
       "raw_len": 1048576,
-      "encoded_len": 210,
+      "encoded_len": 208,
       "ratio_permille": 0,
-      "encoded_hash": 8209894277142791847,
-      "encode_peak_bytes": 6527080,
+      "encoded_hash": 3714207409566099409,
+      "encode_peak_bytes": 5998560,
       "decode_peak_bytes": 2097152
     }
   ]

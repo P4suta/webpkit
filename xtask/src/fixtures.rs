@@ -7,11 +7,15 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
-use crate::common::{decode_fixtures_dir, encode_fixtures_dir, webpkit_encode, workspace_root};
-use crate::libwebp::{
-    REQUIRED_LIBWEBP, check_version, cwebp_bin, dwebp_bin, img2webp_bin, run_cwebp, run_dwebp,
-    run_img2webp, webpmux_bin, webpmux_get_frame, webpmux_set,
+use crate::common::{
+    decode_fixtures_dir, encode_fixtures_dir, lossy_decode_fixtures_dir, webpkit_encode,
+    workspace_root,
 };
+use crate::libwebp::{
+    REQUIRED_LIBWEBP, check_version, cwebp_bin, dwebp_bin, img2webp_bin, run_cwebp,
+    run_cwebp_lossy_args, run_dwebp, run_img2webp, webpmux_bin, webpmux_get_frame, webpmux_set,
+};
+use crate::metrics::extract_vp8_chunk;
 
 /// A single deterministic fixture: a synthetic source image plus its metadata.
 struct FixtureCase {
@@ -711,6 +715,278 @@ fn generate_encode_case(case: &FixtureCase, encode_dir: &Path, dwebp: &str) -> R
     println!(
         "gen-fixtures: encode/{} ({}x{}) OK (self + dwebp gates)",
         case.name, case.width, case.height
+    );
+    Ok(())
+}
+
+// ---- lossy (VP8) decode conformance fixtures ------------------------------
+
+/// A single lossy fixture: synthetic content plus the `cwebp` VP8 knobs that steer libwebp down a specific key-frame decode path.
+struct LossyCase {
+    /// Directory name / case identifier under the lossy `fixtures/decode/`.
+    name: &'static str,
+    /// The decode feature label recorded in the case's `meta.toml`.
+    feature: &'static str,
+    /// Image width in pixels (`<= 64`).
+    width: u32,
+    /// Image height in pixels (`<= 64`).
+    height: u32,
+    /// cwebp `-q` quality (`0..=100`).
+    quality: u8,
+    /// Extra cwebp VP8 knobs (`-m` / `-segments` / `-f` / `-strong` / …).
+    extra: &'static [&'static str],
+    /// Maps `(x, y, width, height)` to an `[R, G, B, A]` source pixel.
+    pixel: fn(u32, u32, u32, u32) -> [u8; 4],
+}
+
+/// A 0..=255 ramp of `n` across `span + 1` steps (span-guarded for 1-px sides).
+const fn ramp(n: u32, span: u32) -> u8 {
+    lo((n * 255) / if span == 0 { 1 } else { span })
+}
+
+/// Deterministic integer pseudo-noise word at `(col, row)` (mirrors the oracle's).
+const fn noise_hash(col: u32, row: u32) -> u32 {
+    let mut s = col
+        .wrapping_mul(2_654_435_761)
+        .wrapping_add(row.wrapping_mul(40_503))
+        .wrapping_add(0x9e37_79b9);
+    s ^= s >> 13;
+    s = s.wrapping_mul(0x85eb_ca6b);
+    s ^ (s >> 16)
+}
+
+const fn g_solid(_col: u32, _row: u32, _width: u32, _height: u32) -> [u8; 4] {
+    [96, 128, 160, 255]
+}
+const fn g_hgrad(col: u32, _row: u32, width: u32, _height: u32) -> [u8; 4] {
+    let shade = ramp(col, width - 1);
+    [shade, shade, shade, 255]
+}
+const fn g_vgrad(_col: u32, row: u32, _width: u32, height: u32) -> [u8; 4] {
+    let shade = ramp(row, height - 1);
+    [shade, shade, shade, 255]
+}
+const fn g_dgrad(col: u32, row: u32, width: u32, height: u32) -> [u8; 4] {
+    let shade = ramp(col + row, (width - 1) + (height - 1));
+    [shade, shade, shade, 255]
+}
+const fn g_checker4(col: u32, row: u32, _width: u32, _height: u32) -> [u8; 4] {
+    let shade = if (col / 4 + row / 4).is_multiple_of(2) {
+        30
+    } else {
+        220
+    };
+    [shade, shade, shade, 255]
+}
+const fn g_vstripe2(col: u32, _row: u32, _width: u32, _height: u32) -> [u8; 4] {
+    let shade = if (col / 2).is_multiple_of(2) { 220 } else { 20 };
+    [shade, shade, shade, 255]
+}
+const fn g_noise(col: u32, row: u32, _width: u32, _height: u32) -> [u8; 4] {
+    let hash = noise_hash(col, row);
+    [lo(hash), lo(hash >> 8), lo(hash >> 16), 255]
+}
+const fn g_colorfield(col: u32, row: u32, width: u32, height: u32) -> [u8; 4] {
+    [
+        ramp(col, width - 1),
+        ramp(row, height - 1),
+        ramp(col + row, (width - 1) + (height - 1)),
+        255,
+    ]
+}
+const fn g_color_hgrad(col: u32, _row: u32, width: u32, _height: u32) -> [u8; 4] {
+    let shade = ramp(col, width - 1);
+    [shade, 255 - shade, 128, 255]
+}
+const fn g_color_vgrad(_col: u32, row: u32, _width: u32, height: u32) -> [u8; 4] {
+    let shade = ramp(row, height - 1);
+    [128, shade, 255 - shade, 255]
+}
+const fn g_mixed(col: u32, row: u32, width: u32, height: u32) -> [u8; 4] {
+    if row < height / 2 {
+        let shade = ramp(col, width - 1);
+        [shade, shade / 2, 255 - shade, 255]
+    } else {
+        let hash = noise_hash(col, row);
+        [lo(hash), lo(hash >> 8), lo(hash >> 16), 255]
+    }
+}
+
+/// The lossy fixture matrix: quality sweep, each intra-16 luma mode, chroma modes, intra-4×4, segmentation on/off, all three loop-filter types, fast vs trellis method, odd/near-edge shapes, tiny sides, and full 64×64 — all fed to cwebp so libwebp emits real VP8 key frames exercising each decode path.
+#[rustfmt::skip]
+fn lossy_cases() -> Vec<LossyCase> {
+    macro_rules! case {
+        ($name:literal, $feature:literal, $w:expr, $h:expr, $q:expr, $extra:expr, $px:expr) => {
+            LossyCase {
+                name: $name,
+                feature: $feature,
+                width: $w,
+                height: $h,
+                quality: $q,
+                extra: $extra,
+                pixel: $px,
+            }
+        };
+    }
+    vec![
+        // Quantizer sweep on a color field: distinct quant indices / mode choices.
+        case!("q10_color_32x32", "quantizer", 32, 32, 10, &[], g_colorfield),
+        case!("q30_color_32x32", "quantizer", 32, 32, 30, &[], g_colorfield),
+        case!("q50_color_32x32", "quantizer", 32, 32, 50, &[], g_colorfield),
+        case!("q75_color_32x32", "quantizer", 32, 32, 75, &[], g_colorfield),
+        case!("q90_color_32x32", "quantizer", 32, 32, 90, &[], g_colorfield),
+        case!("q100_color_32x32", "quantizer", 32, 32, 100, &[], g_colorfield),
+        // Each intra-16×16 luma predictor, nudged by content at high quality.
+        case!("intra16dc_solid_32x32", "intra16-dc", 32, 32, 92, &[], g_solid),
+        case!("intra16v_hgrad_32x32", "intra16-v", 32, 32, 92, &[], g_hgrad),
+        case!("intra16h_vgrad_32x32", "intra16-h", 32, 32, 92, &[], g_vgrad),
+        case!("intra16tm_dgrad_32x32", "intra16-tm", 32, 32, 92, &[], g_dgrad),
+        // Chroma prediction driven by horizontal / vertical color ramps.
+        case!("chromav_hgrad_32x32", "chroma-mode-v", 32, 32, 92, &[], g_color_hgrad),
+        case!("chromah_vgrad_32x32", "chroma-mode-h", 32, 32, 92, &[], g_color_vgrad),
+        // Intra-4×4 (B_PRED): high detail, deep method, low quality.
+        case!("i4x4_noise_32x32", "intra-4x4", 32, 32, 30, &["-m", "6"], g_noise),
+        case!("i4x4_stripe_48x48", "intra-4x4", 48, 48, 40, &["-m", "6"], g_vstripe2),
+        // Segmentation: multi-segment vs a single forced segment.
+        case!("seg_multi_64x48", "segmentation-multi", 64, 48, 50, &["-segments", "4", "-sns", "90"], g_mixed),
+        case!("seg_single_64x48", "segmentation-single", 64, 48, 50, &["-segments", "1"], g_mixed),
+        // The three in-loop filter paths plus a max-sharpness variant.
+        case!("filter_none_48x48", "no-filter", 48, 48, 55, &["-f", "0"], g_checker4),
+        case!("filter_simple_48x48", "loop-filter-simple", 48, 48, 55, &["-nostrong", "-f", "40"], g_checker4),
+        case!("filter_strong_48x48", "loop-filter-normal", 48, 48, 55, &["-strong", "-f", "40"], g_checker4),
+        case!("filter_sharp_48x48", "loop-filter-sharp", 48, 48, 55, &["-strong", "-f", "60", "-sharpness", "7"], g_checker4),
+        // Fast (no trellis) vs deepest (trellis RD) method on identical content.
+        case!("method0_fast_32x32", "fast-method", 32, 32, 75, &["-m", "0"], g_colorfield),
+        case!("method6_trellis_32x32", "trellis", 32, 32, 75, &["-m", "6"], g_colorfield),
+        // Odd / near-edge shapes: partial chroma edges and 1-px sides.
+        case!("edge_23x31_color", "chroma-edge", 23, 31, 75, &[], g_colorfield),
+        case!("edge_17x9_color", "chroma-edge", 17, 9, 75, &[], g_colorfield),
+        case!("row_63x1", "row-edge", 63, 1, 75, &[], g_hgrad),
+        case!("col_1x63", "col-edge", 1, 63, 75, &[], g_vgrad),
+        case!("narrow_3x64", "narrow", 3, 64, 75, &[], g_dgrad),
+        case!("narrow_64x3", "narrow", 64, 3, 75, &[], g_dgrad),
+        // Tiny frames: single macroblock and sub-block sizes.
+        case!("tiny_1x1", "tiny", 1, 1, 50, &[], g_solid),
+        case!("tiny_2x2", "tiny", 2, 2, 50, &[], g_colorfield),
+        case!("tiny_5x5", "tiny", 5, 5, 50, &[], g_noise),
+        // Full 64×64 macroblock-aligned frames, smooth and high-detail.
+        case!("full_gradient_64x64", "mb-aligned", 64, 64, 75, &[], g_dgrad),
+        case!("full_noise_64x64", "mb-aligned-detail", 64, 64, 30, &[], g_noise),
+    ]
+}
+
+/// Render a lossy case to raw row-major RGBA (opaque; cwebp `-noalpha` drops it).
+fn synthesize_lossy(case: &LossyCase) -> Vec<u8> {
+    let mut buf = Vec::with_capacity((case.width * case.height * 4) as usize);
+    for y in 0..case.height {
+        for x in 0..case.width {
+            buf.extend_from_slice(&(case.pixel)(x, y, case.width, case.height));
+        }
+    }
+    buf
+}
+
+/// Generate one lossy fixture: cwebp authors a VP8 key frame, its `VP8 ` payload becomes `input.vp8`, and dwebp's `-pam` decode becomes the `expected.rgba` golden.
+/// Fail-closed: `webpkit::lossy::decode` must reproduce the golden byte-for-byte before anything is committed.
+fn generate_lossy_case(
+    case: &LossyCase,
+    decode_dir: &Path,
+    cwebp: &str,
+    dwebp: &str,
+) -> Result<()> {
+    let case_dir = decode_dir.join(case.name);
+    std::fs::create_dir_all(&case_dir)
+        .with_context(|| format!("creating {}", case_dir.display()))?;
+
+    let rgba = synthesize_lossy(case);
+    let tmp = tempfile::tempdir().context("creating tempdir for lossy source image")?;
+    let src_png = tmp.path().join("src.png");
+    write_png(&src_png, case.width, case.height, &rgba)?;
+
+    let input_webp = tmp.path().join("input.webp");
+    run_cwebp_lossy_args(cwebp, &src_png, &input_webp, case.quality, case.extra)?;
+    let webp =
+        std::fs::read(&input_webp).with_context(|| format!("reading {}", input_webp.display()))?;
+    let payload = extract_vp8_chunk(&webp)?;
+
+    let golden_pam = tmp.path().join("golden.pam");
+    run_dwebp(dwebp, &input_webp, &golden_pam)?;
+    let expected = strip_pam_header(&std::fs::read(&golden_pam)?)?;
+
+    // GATE (fail-closed): our decoder reproduces the libwebp golden byte-for-byte.
+    let image = webpkit::lossy::decode(payload)
+        .with_context(|| format!("webpkit::lossy decode of {}", case.name))?;
+    if (image.width(), image.height()) != (case.width, case.height) {
+        bail!(
+            "lossy fixture `{}`: decoded {}x{}, expected {}x{}",
+            case.name,
+            image.width(),
+            image.height(),
+            case.width,
+            case.height
+        );
+    }
+    if image.as_bytes() != expected.as_slice() {
+        bail!(
+            "lossy fixture `{}`: webpkit::lossy decode != dwebp golden ({} vs {} bytes)",
+            case.name,
+            image.as_bytes().len(),
+            expected.len()
+        );
+    }
+
+    std::fs::write(case_dir.join("input.vp8"), payload)
+        .with_context(|| format!("writing input.vp8 for {}", case.name))?;
+    std::fs::write(case_dir.join("expected.rgba"), &expected)
+        .with_context(|| format!("writing expected.rgba for {}", case.name))?;
+
+    let flags = if case.extra.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", case.extra.join(" "))
+    };
+    let note = format!(
+        "{}x{} synthetic source; input.vp8 via cwebp {REQUIRED_LIBWEBP} \
+         `-q {}{flags} -noalpha`, expected.rgba via dwebp {REQUIRED_LIBWEBP} `-pam` \
+         (header stripped)",
+        case.width, case.height, case.quality
+    );
+    let meta = format!(
+        "feature = \"{}\"\n\
+         level = \"must\"\n\
+         width = {}\n\
+         height = {}\n\
+         note = \"{note}\"\n",
+        case.feature, case.width, case.height
+    );
+    std::fs::write(case_dir.join("meta.toml"), meta)
+        .with_context(|| format!("writing meta.toml for {}", case.name))?;
+
+    println!(
+        "gen-lossy-fixtures: {} ({}x{} q{}) OK",
+        case.name, case.width, case.height, case.quality
+    );
+    Ok(())
+}
+
+pub(crate) fn gen_lossy_fixtures() -> Result<()> {
+    let root = workspace_root()?;
+    let decode_dir = lossy_decode_fixtures_dir(&root);
+    let cwebp = cwebp_bin();
+    let dwebp = dwebp_bin();
+
+    // Version guard: refuse to generate goldens with a non-pinned libwebp.
+    check_version(&cwebp, "cwebp", "WEBPKIT_CWEBP")?;
+    check_version(&dwebp, "dwebp", "WEBPKIT_DWEBP")?;
+
+    let cases = lossy_cases();
+    for case in &cases {
+        generate_lossy_case(case, &decode_dir, &cwebp, &dwebp)?;
+    }
+    println!(
+        "gen-lossy-fixtures: {} case(s) written to {}",
+        cases.len(),
+        decode_dir.display()
     );
     Ok(())
 }

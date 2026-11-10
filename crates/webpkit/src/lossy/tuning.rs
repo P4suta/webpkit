@@ -79,6 +79,25 @@ pub enum Preset {
     Text,
 }
 
+/// A caller-supplied content classification matching libwebp's `WebPImageHint`.
+///
+/// libwebp currently consults this hint only in its lossless encoder.
+/// webpkit stores it in [`LossyTuning`] so `cwebp -hint` is represented faithfully and future content-gated lossy decisions can use it without changing the public configuration surface.
+/// It is neutral by default and does not remap quality.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[non_exhaustive]
+pub enum ImageHint {
+    /// No caller-supplied classification.
+    #[default]
+    Default,
+    /// Digital picture, such as a portrait or indoor shot.
+    Picture,
+    /// Outdoor photograph with natural lighting.
+    Photo,
+    /// Discrete-tone graphic, chart, or map tile.
+    Graph,
+}
+
 impl Preset {
     /// Expand this preset into a base [`LossyTuning`] — the libwebp `WebPConfigPreset`
     /// shaping values (spatial-noise-shaping strength, in-loop filter strength/sharpness,
@@ -151,6 +170,7 @@ pub enum AlphaFilterMode {
               one-knob-per-field map callers rely on"
 )]
 pub struct LossyTuning {
+    image_hint: ImageHint,
     sns_strength: u8,
     segments: u8,
     filter_strength: u8,
@@ -182,6 +202,7 @@ impl LossyTuning {
     /// its neutral value, so an encode with this tuning is byte-identical to the
     /// pre-tuning encoder.
     pub(crate) const DEFAULT: Self = Self {
+        image_hint: ImageHint::Default,
         sns_strength: 50,
         segments: MAX_SEGMENTS,
         filter_strength: 60,
@@ -211,6 +232,15 @@ impl LossyTuning {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the caller-supplied content classification.
+    ///
+    /// The hint is orthogonal to [`Preset`]: a preset expands into concrete shaping values, while this value remains a classification available to content-gated encoder decisions.
+    #[must_use]
+    pub const fn with_image_hint(mut self, hint: ImageHint) -> Self {
+        self.image_hint = hint;
+        self
     }
 
     /// Set the spatial-noise-shaping strength (`0..=100`, clamped): higher values move
@@ -440,7 +470,7 @@ const fn clamp(v: u8, lo: u8, hi: u8) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AlphaFilterMode, AlphaMethod, LossyTuning, Preset};
+    use super::{AlphaFilterMode, AlphaMethod, ImageHint, LossyTuning, Preset};
 
     #[test]
     fn default_is_the_cwebp_parity_baseline() {
@@ -461,6 +491,7 @@ mod tests {
         assert_eq!(t.pass(), 1);
         assert!(!t.jpeg_like());
         assert_eq!(t.partition_limit(), 0);
+        assert_eq!(t.image_hint, ImageHint::Default);
         assert_eq!(LossyTuning::new(), t, "new() equals default()");
     }
 
@@ -498,6 +529,21 @@ mod tests {
 
         let low = LossyTuning::new().with_segments(0);
         assert_eq!(low.segments(), 1, "segments clamps up to 1");
+    }
+
+    #[test]
+    fn image_hint_round_trips_without_changing_other_tuning() {
+        let baseline = LossyTuning::new();
+        for hint in [
+            ImageHint::Default,
+            ImageHint::Picture,
+            ImageHint::Photo,
+            ImageHint::Graph,
+        ] {
+            let tuned = baseline.with_image_hint(hint);
+            assert_eq!(tuned.image_hint, hint);
+            assert_eq!(tuned.with_image_hint(ImageHint::Default), baseline);
+        }
     }
 
     #[test]

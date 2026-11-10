@@ -9,6 +9,7 @@
 use crate::lossless::constants::subsample_size;
 use crate::lossless::prelude::*;
 use crate::lossless::transform::{add_pixels, sub_pixels};
+use crate::lossless::work::work;
 
 /// Expand the transmitted (per-byte delta-coded) color map to `1 << (8 >> bits)`
 /// entries; the unused tail stays transparent `0x0000_0000` (not `ARGB_BLACK`).
@@ -55,6 +56,7 @@ pub(crate) fn inverse(src: &[u32], dst_width: u32, bits: u32, palette: &[u32]) -
 #[must_use]
 pub(crate) fn inverse_row(src_row: &[u32], dst_width: u32, bits: u32, palette: &[u32]) -> Vec<u32> {
     let dst_w = dst_width as usize;
+    work!(Vp8lPalettePixel, u64::from(dst_width));
     let bpp = 8u32 >> bits;
     let mut dst = vec![0u32; dst_w];
     if bpp == 8 {

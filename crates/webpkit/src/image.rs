@@ -1,20 +1,16 @@
 //! Public image model: validated [`Dimensions`], the byte-order [`PixelLayout`],
-//! sidecar [`Metadata`], and the owned [`Image`] / borrowed [`ImageRef`]
-//! containers.
+//! sidecar [`Metadata`], and the owned [`Image`] / borrowed [`ImageRef`] containers.
 //!
-//! Internally pixels are native `u32` ARGB (`0xAARRGGBB`); the conversion to and
-//! from a caller's byte layout happens only here, so the rest of the codec never
-//! deals with channel order.
+//! Internally pixels are native `u32` ARGB (`0xAARRGGBB`); the conversion to and from a caller's byte layout happens only here, so the rest of the codec never deals with channel order.
 
 use crate::error::{Error, Result};
 use crate::prelude::*;
 
 /// Largest image side any WebP bitstream can express, in pixels.
 ///
-/// The VP8L header stores each side as `dimension - 1` in 14 bits, so a valid
-/// dimension is `1..=MAX_DIMENSION` (`1 << 14` = 16384). The lossy `VP8` format
-/// tops out slightly lower (16383); callers that need the tighter bound check it
-/// themselves. This is the single source of truth for [`Dimensions`] validation.
+/// The VP8L header stores each side as `dimension - 1` in 14 bits, so a valid dimension is `1..=MAX_DIMENSION` (`1 << 14` = 16384).
+/// The lossy `VP8` format tops out slightly lower (16383); callers that need the tighter bound check it themselves.
+/// This is the single source of truth for [`Dimensions`] validation.
 pub const MAX_DIMENSION: u32 = 1 << 14;
 
 /// A validated image size: both sides lie in `1..=16384`.
@@ -27,8 +23,7 @@ pub struct Dimensions {
 impl TryFrom<(u32, u32)> for Dimensions {
     type Error = Error;
 
-    /// Validate a `(width, height)` pair, the tuple companion to
-    /// [`Dimensions::new`].
+    /// Validate a `(width, height)` pair, the tuple companion to [`Dimensions::new`].
     ///
     /// # Errors
     ///
@@ -71,22 +66,17 @@ impl Dimensions {
         u64::from(self.width) * u64::from(self.height)
     }
 
-    /// Resolve a resize target where a `0` axis is derived from the other to keep
-    /// `self`'s aspect ratio, the rule `cwebp`/`dwebp` apply (libwebp's
-    /// `WebPRescalerGetScaledDimensions`). A derived axis is the *ceiling* of the
-    /// proportional value, matching libwebp exactly.
+    /// Resolve a resize target where a `0` axis is derived from the other to keep `self`'s aspect ratio, the rule `cwebp`/`dwebp` apply (libwebp's `WebPRescalerGetScaledDimensions`).
+    /// A derived axis is the *ceiling* of the proportional value, matching libwebp exactly.
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidDimensions`] if both axes are `0`, or if a resolved axis is
-    /// `0` or exceeds `16384` — an over-range request is an honest error, never a
-    /// silent clamp.
+    /// [`Error::InvalidDimensions`] if both axes are `0`, or if a resolved axis is `0` or exceeds `16384` — an over-range request is an honest error, never a silent clamp.
     pub fn scaled(self, width: u32, height: u32) -> Result<Self> {
         let (sw, sh) = (u64::from(self.width), u64::from(self.height));
         let mut w = u64::from(width);
         let mut h = u64::from(height);
-        // Order mirrors libwebp: width first, then height off the (possibly-derived)
-        // width, each derived axis the ceiling of the proportional value.
+        // Order mirrors libwebp: width first, then height off the (possibly-derived) width, each derived axis the ceiling of the proportional value.
         if w == 0 {
             w = (sw * h).div_ceil(sh);
         }
@@ -101,10 +91,8 @@ impl Dimensions {
 /// The byte order of a pixel buffer at the API boundary.
 ///
 /// `#[non_exhaustive]`: unlike [`Effort`](crate::Effort) or [`Codec`](crate::Codec),
-/// which are closed sets fixed by the WebP bitstream, this is an API-convenience
-/// type that may gain further orderings (e.g. `Rgb8` or a 16-bit layout), so an
-/// external `match` must carry a wildcard arm. The crate's own exhaustive matches
-/// are same-crate and unaffected.
+/// which are closed sets fixed by the WebP bitstream, this is an API-convenience type that may gain further orderings (e.g. `Rgb8` or a 16-bit layout), so an external `match` must carry a wildcard arm.
+/// The crate's own exhaustive matches are same-crate and unaffected.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[non_exhaustive]
 pub enum PixelLayout {
@@ -181,11 +169,8 @@ pub fn argb_has_alpha(argb: &[u32]) -> bool {
 
 /// Optional sidecar metadata carried by a WebP extended (`VP8X`) container.
 ///
-/// `#[non_exhaustive]`: WebP can carry further sidecar chunk kinds, so new fields
-/// can be added without a breaking change (the existing fields stay `pub` to
-/// read). Build one from [`Metadata::none`] and the `with_*` setters — these keep
-/// the `with_` prefix (unlike the other builders' bare setters) because each shares
-/// a name with the `pub` field it sets, which a bare method would shadow.
+/// `#[non_exhaustive]`: WebP can carry further sidecar chunk kinds, so new fields can be added without a breaking change (the existing fields stay `pub` to read).
+/// Build one from [`Metadata::none`] and the `with_*` setters — these keep the `with_` prefix (unlike the other builders' bare setters) because each shares a name with the `pub` field it sets, which a bare method would shadow.
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 #[non_exhaustive]
 pub struct Metadata {
@@ -208,22 +193,24 @@ impl Metadata {
         }
     }
 
-    /// Set the ICC color profile (`ICCP`). Accepts a `Vec<u8>`, `Some(..)`, or
-    /// `None`; chain from [`Metadata::none`].
+    /// Set the ICC color profile (`ICCP`).
+    /// Accepts a `Vec<u8>`, `Some(..)`, or `None`; chain from [`Metadata::none`].
     #[must_use]
     pub fn with_icc_profile(mut self, icc_profile: impl Into<Option<Vec<u8>>>) -> Self {
         self.icc_profile = icc_profile.into();
         self
     }
 
-    /// Set the Exif sidecar (`EXIF`). Accepts a `Vec<u8>`, `Some(..)`, or `None`.
+    /// Set the Exif sidecar (`EXIF`).
+    /// Accepts a `Vec<u8>`, `Some(..)`, or `None`.
     #[must_use]
     pub fn with_exif(mut self, exif: impl Into<Option<Vec<u8>>>) -> Self {
         self.exif = exif.into();
         self
     }
 
-    /// Set the XMP sidecar (`XMP `). Accepts a `Vec<u8>`, `Some(..)`, or `None`.
+    /// Set the XMP sidecar (`XMP `).
+    /// Accepts a `Vec<u8>`, `Some(..)`, or `None`.
     #[must_use]
     pub fn with_xmp(mut self, xmp: impl Into<Option<Vec<u8>>>) -> Self {
         self.xmp = xmp.into();
@@ -236,11 +223,9 @@ impl Metadata {
         self.icc_profile.is_none() && self.exif.is_none() && self.xmp.is_none()
     }
 
-    /// Fold `self` (a per-field *override*), the `inherited` source metadata, and a
-    /// [`MetadataPolicy`] into the effective metadata to embed. Per field: an
-    /// override value in `self` wins; otherwise the inherited value is kept, gated
-    /// by the policy. ICC is never gated — it is inherited (or replaced) but never
-    /// dropped; only the privacy-bearing Exif/XMP sidecars are gated.
+    /// Fold `self` (a per-field *override*), the `inherited` source metadata, and a [`MetadataPolicy`] into the effective metadata to embed.
+    /// Per field: an override value in `self` wins; otherwise the inherited value is kept, gated by the policy.
+    /// ICC is never gated — it is inherited (or replaced) but never dropped; only the privacy-bearing Exif/XMP sidecars are gated.
     #[must_use]
     pub fn resolve(&self, inherited: &Self, policy: MetadataPolicy) -> Self {
         let keep_private = matches!(policy, MetadataPolicy::Preserve);
@@ -269,23 +254,19 @@ impl Metadata {
 
 /// How an encoder treats the metadata inherited from a source [`Image`].
 ///
-/// The ICC color profile is preserved under *every* policy — a WebP we emit never
-/// silently loses color-correctness — so a policy governs only the
-/// privacy-bearing Exif/XMP sidecars.
+/// The ICC color profile is preserved under *every* policy — a WebP we emit never silently loses color-correctness — so a policy governs only the privacy-bearing Exif/XMP sidecars.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[non_exhaustive]
 pub enum MetadataPolicy {
-    /// Preserve all inherited metadata: ICC, Exif, and XMP. The default — kinder
-    /// than `cwebp`, which strips metadata by default.
+    /// Preserve all inherited metadata: ICC, Exif, and XMP.
+    /// The default — kinder than `cwebp`, which strips metadata by default.
     #[default]
     Preserve,
-    /// Preserve the ICC color profile but strip the privacy-bearing Exif and XMP
-    /// sidecars (they can embed GPS, timestamps, and device IDs).
+    /// Preserve the ICC color profile but strip the privacy-bearing Exif and XMP sidecars (they can embed GPS, timestamps, and device IDs).
     StripPrivate,
 }
 
-/// A decoded image: pixels in a chosen [`PixelLayout`] plus size, alpha, and
-/// sidecar [`Metadata`].
+/// A decoded image: pixels in a chosen [`PixelLayout`] plus size, alpha, and sidecar [`Metadata`].
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Image {
     dims: Dimensions,
@@ -298,12 +279,8 @@ pub struct Image {
 impl Image {
     /// Assemble a validated owned image from pixel bytes in `layout` order.
     ///
-    /// The single public owned-[`Image`] constructor: it enforces the
-    /// `pixels.len() == width * height * 4` invariant (mirroring [`ImageRef::new`])
-    /// and derives [`has_alpha`](Self::has_alpha) by scanning the alpha lane at
-    /// [`PixelLayout::alpha_byte_offset`], so a caller cannot build an `Image` whose
-    /// pixel buffer disagrees with its dimensions. Metadata starts empty; attach any
-    /// with [`Image::with_metadata`].
+    /// The single public owned-[`Image`] constructor: it enforces the `pixels.len() == width * height * 4` invariant (mirroring [`ImageRef::new`]) and derives [`has_alpha`](Self::has_alpha) by scanning the alpha lane at [`PixelLayout::alpha_byte_offset`], so a caller cannot build an `Image` whose pixel buffer disagrees with its dimensions.
+    /// Metadata starts empty; attach any with [`Image::with_metadata`].
     ///
     /// # Errors
     ///
@@ -336,9 +313,7 @@ impl Image {
         })
     }
 
-    /// Assemble an image from already-validated parts with an explicit `has_alpha`
-    /// and `metadata` — the crate-internal constructor for decode paths that already
-    /// know the alpha state (public callers use the validating [`Image::new`]).
+    /// Assemble an image from already-validated parts with an explicit `has_alpha` and `metadata` — the crate-internal constructor for decode paths that already know the alpha state (public callers use the validating [`Image::new`]).
     #[must_use]
     pub(crate) const fn from_parts(
         dims: Dimensions,
@@ -356,9 +331,7 @@ impl Image {
         }
     }
 
-    /// Attach (or replace) the sidecar metadata, builder-style — used to surface
-    /// `VP8X` container metadata recovered alongside a decoded image so a
-    /// decode → re-encode round trip preserves it.
+    /// Attach (or replace) the sidecar metadata, builder-style — used to surface `VP8X` container metadata recovered alongside a decoded image so a decode → re-encode round trip preserves it.
     #[must_use]
     pub fn with_metadata(mut self, metadata: Metadata) -> Self {
         self.metadata = metadata;
@@ -423,8 +396,7 @@ impl Image {
         }
     }
 
-    /// Overwrite the alpha lane of every pixel from a `width * height` alpha plane
-    /// (one byte per pixel), and set [`Self::has_alpha`] from the plane.
+    /// Overwrite the alpha lane of every pixel from a `width * height` alpha plane (one byte per pixel), and set [`Self::has_alpha`] from the plane.
     ///
     /// # Errors
     ///
@@ -441,33 +413,36 @@ impl Image {
         Ok(())
     }
 
-    /// Crop to the exact pixel window `rect`, returning a new image that copies just
-    /// that sub-rectangle (layout and metadata carried through, `has_alpha`
-    /// recomputed over the window).
+    /// Crop to the exact pixel window `rect`, returning a new image that copies just that sub-rectangle (layout and metadata carried through, `has_alpha` recomputed over the window).
     ///
-    /// The window must lie fully inside the image; there is no silent clamp. Crop is
-    /// the same core geometry the `cwebp`/`dwebp` tools apply.
+    /// The window must lie fully inside the image; there is no silent clamp.
+    /// Crop is the same core geometry the `cwebp`/`dwebp` tools apply.
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidDimensions`] if `rect` is empty, or [`Error::CropOutOfBounds`]
-    /// if it does not fit inside the image.
+    /// [`Error::InvalidDimensions`] if `rect` is empty, or [`Error::CropOutOfBounds`] if it does not fit inside the image.
     pub fn crop(&self, rect: crate::geometry::Rect) -> Result<Self> {
         crate::geometry::crop(self, rect)
     }
 
-    /// Resize to `target` with the bit-exact fixed-point rescaler ported from
-    /// libwebp's `WebPRescaler`, returning a new image whose pixels match
-    /// `cwebp`/`dwebp`'s resampler byte-for-byte.
+    /// Resize to `target` with the bit-exact fixed-point rescaler ported from libwebp's `WebPRescaler`, returning a new image whose pixels match `cwebp`/`dwebp`'s resampler byte-for-byte.
     ///
-    /// Color channels are premultiplied by alpha before interpolation and restored
-    /// afterward (libwebp's ARGB `WebPPictureRescale` path), so translucent edges
-    /// resample cleanly; opaque images are unaffected by the matting. Use
-    /// [`Dimensions::scaled`] to derive `target` from a single axis while keeping
-    /// aspect. Layout and metadata carry through.
+    /// Color channels are premultiplied by alpha before interpolation and restored afterward (libwebp's ARGB `WebPPictureRescale` path), so translucent edges resample cleanly; opaque images are unaffected by the matting.
+    /// Use [`Dimensions::scaled`] to derive `target` from a single axis while keeping aspect.
+    /// Layout and metadata carry through.
     #[must_use]
     pub fn resize(&self, target: Dimensions) -> Self {
         crate::geometry::resize(self, target)
+    }
+
+    /// Resize to `target` without the alpha matting, preserving the color stored under transparent pixels — what `cwebp -resize` does under `-exact`.
+    ///
+    /// The color channels interpolate unweighted, so a translucent edge blends toward its neighbors' color rather than toward black.
+    /// Prefer [`Self::resize`] unless the hidden color is meaningful.
+    /// Layout and metadata carry through.
+    #[must_use]
+    pub fn resize_exact(&self, target: Dimensions) -> Self {
+        crate::geometry::resize_exact(self, target)
     }
 }
 
@@ -524,8 +499,7 @@ mod tests {
     };
 
     proptest! {
-        /// For every layout, `pack`/`unpack` are mutual inverses in both
-        /// directions (the single channel-order boundary of the whole codec).
+        /// For every layout, `pack`/`unpack` are mutual inverses in both directions (the single channel-order boundary of the whole codec).
         #[test]
         fn pixel_layout_pack_unpack_round_trips(
             argb in any::<u32>(),
@@ -633,8 +607,7 @@ mod tests {
         assert!(!argb_has_alpha(&[0xFF00_0000, 0xFFAA_BBCC]));
         // A non-opaque pixel is detected (pins `!=`, not `==`).
         assert!(argb_has_alpha(&[0xFF00_0000, 0x0000_0000]));
-        // A pixel opaque in the high byte but 0xFF in the low byte is still opaque
-        // — kills `>> -> <<`, which would inspect the low byte instead.
+        // A pixel opaque in the high byte but 0xFF in the low byte is still opaque — kills `>> -> <<`, which would inspect the low byte instead.
         assert!(!argb_has_alpha(&[0xFF00_00FF]));
     }
 
@@ -691,9 +664,8 @@ mod tests {
         }
     }
 
-    /// The single source of truth for the `Metadata::resolve` fold: policy
-    /// (Preserve/StripPrivate) × field (icc/exif/xmp) × override presence. The
-    /// encoder configs delegate here, so their tests only check the delegation.
+    /// The single source of truth for the `Metadata::resolve` fold: policy (Preserve/StripPrivate) × field (icc/exif/xmp) × override presence.
+    /// The encoder configs delegate here, so their tests only check the delegation.
     #[test]
     fn resolve_truth_table() {
         // Preserve (no override): every inherited field is kept as-is.
@@ -722,8 +694,7 @@ mod tests {
             Some(&[2][..]),
         );
 
-        // An explicit override survives StripPrivate, but a non-overridden private
-        // slot is still dropped; ICC is never gated.
+        // An explicit override survives StripPrivate, but a non-overridden private slot is still dropped; ICC is never gated.
         let exif99 = Metadata {
             exif: Some(vec![99]),
             ..Metadata::none()
@@ -758,8 +729,7 @@ mod tests {
             Some(&[77][..]),
         );
 
-        // A present-but-empty blob (`Some(vec![])`) is a real value: the `.or_else`
-        // short-circuits on any `Some`, so it wins and is not normalized to `None`,
+        // A present-but-empty blob (`Some(vec![])`) is a real value: the `.or_else` short-circuits on any `Some`, so it wins and is not normalized to `None`,
         // under either policy — and it still upgrades to VP8X (non-empty).
         let empty_exif = Metadata {
             exif: Some(vec![]),
@@ -805,8 +775,7 @@ mod tests {
         assert_eq!(borrowed.dimensions(), dims);
     }
 
-    /// The alpha lane lands at the layout's byte offset (`3`/`0`/`3`), the other
-    /// three channels are untouched, and a mixed plane flips `has_alpha` on.
+    /// The alpha lane lands at the layout's byte offset (`3`/`0`/`3`), the other three channels are untouched, and a mixed plane flips `has_alpha` on.
     #[test]
     fn apply_alpha_plane_writes_alpha_lane() {
         for (layout, off) in [

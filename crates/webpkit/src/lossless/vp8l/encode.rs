@@ -39,7 +39,9 @@ use crate::lossless::huffman::serialize::write_huffman_code;
 use crate::lossless::lz77::{PlaneCodeMap, prefix_encode};
 use crate::lossless::prelude::*;
 use crate::lossless::transform::{cross_color, palette, predictor, subtract_green};
-use crate::lossless::vp8l::backref::{Resolved, Token, parse, parse_lz77, parse_optimal, resolve};
+use crate::lossless::vp8l::backref::{
+    Resolved, Token, parse, parse_local, parse_lz77, parse_optimal, parse_optimal_pair, resolve,
+};
 use crate::lossless::vp8l::meta::{self, MetaPlan};
 use crate::lossless::work::work;
 
@@ -187,16 +189,17 @@ fn encode_stream(
 /// Full LZ77 + color-cache candidate search over already-transformed `pixels`
 /// laid out at `working_width` (which a color-indexing transform reduces below
 /// `header_width`; every other family leaves them equal), returning the smallest
-/// stream. `optimal_parse` adds the cost-model DP candidate; `meta_huffman` adds
-/// the multi-group meta-Huffman shots — both breadth knobs, gated so a lower
-/// effort level searches less. Parses the reference strategies, lets the cost
-/// model pick a cache size for each, and keeps the smallest. The
+/// stream. `parse_breadth` selects how many LZ77 parse candidates are evaluated
+/// and `meta_huffman` adds the multi-group meta-Huffman shots — both breadth
+/// knobs, gated so a lower effort level searches less. Parses the reference
+/// strategies, lets the cost model pick a cache size for each, and keeps the
+/// smallest. The
 /// `(literal, no-cache)` candidate is always first, so this never regresses the
 /// plain literal baseline for the given `plans`.
 #[expect(
     clippy::too_many_arguments,
     reason = "threads the emit context (dimensions, plans, working width) and the \
-              two breadth gates through unchanged; bundling it would only hide the \
+              breadth gates through unchanged; bundling it would only hide the \
               data flow the named wrappers rely on"
 )]
 fn search_lz77_variant(
@@ -206,7 +209,7 @@ fn search_lz77_variant(
     plans: &[TransformPlan],
     working_width: u32,
     pixels: &[u32],
-    optimal_parse: bool,
+    parse_breadth: ParseBreadth,
     meta_huffman: bool,
 ) -> Vec<u8> {
     let emit = |cache_bits, model: &RefModel<'_>, histogram: &Histogram| {
@@ -237,67 +240,68 @@ fn search_lz77_variant(
         }
         best
     };
-    // The greedy LZ77 stream. Kept alive as the DP seed and the meta-Huffman input;
-    // its hash chain is carried alongside so the DP reuses it instead of rebuilding
-    // the same pure-function-of-pixels chain (byte-identical either way).
+    // The parse candidates, in the fixed order they are folded in.
+    // The greedy LZ77 stream comes first and seeds the rest; its hash chain is carried alongside so every DP reuses it instead of rebuilding the same pure-function-of-pixels chain (byte-identical either way).
     let (tokens_lz77, chain) = parse_lz77(pixels);
-    let model_lz77 = RefModel::new(&tokens_lz77, pixels, working_width);
-    let (cache_lz77, hist_lz77) = best_cache_bits(&model_lz77);
-    keep_smaller(&mut best, emit(cache_lz77, &model_lz77, &hist_lz77));
+    let mut parses = vec![tokens_lz77];
+    // Cost-model-driven optimal parse, seeded from the greedy stream.
+    // Candidates are interned in the fixed ranking order.
+    // At Local breadth the greedy- and local-seeded DPs share their identical hash-chain candidate walk; their cost states and strict tie decisions remain independent.
+    // `intern_parse` returns the index of the equal-or-new stream, so a later parse re-seeds from `parses[idx]` (token-identical to the stream that produced it), leaving the emitted bytes unchanged.
+    if parse_breadth >= ParseBreadth::Optimal {
+        if parse_breadth >= ParseBreadth::Local {
+            let tokens_local = parse_local(pixels, working_width);
+            let (tokens_dp, dp_local) =
+                parse_optimal_pair(pixels, working_width, &parses[0], &tokens_local, &chain);
+            let dp_idx = intern_parse(&mut parses, tokens_dp);
+            // Preserve the historical candidate ranking exactly: greedy and its DP first, then local and its DP, then the re-seeded greedy DP.
+            intern_parse(&mut parses, tokens_local);
+            intern_parse(&mut parses, dp_local);
+            let dp_iter = parse_optimal(pixels, working_width, &parses[dp_idx], &chain);
+            intern_parse(&mut parses, dp_iter);
+        } else {
+            let tokens_dp = parse_optimal(pixels, working_width, &parses[0], &chain);
+            intern_parse(&mut parses, tokens_dp);
+        }
+    }
+    drop(chain);
     let ysize = pixels.len() as u32 / working_width;
-    // Cost-model-driven optimal parse: a self-floored extra candidate (chosen only
-    // when strictly smaller by real bytes), seeded from the greedy stream.
-    if optimal_parse {
-        let tokens_dp = parse_optimal(pixels, working_width, &tokens_lz77, &chain);
-        drop(chain);
-        let model_dp = RefModel::new(&tokens_dp, pixels, working_width);
-        let (cache_dp, hist_dp) = best_cache_bits(&model_dp);
-        keep_smaller(&mut best, emit(cache_dp, &model_dp, &hist_dp));
-        if meta_huffman {
-            // A meta-Huffman shot on each of the greedy and DP streams — both
-            // self-floored against the single-group candidates already folded in.
+    // Every parse is a self-floored extra candidate: `keep_smaller` ranks by real emitted bytes, so a wider set can only shrink the result.
+    // The single-group emits run first, then the meta-Huffman shots, so each phase keeps the candidate order it is ranked in.
+    let mut models = Vec::with_capacity(parses.len());
+    for tokens in &parses {
+        let model = RefModel::new(tokens, pixels, working_width);
+        let (cache_bits, hist) = best_cache_bits(&model);
+        keep_smaller(&mut best, emit(cache_bits, &model, &hist));
+        models.push((model, cache_bits));
+    }
+    if meta_huffman {
+        for (model, cache_bits) in &models {
             meta_shot(
                 &mut best,
                 header_width,
                 header_height,
                 alpha_used,
                 plans,
-                cache_lz77,
-                &model_lz77,
-                pixels,
-                working_width,
-                ysize,
-            );
-            meta_shot(
-                &mut best,
-                header_width,
-                header_height,
-                alpha_used,
-                plans,
-                cache_dp,
-                &model_dp,
+                *cache_bits,
+                model,
                 pixels,
                 working_width,
                 ysize,
             );
         }
-    } else if meta_huffman {
-        // No DP candidate at this breadth: the meta-Huffman shot rides the greedy
-        // stream alone.
-        meta_shot(
-            &mut best,
-            header_width,
-            header_height,
-            alpha_used,
-            plans,
-            cache_lz77,
-            &model_lz77,
-            pixels,
-            working_width,
-            ysize,
-        );
     }
     best
+}
+
+/// Intern `tokens` into the candidate parses: return the index of the first existing stream equal to it, or append it and return the new index.
+/// Re-seeding a DP often converges back onto a stream already in the set; interning dedupes the redundant candidate (so it is never emitted twice) exactly as an append-if-absent would, and, because a duplicate is dropped here rather than retained, keeps the parse-build working set from holding every Local candidate at once.
+/// The returned index lets a later parse re-seed from `parses[idx]`, which is token-identical to the stream that produced it, so the emitted bytes are unchanged.
+fn intern_parse(parses: &mut Vec<Vec<Token>>, tokens: Vec<Token>) -> usize {
+    parses.iter().position(|p| *p == tokens).unwrap_or_else(|| {
+        parses.push(tokens);
+        parses.len() - 1
+    })
 }
 
 /// Fold a meta-Huffman candidate for `model` into `best` when [`meta::plan`] finds
@@ -353,7 +357,7 @@ fn search_lz77(
         plans,
         working_width,
         pixels,
-        true,
+        ParseBreadth::Optimal,
         false,
     )
 }
@@ -377,7 +381,7 @@ fn search_lz77_best(
         plans,
         working_width,
         pixels,
-        true,
+        ParseBreadth::Local,
         true,
     )
 }
@@ -396,6 +400,19 @@ const _: () = {
     }
 };
 
+/// How many LZ77 parse candidates a family search evaluates.
+/// Ordered and nested:
+/// each variant's candidate set contains the one below it, so the `>=` gates keep the effort schedule monotone.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ParseBreadth {
+    /// The greedy LZ77 stream alone.
+    Greedy,
+    /// Plus the cost-model DP seeded from the greedy stream.
+    Optimal,
+    /// Plus the near-distance-restricted parse and the two DPs re-seeded from it and from the greedy-seeded DP.
+    Local,
+}
+
 /// How wide the Tier 3 search casts its net at one effort level: which tile sizes
 /// the predictor/cross-color families sweep, whether cross-color runs at all, and
 /// whether the per-family search adds the optimal-parse and meta-Huffman shots.
@@ -408,8 +425,8 @@ struct Breadth {
     tile_bits: &'static [u32],
     /// Whether the cross-color family is evaluated.
     cross_color: bool,
-    /// Whether each family search adds the cost-model optimal-parse candidate.
-    optimal_parse: bool,
+    /// How many LZ77 parse candidates each family search evaluates.
+    parses: ParseBreadth,
     /// Whether each family search adds the meta-Huffman shots.
     meta_huffman: bool,
 }
@@ -428,37 +445,37 @@ const fn schedule(level: u8) -> Breadth {
         0 => Breadth {
             tile_bits: T4,
             cross_color: false,
-            optimal_parse: false,
+            parses: ParseBreadth::Greedy,
             meta_huffman: false,
         },
         1 => Breadth {
             tile_bits: T4,
             cross_color: true,
-            optimal_parse: true,
+            parses: ParseBreadth::Optimal,
             meta_huffman: false,
         },
         2 => Breadth {
             tile_bits: T34,
             cross_color: true,
-            optimal_parse: true,
+            parses: ParseBreadth::Optimal,
             meta_huffman: false,
         },
         3 => Breadth {
             tile_bits: T234,
             cross_color: true,
-            optimal_parse: true,
+            parses: ParseBreadth::Optimal,
             meta_huffman: false,
         },
         4 | 5 => Breadth {
             tile_bits: FULL,
             cross_color: true,
-            optimal_parse: true,
+            parses: ParseBreadth::Local,
             meta_huffman: false,
         },
         _ => Breadth {
             tile_bits: FULL,
             cross_color: true,
-            optimal_parse: true,
+            parses: ParseBreadth::Local,
             meta_huffman: true,
         },
     }
@@ -527,7 +544,7 @@ fn family_search(
         plans,
         working_width,
         pixels,
-        breadth.optimal_parse,
+        breadth.parses,
         breadth.meta_huffman,
     )
 }
@@ -707,13 +724,13 @@ fn reduce_task_minima(minima: impl IntoIterator<Item = Option<Vec<u8>>>) -> Vec<
 /// plus the family currently being evaluated.
 ///
 /// Both paths preserve task order: the serial map folds families in emission
-/// order, and `Vec::into_par_iter().map().collect()` is an
+/// order, and the slice's `par_iter().map().collect()` is an
 /// `IndexedParallelIterator`, so `minima[i]` is always
 /// `keep_smallest(run_best_task(tasks[i], ..))` regardless of scheduling — hence
 /// rayon-on output equals rayon-off byte-for-byte.
 #[cfg(not(feature = "rayon"))]
 fn evaluate_best_tasks(
-    tasks: Vec<BestTask>,
+    tasks: &[BestTask],
     breadth: Breadth,
     width: u32,
     height: u32,
@@ -722,15 +739,15 @@ fn evaluate_best_tasks(
 ) -> Vec<u8> {
     // Serial: `reduce_task_minima` drives the lazy map, so each family's streams
     // are produced, folded to one, and dropped before the next family runs.
-    reduce_task_minima(
-        tasks
-            .into_iter()
-            .map(|t| keep_smallest(run_best_task(t, breadth, width, height, alpha_used, argb))),
-    )
+    reduce_task_minima(tasks.iter().copied().map(|task| {
+        keep_smallest(run_best_task(
+            task, breadth, width, height, alpha_used, argb,
+        ))
+    }))
 }
 #[cfg(feature = "rayon")]
 fn evaluate_best_tasks(
-    tasks: Vec<BestTask>,
+    tasks: &[BestTask],
     breadth: Breadth,
     width: u32,
     height: u32,
@@ -738,14 +755,27 @@ fn evaluate_best_tasks(
     argb: &[u32],
 ) -> Vec<u8> {
     use rayon::prelude::*;
-    // Parallel: each worker folds its family to a single stream, so the collected
-    // vec holds one stream per non-empty family (not every candidate); `collect`
-    // keeps task order, so the fold below resolves ties identically to serial.
-    let minima: Vec<Option<Vec<u8>>> = tasks
-        .into_par_iter()
-        .map(|t| keep_smallest(run_best_task(t, breadth, width, height, alpha_used, argb)))
-        .collect();
-    reduce_task_minima(minima)
+    // A fixed two-family wave bounds simultaneous transform/model buffers without making the result depend on host thread count.
+    // Each indexed parallel collect preserves canonical task order, and every wave is reduced before the next starts, so tie resolution remains identical to the serial evaluator.
+    const TASKS_PER_WAVE: usize = 2;
+    let mut best = Vec::new();
+    for wave in tasks.chunks(TASKS_PER_WAVE) {
+        let minima: Vec<Option<Vec<u8>>> = wave
+            .par_iter()
+            .map(|&task| {
+                keep_smallest(run_best_task(
+                    task, breadth, width, height, alpha_used, argb,
+                ))
+            })
+            .collect();
+        let candidate = reduce_task_minima(minima);
+        if best.is_empty() {
+            best = candidate;
+        } else if !candidate.is_empty() {
+            keep_smaller(&mut best, candidate);
+        }
+    }
+    best
 }
 
 /// Tier 3 encode at breadth `level` (`0..=9`): return the SMALLEST stream among the
@@ -765,14 +795,8 @@ fn evaluate_best_tasks(
 pub(crate) fn encode_best_at(level: u8, width: u32, height: u32, argb: &[u32]) -> Vec<u8> {
     let breadth = schedule(level);
     let alpha_used = argb.iter().any(|&p| p >> 24 != 0xff);
-    evaluate_best_tasks(
-        build_best_tasks(breadth),
-        breadth,
-        width,
-        height,
-        alpha_used,
-        argb,
-    )
+    let tasks = build_best_tasks(breadth);
+    evaluate_best_tasks(&tasks, breadth, width, height, alpha_used, argb)
 }
 
 /// Full-breadth ([`schedule`] level 9) Tier 3 encode — byte-for-byte the historical
@@ -1813,8 +1837,8 @@ mod tests {
             );
             // The rayon evaluator (feature on) must match the serial reference and
             // the public entry point, byte-for-byte.
-            let parallel =
-                evaluate_best_tasks(build_best_tasks(breadth), breadth, w, h, alpha, &pixels);
+            let tasks = build_best_tasks(breadth);
+            let parallel = evaluate_best_tasks(&tasks, breadth, w, h, alpha, &pixels);
             assert_eq!(
                 serial, parallel,
                 "rayon evaluation must equal serial, byte-for-byte"

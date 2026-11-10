@@ -1,0 +1,5 @@
+feature = "loop-filter-sharp"
+level = "must"
+width = 48
+height = 48
+note = "48x48 synthetic source; input.vp8 via cwebp 1.6.0 `-q 55 -strong -f 60 -sharpness 7 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"

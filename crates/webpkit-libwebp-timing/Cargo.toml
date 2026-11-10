@@ -1,0 +1,22 @@
+[package]
+name = "webpkit-libwebp-timing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "In-process libwebp-sys encode/decode timing shims for the xtask scoreboard; the unsafe FFI is isolated here so xtask stays forbid-unsafe."
+publish = false
+
+[features]
+# Link libwebp-sys and expose the in-process encode/decode shims.
+# Off by default,
+# so a plain workspace build never compiles the vendored C reference library.
+enabled = ["dep:libwebp-sys"]
+
+[dependencies]
+libwebp-sys = { workspace = true, optional = true }
+
+[lints]
+workspace = true

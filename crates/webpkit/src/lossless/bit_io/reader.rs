@@ -1,5 +1,7 @@
 //! LSB-first bit reader over an in-memory byte slice.
 
+use crate::lossless::work::work;
+
 /// A little-endian, least-significant-bit-first reader over a byte slice.
 ///
 /// The VP8L bitstream is consumed LSB-first: the first bit read from a byte is
@@ -111,6 +113,7 @@ impl<'a> BitReader<'a> {
         }
         self.bit_pos += n;
         while self.bit_pos >= 8 {
+            work!(Vp8lBitRefill);
             self.val >>= 8;
             if self.pos < self.buf.len() {
                 self.val |= u64::from(self.buf[self.pos]) << 56;

@@ -1,0 +1,5 @@
+feature = "segmentation-single"
+level = "must"
+width = 64
+height = 48
+note = "64x48 synthetic source; input.vp8 via cwebp 1.6.0 `-q 50 -segments 1 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"
