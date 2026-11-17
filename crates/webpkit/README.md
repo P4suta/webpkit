@@ -43,7 +43,9 @@ encode → decode round-trip.
 `decode` is **safe on untrusted input by default**: it caps the canvas at
 `DEFAULT_MAX_PIXELS` before allocating, so a hostile header cannot exhaust memory.
 Use `decode_with` + `DecodeOptions::max_pixels` for a different cap, or
-`DecodeOptions::unbounded` to lift it for trusted input.
+`DecodeOptions::unbounded` to lift it for trusted input. The same options choose
+layout and metadata reads and offer opt-in (`0..=100`, default `0`) lossy chroma
+and level-quantized `ALPH` dithering strengths.
 
 ## Optional features
 

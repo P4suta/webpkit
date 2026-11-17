@@ -79,6 +79,17 @@ pub(crate) fn run_cwebp(
     out_webp: &Path,
     resize: Option<u32>,
 ) -> Result<()> {
+    run_cwebp_resized(cwebp, src, out_webp, resize.map(|width| (width, 0)))
+}
+
+/// Encode losslessly like [`run_cwebp`], with an optional explicit `(width, height)` resize.
+/// A zero dimension asks cwebp to preserve aspect ratio from the other dimension.
+pub(crate) fn run_cwebp_resized(
+    cwebp: &str,
+    src: &Path,
+    out_webp: &Path,
+    resize: Option<(u32, u32)>,
+) -> Result<()> {
     let mut cmd = Command::new(cwebp);
     cmd.arg("-lossless")
         .arg("-exact")
@@ -86,17 +97,46 @@ pub(crate) fn run_cwebp(
         .arg("6")
         .arg("-q")
         .arg("100")
-        .arg("-mt")
-        .arg("0")
         .arg("-quiet");
-    if let Some(width) = resize {
-        cmd.arg("-resize").arg(width.to_string()).arg("0");
+    if let Some((width, height)) = resize {
+        cmd.arg("-resize")
+            .arg(width.to_string())
+            .arg(height.to_string());
     }
     cmd.arg(src).arg("-o").arg(out_webp);
     let out = output_or_notfound(&mut cmd, &not_found_msg("cwebp", "WEBPKIT_CWEBP"))?;
     if !out.status.success() {
         bail!(
             "cwebp failed ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// Encode `src` to `out_webp` with `cwebp -q Q -noalpha` plus `extra` VP8 knobs (e.g. `-m`, `-segments`, `-f`, `-strong`/`-nostrong`, `-sharpness`).
+/// Omitting cwebp's flag-only `-mt` keeps the reference single-threaded.
+pub(crate) fn run_cwebp_lossy_args(
+    cwebp: &str,
+    src: &Path,
+    out_webp: &Path,
+    quality: u8,
+    extra: &[&str],
+) -> Result<()> {
+    let mut cmd = Command::new(cwebp);
+    cmd.arg("-q")
+        .arg(quality.to_string())
+        .arg("-noalpha")
+        .arg("-quiet");
+    for arg in extra {
+        cmd.arg(arg);
+    }
+    cmd.arg(src).arg("-o").arg(out_webp);
+    let out = output_or_notfound(&mut cmd, &not_found_msg("cwebp", "WEBPKIT_CWEBP"))?;
+    if !out.status.success() {
+        bail!(
+            "cwebp (lossy) failed ({}): {}",
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         );
@@ -202,15 +242,13 @@ pub(crate) fn webpmux_get_frame(
 }
 
 /// Encode `src` to `out_webp` with libwebp `cwebp -q Q` (lossy). `-noalpha` keeps
-/// the output a bare VP8 container (our encoder likewise drops alpha), and
-/// `-mt 0`/`-quiet` keep it deterministic and silent.
+/// the output a bare VP8 container (our encoder likewise drops alpha), omitting
+/// the flag-only `-mt` keeps it single-threaded, and `-quiet` keeps it silent.
 pub(crate) fn run_cwebp_lossy(cwebp: &str, src: &Path, out_webp: &Path, quality: u8) -> Result<()> {
     let mut cmd = Command::new(cwebp);
     cmd.arg("-q")
         .arg(quality.to_string())
         .arg("-noalpha")
-        .arg("-mt")
-        .arg("0")
         .arg("-quiet")
         .arg(src)
         .arg("-o")
@@ -222,6 +260,74 @@ pub(crate) fn run_cwebp_lossy(cwebp: &str, src: &Path, out_webp: &Path, quality:
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         );
+    }
+    Ok(())
+}
+
+/// Verify the pinned cwebp `-hint` token set and its byte-neutral behavior.
+///
+/// libwebp 1.6.0 accepts exactly `picture`, `photo`, and `graph`; the lossy encoder does not consult the hint, while the lossless encoder uses `graph` only for its initial writer allocation.
+/// Both modes must therefore emit the same bytes as their no-hint baseline on this deterministic fixture.
+pub(crate) fn verify_cwebp_image_hint(cwebp: &str) -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let source = temp.path().join("hint-oracle.png");
+    let output = temp.path().join("hint-oracle.webp");
+    let mut rgb = Vec::with_capacity(4 * 4 * 3);
+    for y in 0..4u8 {
+        for x in 0..4u8 {
+            rgb.extend_from_slice(&[
+                x.saturating_mul(61),
+                y.saturating_mul(59),
+                x.wrapping_add(y).saturating_mul(29),
+            ]);
+        }
+    }
+    let file = std::fs::File::create(&source)?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 4, 4);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header()?.write_image_data(&rgb)?;
+
+    for lossless in [false, true] {
+        let encode = |hint: Option<&str>| -> Result<Vec<u8>> {
+            let mut cmd = Command::new(cwebp);
+            if lossless {
+                cmd.args(["-lossless", "-exact", "-m", "6", "-q", "100"]);
+            } else {
+                cmd.args(["-q", "75", "-noalpha"]);
+            }
+            if let Some(hint) = hint {
+                cmd.args(["-hint", hint]);
+            }
+            cmd.arg("-quiet").arg(&source).arg("-o").arg(&output);
+            let result = output_or_notfound(&mut cmd, &not_found_msg("cwebp", "WEBPKIT_CWEBP"))?;
+            if !result.status.success() {
+                bail!(
+                    "cwebp -hint oracle failed ({}): {}",
+                    result.status,
+                    String::from_utf8_lossy(&result.stderr).trim()
+                );
+            }
+            Ok(std::fs::read(&output)?)
+        };
+        let baseline = encode(None)?;
+        for hint in ["picture", "photo", "graph"] {
+            let hinted = encode(Some(hint))?;
+            if hinted != baseline {
+                bail!("cwebp -hint {hint} unexpectedly changed encoded bytes");
+            }
+        }
+    }
+
+    let mut invalid = Command::new(cwebp);
+    invalid
+        .args(["-q", "75", "-noalpha", "-hint", "default", "-quiet"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&output);
+    let invalid = output_or_notfound(&mut invalid, &not_found_msg("cwebp", "WEBPKIT_CWEBP"))?;
+    if invalid.status.success() {
+        bail!("cwebp 1.6.0 unexpectedly accepted literal `-hint default`");
     }
     Ok(())
 }

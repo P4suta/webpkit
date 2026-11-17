@@ -61,6 +61,177 @@ impl Planes {
     }
 }
 
+/// libwebp's chroma-quantizer to maximum dithering-amplitude table.
+const QUANT_TO_DITHER_AMP: [u8; 12] = [8, 7, 6, 4, 4, 2, 2, 2, 1, 1, 1, 1];
+
+/// Derive one macroblock's chroma dithering amplitude.
+///
+/// Rich chroma blocks (three or more coefficients in any 4×4 block) are not dithered.
+/// The remaining amplitude depends on the transmitted chroma AC quantizer and the caller's `0..=100` strength.
+/// Values below four have no visible fixed-point effect and are normalized to zero.
+pub(crate) fn chroma_dither_amplitude(uv_quant: i32, non_zero_uv: u32, strength: u8) -> u8 {
+    if strength == 0 || non_zero_uv & 0xaaaa != 0 {
+        return 0;
+    }
+    let Ok(index) = usize::try_from(uv_quant) else {
+        return 0;
+    };
+    let Some(&base) = QUANT_TO_DITHER_AMP.get(index) else {
+        return 0;
+    };
+    let factor = u32::from(strength.min(100)) * 255 / 100;
+    let amplitude = (factor * u32::from(base)) >> 3;
+    if amplitude < 4 {
+        0
+    } else {
+        u8::try_from(amplitude).unwrap_or(u8::MAX)
+    }
+}
+
+/// The deterministic subtractive generator used by libwebp's VP8 dithering.
+struct DitherRandom {
+    table: [u32; 55],
+    index1: usize,
+    index2: usize,
+}
+
+impl DitherRandom {
+    const INITIAL: [u32; 55] = [
+        0x0de1_5230,
+        0x03b3_1886,
+        0x775f_accb,
+        0x1c88_626a,
+        0x6838_5c55,
+        0x14b3_b828,
+        0x4a85_fef8,
+        0x49dd_b84b,
+        0x64fc_f397,
+        0x5c55_0289,
+        0x4a29_0000,
+        0x0d7e_c1da,
+        0x5940_b7ab,
+        0x5492_577d,
+        0x4e19_ca72,
+        0x38d3_8c69,
+        0x0c01_ee65,
+        0x32a1_755f,
+        0x5437_f652,
+        0x5abb_2c32,
+        0x0faa_57b1,
+        0x73f5_33e7,
+        0x685f_eeda,
+        0x7563_cce2,
+        0x6e99_0e83,
+        0x4730_a7ed,
+        0x4fc0_d9c6,
+        0x496b_153c,
+        0x4f14_03fa,
+        0x541a_fb0c,
+        0x7399_0b32,
+        0x26d7_cb1c,
+        0x6fcc_3706,
+        0x2cbb_77d8,
+        0x7576_2f2a,
+        0x6425_ccdd,
+        0x24b3_5461,
+        0x0a7d_8715,
+        0x2204_14a8,
+        0x141e_bf67,
+        0x56b4_1583,
+        0x73e5_02e3,
+        0x44ca_b16f,
+        0x2826_4d42,
+        0x73ba_aefb,
+        0x0a50_ebed,
+        0x1d6a_b6fb,
+        0x0d3a_d40b,
+        0x35db_3b68,
+        0x2b08_1e83,
+        0x77ce_6b95,
+        0x5181_e5f0,
+        0x7885_3bbc,
+        0x009f_9494,
+        0x27e5_ed3c,
+    ];
+
+    const fn new() -> Self {
+        Self {
+            table: Self::INITIAL,
+            index1: 0,
+            index2: 31,
+        }
+    }
+
+    /// Return an 8-bit, 128-centered sample restricted by `amplitude`.
+    fn sample(&mut self, amplitude: u8) -> u8 {
+        let diff = self.table[self.index1].wrapping_sub(self.table[self.index2]) & 0x7fff_ffff;
+        self.table[self.index1] = diff;
+        self.index1 += 1;
+        if self.index1 == self.table.len() {
+            self.index1 = 0;
+        }
+        self.index2 += 1;
+        if self.index2 == self.table.len() {
+            self.index2 = 0;
+        }
+        let centered = (diff << 1).cast_signed() >> 24;
+        let restricted = (centered * i32::from(amplitude)) >> 8;
+        u8::try_from(restricted + 128).unwrap_or(0)
+    }
+}
+
+/// Apply deterministic 8×8 U/V dithering to the reconstructed macroblock grid.
+///
+/// `amplitudes` is row-major with one entry per macroblock.
+/// The generator is advanced only for non-zero entries, in U-then-V raster order.
+pub(crate) fn dither_chroma(planes: &mut Planes, amplitudes: &[u8], mb_w: usize, mb_h: usize) {
+    if amplitudes.iter().all(|&amplitude| amplitude == 0) {
+        return;
+    }
+    let mut random = DitherRandom::new();
+    for mb_y in 0..mb_h {
+        for mb_x in 0..mb_w {
+            let amplitude = amplitudes.get(mb_y * mb_w + mb_x).copied().unwrap_or(0);
+            if amplitude == 0 {
+                continue;
+            }
+            let offset = (mb_y * 8 + 1) * planes.uv_stride + mb_x * 8 + 1;
+            dither_8x8(
+                &mut planes.u,
+                offset,
+                planes.uv_stride,
+                amplitude,
+                &mut random,
+            );
+            dither_8x8(
+                &mut planes.v,
+                offset,
+                planes.uv_stride,
+                amplitude,
+                &mut random,
+            );
+        }
+    }
+}
+
+/// Apply one macroblock's fixed-point dither samples to a chroma plane.
+fn dither_8x8(
+    plane: &mut [u8],
+    offset: usize,
+    stride: usize,
+    amplitude: u8,
+    random: &mut DitherRandom,
+) {
+    for y in 0..8 {
+        for x in 0..8 {
+            let delta = (i32::from(random.sample(amplitude)) - 128 + 8) >> 4;
+            let index = offset + y * stride + x;
+            plane[index] =
+                u8::try_from((i32::from(plane[index]) + delta).clamp(0, 255)).unwrap_or(0);
+        }
+    }
+}
+
 /// Fill a plane's top border row with `127` and its left border column with
 /// `129` (the corner keeps the top value `127`).
 fn fill_borders(plane: &mut [u8], stride: usize, rows: usize) {
@@ -445,12 +616,36 @@ mod tests {
                   bare names mirror the reference for readability"
     )]
 
-    use super::{Planes, compute_fstrengths, fill_top_right_lane, filter_frame, resolve_finfo};
+    use super::{
+        Planes, chroma_dither_amplitude, compute_fstrengths, dither_chroma, fill_top_right_lane,
+        filter_frame, resolve_finfo,
+    };
     use crate::lossy::decode::{FilterHeader, MbData, SegmentHeader};
     use crate::lossy::loop_filter::FInfo;
 
     // -------------------------------------------------------------------------
     // Helpers
+
+    #[test]
+    fn chroma_dither_is_gated_and_deterministic() {
+        assert_eq!(chroma_dither_amplitude(0, 0, 0), 0);
+        assert_eq!(chroma_dither_amplitude(12, 0, 100), 0);
+        assert_eq!(chroma_dither_amplitude(0, 0x0002, 100), 0);
+        assert_eq!(chroma_dither_amplitude(0, 0, 100), 255);
+
+        let mut a = Planes::new(1, 1);
+        let mut b = Planes::new(1, 1);
+        a.u.fill(128);
+        a.v.fill(128);
+        b.u.fill(128);
+        b.v.fill(128);
+        dither_chroma(&mut a, &[255], 1, 1);
+        dither_chroma(&mut b, &[255], 1, 1);
+        assert_eq!(a.u, b.u);
+        assert_eq!(a.v, b.v);
+        assert!(a.u.iter().any(|&value| value != 128));
+        assert!(a.v.iter().any(|&value| value != 128));
+    }
 
     /// Build a `SegmentHeader` with only the fields `compute_fstrengths` reads.
     fn segment(

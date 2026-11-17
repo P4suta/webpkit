@@ -29,6 +29,7 @@ use crate::lossless::animation::{CompositedFrame, Frames, Vp8lFrameDecoder};
 use crate::lossless::prelude::*;
 use crate::lossless::vp8l;
 use crate::lossless::vp8l::decode_incr::{Step, Vp8lStream};
+use crate::lossless::work::work;
 
 pub use crate::stream::{
     DecodeOptions, DecodedFrame, FrameDecoder, FramePayload, ImageInfo, Progress, RowDrain,
@@ -92,6 +93,7 @@ pub fn decode_vp8l(payload: &[u8], options: &DecodeOptions) -> Result<Image> {
             codec: Codec::Lossless,
         })?;
     let has_alpha = image::argb_has_alpha(&decoded.argb);
+    work!(Vp8lPackPixel, decoded.argb.len() as u64);
     let pixels = image::pack_pixels(options.layout, &decoded.argb);
     Ok(Image::from_parts(
         dims,
@@ -548,6 +550,7 @@ impl<D: FrameDecoder + Clone> IncrementalDecoder<D> {
                     let stop = (first_row + count) as usize * width;
                     let rows_argb = &st.stream.ready()[start..stop];
                     st.has_alpha = st.has_alpha || image::argb_has_alpha(rows_argb);
+                    work!(Vp8lPackPixel, rows_argb.len() as u64);
                     let bytes = image::pack_pixels(st.layout, rows_argb);
                     st.packed.extend_from_slice(&bytes);
                     st.next_row = first_row + count;

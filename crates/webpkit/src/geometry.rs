@@ -1,18 +1,13 @@
-//! The shared crop/resize geometry engine, used by both the encode and decode
-//! tool-side paths.
+//! The shared crop/resize geometry engine, used by both the encode and decode tool-side paths.
 //!
-//! Resizing is a bit-exact port of libwebp's `WebPRescaler` (`utils/rescaler.c` +
-//! the generic `dsp/rescaler.c` import/export path): a fixed-point,
-//! [`forbid(unsafe_code)`](crate), zero-dependency resampler whose output is
-//! byte-identical to `cwebp`/`dwebp`. The `RFIX = 32` fixed-point shift, the
-//! `fx`/`fy`/`fxy` factor derivation, the import-then-export phase ordering, and the
-//! per-channel `u32`/`u64` accumulation all mirror the reference exactly, because an
-//! off-by-one in the rounding or the phase order is a visible pixel difference.
+//! Resizing is a bit-exact port of libwebp's `WebPRescaler` (`utils/rescaler.c` + the generic `dsp/rescaler.c` import/export path): a fixed-point,
+//! [`forbid(unsafe_code)`](crate), zero-dependency resampler whose output is byte-identical to `cwebp`/`dwebp`.
+//! The `RFIX = 32` fixed-point shift, the `fx`/`fy`/`fxy` factor derivation, the import-then-export phase ordering, and the per-channel `u32`/`u64` accumulation all mirror the reference exactly, because an off-by-one in the rounding or the phase order is a visible pixel difference.
 //!
-//! `resize` follows `WebPPictureRescale`'s ARGB path: it black-mattes (premultiplies
-//! the color channels by alpha), rescales all four channels interleaved, then removes
-//! the premultiplication — so translucent edges interpolate the way libwebp's do.
-//! `crop` is an exact byte-window copy. Both are integer-only and deterministic.
+//! `resize` follows `WebPPictureRescale`'s ARGB path: it black-mattes (premultiplies the color channels by alpha), rescales all four channels interleaved, then removes the premultiplication — so translucent edges interpolate the way libwebp's do.
+//! `resize_exact` is the variant `cwebp -resize -exact` runs, keeping the color stored under transparent pixels.
+//! `crop` is an exact byte-window copy.
+//! All are integer-only and deterministic.
 
 use crate::error::{Error, Result};
 use crate::image::{Dimensions, Image, argb_has_alpha, pack_pixels, unpack_pixels};
@@ -26,8 +21,7 @@ const ONE: u64 = 1 << RFIX;
 const ROUNDER: u64 = ONE >> 1;
 
 /// `WEBP_RESCALER_FRAC(numer, denom)`: `numer / denom` in `RFIX` fixed-point,
-/// truncated to `u32` (so an exact `1.0` wraps to `0`, matching the reference — the
-/// callers that can hit it special-case the result).
+/// truncated to `u32` (so an exact `1.0` wraps to `0`, matching the reference — the callers that can hit it special-case the result).
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -68,8 +62,7 @@ fn mult_alpha(x: u8, scale: u32) -> u32 {
     (((u64::from(x) * u64::from(scale)) + u64::from(M_HALF)) >> MFIX) as u32
 }
 
-/// `GetScale(a, inverse)`: the premultiply (`false`) or un-premultiply (`true`)
-/// scale for a non-zero, non-opaque alpha `a`.
+/// `GetScale(a, inverse)`: the premultiply (`false`) or un-premultiply (`true`) scale for a non-zero, non-opaque alpha `a`.
 const fn alpha_scale(a: u32, inverse: bool) -> u32 {
     if inverse {
         (255_u32 << MFIX) / a
@@ -78,8 +71,7 @@ const fn alpha_scale(a: u32, inverse: bool) -> u32 {
     }
 }
 
-/// `WebPMultARGBRow_C` for one native `0xAARRGGBB` pixel: black-matte
-/// (`inverse == false`) or restore (`inverse == true`) the color channels by alpha.
+/// `WebPMultARGBRow_C` for one native `0xAARRGGBB` pixel: black-matte (`inverse == false`) or restore (`inverse == true`) the color channels by alpha.
 /// Opaque and fully-transparent pixels are handled exactly as the reference.
 #[allow(
     clippy::cast_possible_truncation,
@@ -108,8 +100,8 @@ fn mult_argb(argb: u32, inverse: bool) -> u32 {
 // WebPRescaler port (utils/rescaler.c + dsp/rescaler.c generic path)
 
 /// A single-plane fixed-point rescaler over `num_channels` interleaved `u8` lanes,
-/// a direct port of libwebp's `WebPRescaler`. Owns its output plane and the two
-/// `u32` work rows; driven by [`rescale_plane`].
+/// a direct port of libwebp's `WebPRescaler`.
+/// Owns its output plane and the two `u32` work rows; driven by [`rescale_plane`].
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -152,9 +144,7 @@ struct Rescaler {
               fx/fy/fxy factor and A/B/I/J blend names are the reference's own"
 )]
 impl Rescaler {
-    /// `WebPRescalerInit`: derive the increments and fixed-point factors for a
-    /// `src_width x src_height` -> `dst_width x dst_height` rescale of `num_channels`
-    /// interleaved lanes, and allocate the output plane and work rows.
+    /// `WebPRescalerInit`: derive the increments and fixed-point factors for a `src_width x src_height` -> `dst_width x dst_height` rescale of `num_channels` interleaved lanes, and allocate the output plane and work rows.
     fn new(
         src_width: i32,
         src_height: i32,
@@ -231,8 +221,8 @@ impl Rescaler {
     }
 
     /// `WebPRescalerImport`: consume rows from `src` (starting at its first byte,
-    /// advancing `src_stride` per row) until one output row is ready or `num_lines`
-    /// are taken. Returns the number of rows consumed.
+    /// advancing `src_stride` per row) until one output row is ready or `num_lines` are taken.
+    /// Returns the number of rows consumed.
     fn import(&mut self, num_lines: i32, src: &[u8], src_stride: usize) -> i32 {
         let mut total = 0;
         let mut off = 0;
@@ -368,8 +358,7 @@ impl Rescaler {
         }
     }
 
-    /// `WebPRescalerExportRowShrink_C`: vertical area-average, carrying the leftover
-    /// fraction of each column back into `irow` for the next output row.
+    /// `WebPRescalerExportRowShrink_C`: vertical area-average, carrying the leftover fraction of each column back into `irow` for the next output row.
     fn export_row_shrink(&mut self) {
         let x_out_max = self.dst_width as usize * self.num_channels;
         let base = self.dst_y as usize * self.dst_stride;
@@ -390,9 +379,7 @@ impl Rescaler {
         }
     }
 
-    /// The `fxy_scale == 0` special case: `src_height == dst_height`, a 1-wide source
-    /// expanded to at most 2 columns — the fraction cannot be represented, so `irow`
-    /// already holds the exact bytes.
+    /// The `fxy_scale == 0` special case: `src_height == dst_height`, a 1-wide source expanded to at most 2 columns — the fraction cannot be represented, so `irow` already holds the exact bytes.
     fn export_row_special(&mut self) {
         let n = self.num_channels * self.dst_width as usize;
         let base = self.dst_y as usize * self.dst_stride;
@@ -404,8 +391,7 @@ impl Rescaler {
 }
 
 /// Rescale one `num_channels`-interleaved `u8` plane from `src` (packed,
-/// `src_width * num_channels` bytes per row) to a fresh `dst_width x dst_height`
-/// plane, driving the [`Rescaler`] exactly as libwebp's `RescalePlane`.
+/// `src_width * num_channels` bytes per row) to a fresh `dst_width x dst_height` plane, driving the [`Rescaler`] exactly as libwebp's `RescalePlane`.
 #[allow(
     clippy::cast_sign_loss,
     reason = "the driver's dimensions are positive (validated by the caller), so the \
@@ -433,8 +419,7 @@ fn rescale_plane(
 //------------------------------------------------------------------------------
 // Public geometry operations
 
-/// A crop rectangle in source-pixel coordinates: the `width x height` window whose
-/// top-left corner sits at `(x, y)`.
+/// A crop rectangle in source-pixel coordinates: the `width x height` window whose top-left corner sits at `(x, y)`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Rect {
     x: u32,
@@ -444,8 +429,8 @@ pub struct Rect {
 }
 
 impl Rect {
-    /// A crop window of `width x height` pixels with its top-left corner at
-    /// `(x, y)`. The window is validated against the source only at [`Image::crop`].
+    /// A crop window of `width x height` pixels with its top-left corner at `(x, y)`.
+    /// The window is validated against the source only at [`Image::crop`].
     #[must_use]
     pub const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
         Self {
@@ -481,13 +466,11 @@ impl Rect {
     }
 }
 
-/// Copy the exact `rect` sub-window out of `image`, preserving its layout and
-/// metadata and recomputing `has_alpha` over the window.
+/// Copy the exact `rect` sub-window out of `image`, preserving its layout and metadata and recomputing `has_alpha` over the window.
 ///
 /// # Errors
 ///
-/// [`Error::InvalidDimensions`] if the rectangle is empty, or
-/// [`Error::CropOutOfBounds`] if it does not lie fully inside `image`.
+/// [`Error::InvalidDimensions`] if the rectangle is empty, or [`Error::CropOutOfBounds`] if it does not lie fully inside `image`.
 pub(crate) fn crop(image: &Image, rect: Rect) -> Result<Image> {
     if rect.width == 0 || rect.height == 0 {
         return Err(Error::InvalidDimensions);
@@ -525,61 +508,81 @@ pub(crate) fn crop(image: &Image, rect: Rect) -> Result<Image> {
     ))
 }
 
-/// Resize `image` to `target` with the bit-exact [`Rescaler`], following
-/// `WebPPictureRescale`'s ARGB path: premultiply the color channels by alpha, rescale
-/// all four channels, then remove the premultiplication. Layout and metadata carry
-/// through; `has_alpha` is recomputed. Opaque images are unaffected by the matting, so
-/// their color channels rescale directly.
+/// Rescale a native-`0xAARRGGBB` plane through the [`Rescaler`].
+/// Little-endian bytes of `0xAARRGGBB` are `[B, G, R, A]` — the interleaving libwebp rescales when it casts its argb plane to bytes.
 #[allow(
     clippy::cast_possible_wrap,
     reason = "validated Dimensions are in 1..=16384, well within i32, so the u32 -> i32 \
               casts handed to the rescaler never wrap"
 )]
-#[must_use]
-pub(crate) fn resize(image: &Image, target: Dimensions) -> Image {
-    let layout = image.layout();
-    let src_w = image.width();
-    let src_h = image.height();
-
-    // Native ARGB, black-matted so translucent colors interpolate as libwebp's do.
-    let mut argb = unpack_pixels(layout, image.as_bytes());
-    for pixel in &mut argb {
-        *pixel = mult_argb(*pixel, false);
-    }
-    // Little-endian bytes of 0xAARRGGBB are [B, G, R, A] — the exact interleaving
-    // libwebp rescales when it casts its argb plane to bytes.
+fn rescale_argb(argb: &[u32], src_w: u32, src_h: u32, target: Dimensions) -> Vec<u32> {
     let mut src_bytes = Vec::with_capacity(argb.len() * 4);
-    for pixel in &argb {
+    for pixel in argb {
         src_bytes.extend_from_slice(&pixel.to_le_bytes());
     }
-
-    let dst_bytes = rescale_plane(
+    rescale_plane(
         &src_bytes,
         src_w as i32,
         src_h as i32,
         4,
         target.width() as i32,
         target.height() as i32,
-    );
+    )
+    .as_chunks::<4>()
+    .0
+    .iter()
+    .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    .collect()
+}
 
-    let mut out_argb: Vec<u32> = dst_bytes
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect();
-    for pixel in &mut out_argb {
+/// `WebPPictureRescale`'s ARGB path over a native-ARGB plane: black-matte (premultiply the color channels by alpha), rescale all four channels interleaved, then remove the premultiplication.
+/// Opaque pixels pass both matting steps unchanged.
+fn rescale_matted(argb: &[u32], src_w: u32, src_h: u32, target: Dimensions) -> Vec<u32> {
+    let matted: Vec<u32> = argb.iter().map(|&p| mult_argb(p, false)).collect();
+    let mut out = rescale_argb(&matted, src_w, src_h, target);
+    for pixel in &mut out {
         *pixel = mult_argb(*pixel, true);
     }
-    let has_alpha = argb_has_alpha(&out_argb);
-    let out_bytes = pack_pixels(layout, &out_argb);
+    out
+}
+
+/// Rebuild an image around a rescaled ARGB plane, carrying layout and metadata and recomputing `has_alpha`.
+fn rescaled_image(image: &Image, target: Dimensions, argb: &[u32]) -> Image {
+    let layout = image.layout();
     Image::from_parts(
         target,
         layout,
-        out_bytes,
-        has_alpha,
+        pack_pixels(layout, argb),
+        argb_has_alpha(argb),
         image.metadata().clone(),
     )
+}
+
+/// Resize `image` to `target` with the bit-exact [`Rescaler`], following `WebPPictureRescale`'s ARGB path.
+/// Layout and metadata carry through; `has_alpha` is recomputed.
+#[must_use]
+pub(crate) fn resize(image: &Image, target: Dimensions) -> Image {
+    let argb = unpack_pixels(image.layout(), image.as_bytes());
+    let out = rescale_matted(&argb, image.width(), image.height(), target);
+    rescaled_image(image, target, &out)
+}
+
+/// Resize `image` to `target` preserving the color stored under transparent pixels —
+/// `cwebp -resize` under `-exact`.
+/// It rescales a copy whose alpha is forced opaque to get un-weighted color, and keeps the alpha of the ordinary rescale; the opaque copy's own alpha can land a step below 255 and scale its color back up, so the two passes cannot be fused into one un-matted rescale.
+#[must_use]
+pub(crate) fn resize_exact(image: &Image, target: Dimensions) -> Image {
+    let argb = unpack_pixels(image.layout(), image.as_bytes());
+    let (src_w, src_h) = (image.width(), image.height());
+    let alpha = rescale_matted(&argb, src_w, src_h, target);
+    let opaque: Vec<u32> = argb.iter().map(|&p| p | 0xff00_0000).collect();
+    let color = rescale_matted(&opaque, src_w, src_h, target);
+    let out: Vec<u32> = alpha
+        .iter()
+        .zip(&color)
+        .map(|(a, c)| (a & 0xff00_0000) | (c & 0x00ff_ffff))
+        .collect();
+    rescaled_image(image, target, &out)
 }
 
 #[cfg(test)]
@@ -589,7 +592,7 @@ pub(crate) fn resize(image: &Image, target: Dimensions) -> Image {
     reason = "tests: fixed small dimensions and hand-verified reference values"
 )]
 mod tests {
-    use super::{Rect, crop, mult_argb, rescale_plane, resize};
+    use super::{Rect, crop, mult_argb, rescale_plane, resize, resize_exact};
     use crate::image::{Dimensions, Image, PixelLayout};
 
     fn dims(w: u32, h: u32) -> Dimensions {
@@ -610,8 +613,7 @@ mod tests {
 
     #[test]
     fn plane_downscale_two_to_one_is_the_average() {
-        // [100, 200] -> one pixel = round-down average 150 (hand-computed against
-        // the reference's fixed-point path).
+        // [100, 200] -> one pixel = round-down average 150 (hand-computed against the reference's fixed-point path).
         let out = rescale_plane(&[100, 200], 2, 1, 1, 1, 1);
         assert_eq!(out, vec![150]);
     }
@@ -655,6 +657,32 @@ mod tests {
     }
 
     #[test]
+    fn exact_resize_keeps_color_the_matted_resize_blacks_out() {
+        // 2x1 fully transparent, both pixels the same color: matting collapses the color to 0, the exact variant carries it through.
+        let img = Image::new(
+            dims(2, 1),
+            PixelLayout::Rgba8,
+            vec![90, 140, 200, 0, 90, 140, 200, 0],
+        )
+        .unwrap();
+        assert_eq!(resize(&img, dims(1, 1)).as_bytes(), &[0, 0, 0, 0]);
+        assert_eq!(
+            resize_exact(&img, dims(1, 1)).as_bytes(),
+            &[90, 140, 200, 0]
+        );
+    }
+
+    #[test]
+    fn exact_and_matted_resize_agree_on_opaque_pixels() {
+        // Matting is the identity on an opaque plane, so both variants must coincide.
+        let img = opaque(2, 1, &[100, 110, 120, 255, 200, 210, 220, 255]);
+        assert_eq!(
+            resize(&img, dims(1, 1)).as_bytes(),
+            resize_exact(&img, dims(1, 1)).as_bytes()
+        );
+    }
+
+    #[test]
     fn crop_selects_the_window() {
         // 4x4 with a per-pixel first byte = index; crop the inner 2x2 at (1,1).
         let mut pixels = Vec::new();
@@ -689,8 +717,7 @@ mod tests {
 
     #[test]
     fn mult_argb_opaque_and_transparent_are_fixed_points() {
-        // Opaque passes through; fully transparent collapses to 0; the round trip of a
-        // translucent pixel is stable (premultiply then un-premultiply).
+        // Opaque passes through; fully transparent collapses to 0; the round trip of a translucent pixel is stable (premultiply then un-premultiply).
         assert_eq!(mult_argb(0xff11_2233, false), 0xff11_2233);
         assert_eq!(mult_argb(0x0012_3456, false), 0);
         let translucent = 0x8011_2233;
@@ -702,8 +729,8 @@ mod tests {
 
     #[test]
     fn crop_recomputes_alpha_over_the_window() {
-        // A 2x1 image: opaque pixel + translucent pixel. Cropping to just the opaque
-        // one must clear has_alpha.
+        // A 2x1 image: opaque pixel + translucent pixel.
+        // Cropping to just the opaque one must clear has_alpha.
         let img = Image::new(
             dims(2, 1),
             PixelLayout::Rgba8,

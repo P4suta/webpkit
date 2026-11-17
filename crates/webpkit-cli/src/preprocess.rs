@@ -4,7 +4,7 @@
 //! These are not codec knobs. In libwebp `-crop`/`-resize` are `cwebp` tool-side
 //! pixel operations run before the encoder ever sees the image, so this layer does
 //! the same thing in the same place — on a decoded RGBA buffer. Crop is exact byte
-//! selection; resize resamples with the `image` crate's high-quality filter.
+//! selection; resize runs the core's `WebPRescaler` port.
 //!
 //! Two entry points. [`Pipeline::project`] maps input dimensions to output
 //! dimensions with no pixels at all, so an out-of-bounds crop can be refused from a
@@ -12,9 +12,10 @@
 //! agree, and a test pins that they do.
 //!
 //! Both crop and resize delegate to `webpkit`'s core geometry engine — the resize is
-//! the bit-exact `WebPRescaler` port, so the pixels now match libwebp's `cwebp
-//! -resize` byte-for-byte (not just the dimensions). The core is zero-dependency, so
-//! `--resize` works even under `--no-default-features`.
+//! the bit-exact `WebPRescaler` port, so the pixels match libwebp's `cwebp -resize`
+//! byte-for-byte (not just the dimensions), in both the default black-matted mode and
+//! the un-matted one `-exact` selects. The core is zero-dependency, so `--resize`
+//! works even under `--no-default-features`.
 
 use webpkit::{Dimensions, Image};
 
@@ -144,6 +145,7 @@ enum Stage {
 #[derive(Debug, Default)]
 pub(crate) struct Pipeline {
     stages: Vec<Stage>,
+    exact: bool,
 }
 
 impl Pipeline {
@@ -157,7 +159,17 @@ impl Pipeline {
         if let Some(resize) = resize {
             stages.push(Stage::Resize(resize));
         }
-        Self { stages }
+        Self {
+            stages,
+            exact: false,
+        }
+    }
+
+    /// Select the transparency-preserving resampler, mirroring `cwebp -resize -exact`.
+    #[must_use]
+    pub(crate) const fn with_exact(mut self, exact: bool) -> Self {
+        self.exact = exact;
+        self
     }
 
     /// Whether the pipeline is a no-op (no crop and no resize).
@@ -198,7 +210,7 @@ impl Pipeline {
         for stage in &self.stages {
             image = match stage {
                 Stage::Crop(crop) => apply_crop(&image, *crop)?,
-                Stage::Resize(resize) => apply_resize(&image, *resize)?,
+                Stage::Resize(resize) => apply_resize(&image, *resize, self.exact)?,
             };
         }
         Ok(image)
@@ -216,10 +228,15 @@ fn apply_crop(image: &Image, crop: Crop) -> Result<Image, CliError> {
 }
 
 /// Resize `image` to the projected target with the core geometry's bit-exact
-/// `WebPRescaler` port — byte-identical to libwebp's `cwebp -resize`.
-fn apply_resize(image: &Image, resize: Resize) -> Result<Image, CliError> {
+/// `WebPRescaler` port — byte-identical to libwebp's `cwebp -resize`. `exact` selects
+/// the un-matted variant `cwebp` uses under `-exact`.
+fn apply_resize(image: &Image, resize: Resize, exact: bool) -> Result<Image, CliError> {
     let out_dims = resize.project(image.dimensions())?;
-    Ok(image.resize(out_dims))
+    Ok(if exact {
+        image.resize_exact(out_dims)
+    } else {
+        image.resize(out_dims)
+    })
 }
 
 /// Parse a base-10 `u32`, trimming surrounding whitespace.

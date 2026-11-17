@@ -1,7 +1,7 @@
 //! Deterministic algorithmic-work counters: a fixed array of process-global
 //! integer atomics, one slot per instrumented codec hot path.
 //!
-//! Counts are a pure function of encoder input (they tally control-flow events,
+//! Counts are a pure function of codec input (they tally control-flow events,
 //! never wall-clock time), so a [`snapshot`] is a byte-reproducible integer
 //! ledger across platforms, toolchains, AND optimization levels — unlike timing
 //! or peak memory. This module is the third, "work-cost" measurement plane
@@ -9,19 +9,20 @@
 //!
 //! It is compiled only behind the crate's optional `work-count` feature and is
 //! absent from every default/production build. Because the counters are
-//! process-global statics, the driver (xtask `work`) MUST measure one encode at
-//! a time: reset, encode, snapshot. Totals are order-independent (`fetch_add`),
-//! so an in-encode `rayon` region is fine as long as the snapshot is read after
-//! it joins.
+//! process-global statics, the driver (xtask `work`) MUST measure one codec
+//! operation at a time: reset, run, snapshot. Totals are order-independent
+//! (`fetch_add`), so an in-encode `rayon` region is fine as long as the snapshot
+//! is read after it joins.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
 /// One instrumented hot path.
 ///
 /// The discriminant order is load-bearing: it fixes both the index into the
-/// backing `SLOTS` array and the field order of the committed
-/// `corpus/work.json` ledger. Only ever APPEND new variants — never reorder or
-/// remove, or the ledger schema shifts under the drift gate.
+/// backing `SLOTS` array and each snapshot value's mapping to the stable
+/// [`field_names`] keys written to `corpus/work.json`. Only ever APPEND new
+/// variants — never reorder or remove, or the ledger schema shifts under the
+/// drift gate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(usize)]
 pub enum Counter {
@@ -95,10 +96,42 @@ pub enum Counter {
     LoopFilterEdge,
     /// A `yuv::upsample_one_row` fancy-upsample row (decode color conversion).
     UpsampleRow,
+    // ---- lossless codec (DECODE) ----
+    // Append-only despite the semantic grouping: these follow the lossy decode
+    // slots because their discriminants were added later. Moving them beside the
+    // older lossless slots would silently remap every committed ledger value.
+    /// One byte-window shift while refilling the VP8L LSB-first bit reader.
+    Vp8lBitRefill,
+    /// One VP8L Huffman-table symbol lookup (header, nested, or pixel stream).
+    Vp8lHuffmanSymbol,
+    /// A VP8L Huffman lookup that descends from the root into a second-level table.
+    Vp8lHuffmanSecondLevel,
+    /// A meta-Huffman entropy-image group selection for one coded unit.
+    Vp8lEntropySelect,
+    /// One literal pixel committed by the VP8L pixel loop.
+    Vp8lLiteralPixel,
+    /// One VP8L LZ77 back-reference unit committed.
+    Vp8lBackrefUnit,
+    /// One pixel copied by a VP8L LZ77 back-reference (weighted by copy length).
+    Vp8lBackrefPixel,
+    /// One VP8L color-cache lookup.
+    Vp8lCacheLookup,
+    /// One VP8L color-cache insertion (weighted by inserted pixels).
+    Vp8lCacheInsert,
+    /// One pixel reconstructed by the VP8L predictor inverse.
+    Vp8lPredictorPixel,
+    /// One pixel processed by the VP8L cross-color inverse.
+    Vp8lCrossColorPixel,
+    /// One pixel processed by the VP8L subtract-green inverse.
+    Vp8lSubtractGreenPixel,
+    /// One output pixel expanded by the VP8L palette inverse.
+    Vp8lPalettePixel,
+    /// One decoded VP8L ARGB pixel packed into the requested byte layout.
+    Vp8lPackPixel,
 }
 
 /// Number of counter slots — equal to the ledger's integer-field count.
-pub const N: usize = Counter::UpsampleRow as usize + 1;
+pub const N: usize = Counter::Vp8lPackPixel as usize + 1;
 
 // A const-initializable seed for the fixed atomic array. `AtomicU64` has
 // interior mutability, so the const-item lint fires; it is used only to
@@ -113,38 +146,56 @@ const ZERO: AtomicU64 = AtomicU64::new(0);
 static SLOTS: [AtomicU64; N] = [ZERO; N];
 
 impl Counter {
+    #[inline]
+    fn bump_in(self, slots: &[AtomicU64; N]) {
+        slots[self as usize].fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn add_in(self, slots: &[AtomicU64; N], n: u64) {
+        slots[self as usize].fetch_add(n, Ordering::Relaxed);
+    }
+
     /// Add 1 to this counter's slot.
     #[inline]
     pub fn bump(self) {
-        SLOTS[self as usize].fetch_add(1, Ordering::Relaxed);
+        self.bump_in(&SLOTS);
     }
 
     /// Add `n` to this counter's slot (for cost-weighted events such as an
     /// inner loop's trip count).
     #[inline]
     pub fn add(self, n: u64) {
-        SLOTS[self as usize].fetch_add(n, Ordering::Relaxed);
+        self.add_in(&SLOTS, n);
     }
 }
 
-/// Zero every counter slot; call immediately before a measured encode.
-pub fn reset() {
-    for slot in &SLOTS {
+fn reset_slots(slots: &[AtomicU64; N]) {
+    for slot in slots {
         slot.store(0, Ordering::Relaxed);
     }
 }
 
-/// Read every counter slot in [`Counter`] discriminant order.
-///
-/// Call after the measured encode (and after any in-encode parallel region has
-/// joined). The returned array aligns element-for-element with [`field_names`].
-#[must_use]
-pub fn snapshot() -> [u64; N] {
+fn snapshot_slots(slots: &[AtomicU64; N]) -> [u64; N] {
     let mut out = [0u64; N];
-    for (dst, slot) in out.iter_mut().zip(SLOTS.iter()) {
+    for (dst, slot) in out.iter_mut().zip(slots.iter()) {
         *dst = slot.load(Ordering::Relaxed);
     }
     out
+}
+
+/// Zero every counter slot; call immediately before a measured codec operation.
+pub fn reset() {
+    reset_slots(&SLOTS);
+}
+
+/// Read every counter slot in [`Counter`] discriminant order.
+///
+/// Call after the measured operation (and after any in-encode parallel region has joined).
+/// The returned array aligns element-for-element with [`field_names`].
+#[must_use]
+pub fn snapshot() -> [u64; N] {
+    snapshot_slots(&SLOTS)
 }
 
 /// The stable, lowercase field name of each slot in [`Counter`] order.
@@ -187,32 +238,73 @@ pub const fn field_names() -> [&'static str; N] {
         "idct_call",
         "loop_filter_edge",
         "upsample_row",
+        // lossless codec (DECODE)
+        "vp8l_bit_refill",
+        "vp8l_huffman_symbol",
+        "vp8l_huffman_second_level",
+        "vp8l_entropy_select",
+        "vp8l_literal_pixel",
+        "vp8l_backref_unit",
+        "vp8l_backref_pixel",
+        "vp8l_cache_lookup",
+        "vp8l_cache_insert",
+        "vp8l_predictor_pixel",
+        "vp8l_cross_color_pixel",
+        "vp8l_subtract_green_pixel",
+        "vp8l_palette_pixel",
+        "vp8l_pack_pixel",
     ]
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Counter, N, field_names, reset, snapshot};
+    use core::sync::atomic::AtomicU64;
+
+    use super::{Counter, N, field_names, reset_slots, snapshot_slots};
 
     #[test]
     fn field_names_align_with_slot_count() {
+        assert_eq!(N, 43);
         assert_eq!(field_names().len(), N);
     }
 
-    // A single test owns the process-global `SLOTS`, since cargo runs test
-    // functions on parallel threads and separate tests would race on it.
+    #[test]
+    fn vp8l_decode_field_names_align_with_discriminants() {
+        for (counter, name) in [
+            (Counter::Vp8lBitRefill, "vp8l_bit_refill"),
+            (Counter::Vp8lHuffmanSymbol, "vp8l_huffman_symbol"),
+            (Counter::Vp8lHuffmanSecondLevel, "vp8l_huffman_second_level"),
+            (Counter::Vp8lEntropySelect, "vp8l_entropy_select"),
+            (Counter::Vp8lLiteralPixel, "vp8l_literal_pixel"),
+            (Counter::Vp8lBackrefUnit, "vp8l_backref_unit"),
+            (Counter::Vp8lBackrefPixel, "vp8l_backref_pixel"),
+            (Counter::Vp8lCacheLookup, "vp8l_cache_lookup"),
+            (Counter::Vp8lCacheInsert, "vp8l_cache_insert"),
+            (Counter::Vp8lPredictorPixel, "vp8l_predictor_pixel"),
+            (Counter::Vp8lCrossColorPixel, "vp8l_cross_color_pixel"),
+            (Counter::Vp8lSubtractGreenPixel, "vp8l_subtract_green_pixel"),
+            (Counter::Vp8lPalettePixel, "vp8l_palette_pixel"),
+            (Counter::Vp8lPackPixel, "vp8l_pack_pixel"),
+        ] {
+            assert_eq!(field_names()[counter as usize], name);
+        }
+    }
+
+    // Exercise the counter primitives on local slots.
+    // Other all-feature tests legitimately use the process-global work ledger in parallel.
     #[test]
     fn bump_add_and_reset_hit_the_right_slots() {
-        reset();
-        Counter::HistogramPass.bump();
-        Counter::HistogramPass.bump();
-        Counter::MatchCompare.add(40);
-        let snap = snapshot();
+        let slots = core::array::from_fn(|_| AtomicU64::new(0));
+        reset_slots(&slots);
+        Counter::HistogramPass.bump_in(&slots);
+        Counter::HistogramPass.bump_in(&slots);
+        Counter::MatchCompare.add_in(&slots, 40);
+        let snap = snapshot_slots(&slots);
         assert_eq!(snap[Counter::HistogramPass as usize], 2);
         assert_eq!(snap[Counter::MatchCompare as usize], 40);
         assert_eq!(snap[Counter::TokenPartitionWalk as usize], 0);
 
-        reset();
-        assert_eq!(snapshot(), [0u64; N]);
+        reset_slots(&slots);
+        assert_eq!(snapshot_slots(&slots), [0u64; N]);
     }
 }

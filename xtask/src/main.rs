@@ -42,7 +42,10 @@ mod corpus;
 mod fixtures;
 mod ledger;
 mod libwebp;
+mod lint_comments;
 mod metrics;
+mod scoreboard;
+mod surpass;
 mod work;
 
 use metrics::MetricsAction;
@@ -74,6 +77,8 @@ enum Task {
     },
     /// Invoke libwebp `cwebp`/`dwebp` to (re)generate golden fixtures.
     GenFixtures,
+    /// Invoke libwebp `cwebp`/`dwebp` to (re)generate the lossy VP8 decode conformance fixtures (`webpkit-lossy-conformance/fixtures/decode`).
+    GenLossyFixtures,
     /// Sweep the committed image corpus for decoder/encoder regressions.
     ///
     /// Default (gate) mode enforces the hard invariants and fails if the
@@ -126,11 +131,21 @@ enum Task {
         #[arg(long)]
         explain: bool,
     },
+    /// Compare our encoder against libwebp over the synthetic corpus and gate `corpus/vs-libwebp.json`.
+    ///
+    /// The committed, integer-only, drift-gated counterpart of the print-only `metrics --vs-libwebp` aid: our `l9` lossless and `AUTO` lossy sizes plus centi-dB reconstruction PSNR (both outputs decoded by our own decoder) versus `cwebp` on identical inputs.
+    /// Default (gate) mode fails if the committed ledger drifts; `--bless` rewrites it.
+    /// NEEDS libwebp (`cwebp`); it fails closed when that is absent or the wrong version.
+    VsLibwebp {
+        /// Rewrite `corpus/vs-libwebp.json` instead of gating against it.
+        #[arg(long)]
+        bless: bool,
+    },
     /// Measure deterministic algorithmic-work counters and gate `corpus/work.json`.
     ///
     /// The third measurement plane (see `docs/benchmarking.md`): integer
-    /// event-tally counters instrumented in each codec's encode hot paths, a
-    /// toolchain- and profile-independent proxy for time. Default (gate) mode
+    /// event-tally counters instrumented in each codec's encode and decode hot
+    /// paths, a toolchain- and profile-independent proxy for time. Default (gate) mode
     /// fails if the committed ledger drifts from a fresh run; `--bless` rewrites
     /// it. Requires the `work-count` feature (`just work` builds it).
     Work {
@@ -170,6 +185,53 @@ enum Task {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// Fail on narrative / history / measurement-boast phrasing in library and CLI source comments (`crates/webpkit/src`, `crates/webpkit-cli/src`).
+    ///
+    /// A small, conservative set of forbidden phrases: a comment states the constraint/reason in one line; the rationale record belongs in Linear/ADR.
+    /// Prints `file:line [class] text` for each hit and exits non-zero.
+    LintComments,
+    /// Print (never gate) a real-image multi-axis scoreboard of webpkit vs libwebp:
+    /// size, fidelity, encode/decode speed, and webpkit peak memory, rolled up by pixel-derived content category.
+    ///
+    /// Print-only: writes no repo file, bakes in no image path (the directory is a pure runtime argument), and soft-skips when `cwebp` (the source-image reader) is absent.
+    /// libwebp comparison columns need the `scoreboard-libwebp` feature (the in-process libwebp-sys reference); without it only webpkit columns show.
+    /// Size and fidelity are exact; speed is the noisy timing plane (median, never gated); libwebp peak memory is omitted (its C malloc bypasses our allocator).
+    Scoreboard {
+        /// Directory of real images to score (a pure runtime path; nothing is written into it and no path is recorded in the repo).
+        #[arg(long)]
+        real: PathBuf,
+        /// Cap each image's width via cwebp `-resize <max_edge> 0` (aspect preserved); `0` disables resizing (native resolution).
+        #[arg(long, default_value_t = 1024)]
+        max_edge: u32,
+    },
+    /// Run the pinned libwebp surpass campaign comparison and save only anonymous category aggregates to `target/surpass/latest.json`.
+    Surpass {
+        /// Directory of private real images.
+        /// The path and file names are never printed or recorded.
+        #[arg(long)]
+        real: PathBuf,
+        /// Cap each image's longest edge while preserving aspect ratio.
+        #[arg(long, default_value_t = 1024)]
+        max_edge: u32,
+    },
+    /// Internal subprocess used by `surpass` for like-for-like OS peak memory.
+    #[command(hide = true)]
+    SurpassWorker {
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long, default_value_t = 0)]
+        width: u32,
+        #[arg(long, default_value_t = 0)]
+        height: u32,
+        #[arg(long, default_value_t = 0)]
+        quality: u8,
+    },
+    /// Internal Windows worker entry whose request is passed as environment JSON.
+    #[cfg(target_os = "windows")]
+    #[command(hide = true)]
+    SurpassWorkerEnv,
 }
 
 fn main() -> Result<()> {
@@ -177,6 +239,7 @@ fn main() -> Result<()> {
     match cli.command {
         Task::Ci { command } => ci_adapter::run(command),
         Task::GenFixtures => fixtures::gen_fixtures(),
+        Task::GenLossyFixtures => fixtures::gen_lossy_fixtures(),
         Task::CorpusSweep { bless } => corpus::corpus_sweep(bless),
         Task::Metrics {
             bless,
@@ -203,6 +266,7 @@ fn main() -> Result<()> {
                 metrics::metrics(action, vs_libwebp, real, max_edge)
             }
         },
+        Task::VsLibwebp { bless } => metrics::vs_libwebp(bless),
         Task::Work { bless, explain } => work::work(bless, explain),
         Task::BenchReal {
             dir,
@@ -210,5 +274,17 @@ fn main() -> Result<()> {
             iters,
             limit,
         } => bench::bench_real(&dir, max_edge, iters, limit),
+        Task::LintComments => lint_comments::lint_comments(),
+        Task::Scoreboard { real, max_edge } => scoreboard::scoreboard(&real, max_edge),
+        Task::Surpass { real, max_edge } => surpass::surpass(&real, max_edge),
+        Task::SurpassWorker {
+            kind,
+            input,
+            width,
+            height,
+            quality,
+        } => surpass::worker(&kind, &input, width, height, quality),
+        #[cfg(target_os = "windows")]
+        Task::SurpassWorkerEnv => surpass::worker_from_environment(),
     }
 }

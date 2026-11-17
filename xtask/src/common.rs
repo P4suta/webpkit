@@ -25,6 +25,11 @@ pub(crate) fn encode_fixtures_dir(root: &Path) -> PathBuf {
     root.join("crates/webpkit-lossless-conformance/fixtures/encode")
 }
 
+/// Directory holding the lossy (VP8) decode conformance fixtures.
+pub(crate) fn lossy_decode_fixtures_dir(root: &Path) -> PathBuf {
+    root.join("crates/webpkit-lossy-conformance/fixtures/decode")
+}
+
 /// Absolute path to the committed corpus directory (repo root `corpus/`).
 pub(crate) fn corpus_dir(root: &Path) -> PathBuf {
     root.join("corpus")

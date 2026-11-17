@@ -1,0 +1,5 @@
+feature = "no-filter"
+level = "must"
+width = 48
+height = 48
+note = "48x48 synthetic source; input.vp8 via cwebp 1.6.0 `-q 55 -f 0 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"

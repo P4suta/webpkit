@@ -14,31 +14,32 @@ name = "xtask"
 path = "src/main.rs"
 
 [features]
-# Enables the deterministic algorithmic-work counters in both codecs and links
-# the shared counter crate, so the `work` command can produce `corpus/work.json`.
-# Off by default so the `metrics` job builds with zero counter code (keeping its
-# toolchain-sensitive peak-memory numbers undisturbed).
+# Enables the deterministic algorithmic-work counters in both codecs and links the shared counter crate, so the `work` command can produce `corpus/work.json`.
+# Off by default so the `metrics` job builds with zero counter code (keeping its toolchain-sensitive peak-memory numbers undisturbed).
 work-count = ["webpkit/work-count"]
-# Forward the encoder's parallel `Method::Best` evaluator so `bench-real` can time
-# the serial-vs-rayon delta the CLI binaries ship with. Output is byte-identical
-# either way (proven by `cargo test -p webpkit --features rayon`); this
-# only affects wall-clock, never the gated size/work ledgers.
+# Forward the encoder's parallel `Method::Best` evaluator so `bench-real` can time the serial-vs-rayon delta the CLI binaries ship with.
+# Output is byte-identical either way (proven by `cargo test -p webpkit --features rayon`); this only affects wall-clock, never the gated size/work ledgers.
 rayon = ["webpkit/rayon"]
+# Link the in-process libwebp-sys reference so `scoreboard` can time libwebp encode/decode on identical pixel buffers.
+# Off by default so a plain workspace build never compiles the vendored C library; without it the scoreboard prints only the webpkit columns (libwebp size/fidelity/speed show `n/a`).
+scoreboard-libwebp = ["webpkit-libwebp-timing/enabled"]
 
 [dependencies]
 anyhow = { workspace = true }
 cargo_metadata = { workspace = true }
 clap = { workspace = true }
+image = { workspace = true }
+png = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 toml = { workspace = true }
-# Reaches the codec module-first (`webpkit::lossless::…`, `::lossy::…`) for
-# fixture/ledger generation, so it needs the `__internals` tooling feature; the
-# `work-count` feature (work-cost ledger) additionally implies it.
+# Reaches the codec module-first (`webpkit::lossless::…`, `::lossy::…`) for fixture/ledger generation, so it needs the `__internals` tooling feature; the `work-count` feature (work-cost ledger) additionally implies it.
 webpkit = { path = "../crates/webpkit", features = ["__internals"] }
 webpkit-alloc-count = { path = "../crates/webpkit-alloc-count" }
 webpkit-ci-core = { path = "ci-core" }
+# Always present but empty unless the `scoreboard-libwebp` feature turns on its `enabled` feature; isolates the libwebp-sys `unsafe` FFI so xtask stays forbid-unsafe.
+webpkit-libwebp-timing = { path = "../crates/webpkit-libwebp-timing" }
 webpkit-lossless-conformance = { path = "../crates/webpkit-lossless-conformance" }
 webpkit-samples = { path = "../crates/webpkit-samples" }
 

@@ -7,6 +7,7 @@ use crate::lossless::constants::{
     CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, CODE_LENGTH_EXTRA_BITS, CODE_LENGTH_REPEAT_OFFSETS,
     DEFAULT_CODE_LENGTH, HUFFMAN_TABLE_BITS, MAX_ALLOWED_CODE_LENGTH,
 };
+use crate::lossless::work::work;
 
 use crate::lossless::prelude::*;
 
@@ -212,6 +213,7 @@ impl HuffmanTable {
 
     /// Decode one symbol, consuming its bits from `br`.
     pub(crate) fn read_symbol(&self, br: &mut BitReader<'_>) -> u16 {
+        work!(Vp8lHuffmanSymbol);
         let root_index = br.peek_bits(self.root_bits) as usize;
         // `root_index < 1 << root_bits <= arena.len()`: the root table always fills
         // the arena's first `1 << root_bits` slots. The direct index below is the one
@@ -225,6 +227,7 @@ impl HuffmanTable {
             return entry.value;
         }
         // Second-level table.
+        work!(Vp8lHuffmanSecondLevel);
         br.consume(self.root_bits);
         let extra_bits = u32::from(entry.bits) - self.root_bits;
         let sub_index = root_index + entry.value as usize + br.peek_bits(extra_bits) as usize;

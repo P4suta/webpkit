@@ -26,6 +26,7 @@ use crate::lossless::huffman::decode::{HuffmanTable, read_huffman_code};
 use crate::lossless::lz77::{plane_code_to_distance, read_prefix_value};
 use crate::lossless::prelude::*;
 use crate::lossless::transform::{cross_color, palette, predictor, subtract_green};
+use crate::lossless::work::work;
 use crate::lossless::{Codec, Error, Result};
 
 /// A decoded VP8L image: native ARGB pixels (`0xAARRGGBB`), row-major.
@@ -579,6 +580,7 @@ pub(crate) fn decode_one(br: &mut BitReader<'_>, st: &mut PixelCore) -> Result<b
     let group = match st.entropy.as_ref() {
         None => st.groups.first(),
         Some(e) => {
+            work!(Vp8lEntropySelect);
             let pos = st.pos as u32;
             let idx = select_group(Some(e), pos % st.width, pos / st.width).ok_or(
                 Error::InvalidBitstream {
@@ -601,12 +603,14 @@ pub(crate) fn decode_one(br: &mut BitReader<'_>, st: &mut PixelCore) -> Result<b
         if br.is_eos() {
             return Ok(false);
         }
+        work!(Vp8lLiteralPixel);
         let pixel = (u32::from(alpha) << 24)
             | (u32::from(red) << 16)
             | ((code as u32) << 8)
             | u32::from(blue);
         st.argb[st.pos] = pixel;
         if let Some(c) = st.cache.as_mut() {
+            work!(Vp8lCacheInsert);
             c.insert(pixel);
         }
         st.pos += 1;
@@ -623,11 +627,14 @@ pub(crate) fn decode_one(br: &mut BitReader<'_>, st: &mut PixelCore) -> Result<b
                 codec: Codec::Lossless,
             });
         }
+        work!(Vp8lBackrefUnit);
+        work!(Vp8lBackrefPixel, length as u64);
         // Hoist the cache-present test out of the copy loop into two variants, so a
         // long copy pays the `Option` check once, not per copied pixel. Byte-
         // identical: the same values are written and inserted in the same order.
         let end = st.pos + length;
         if let Some(c) = st.cache.as_mut() {
+            work!(Vp8lCacheInsert, length as u64);
             while st.pos < end {
                 let value = st.argb[st.pos - dist];
                 st.argb[st.pos] = value;
@@ -653,8 +660,10 @@ pub(crate) fn decode_one(br: &mut BitReader<'_>, st: &mut PixelCore) -> Result<b
                 codec: Codec::Lossless,
             });
         }
+        work!(Vp8lCacheLookup);
         let value = cache.get(key);
         st.argb[st.pos] = value;
+        work!(Vp8lCacheInsert);
         cache.insert(value);
         st.pos += 1;
     }

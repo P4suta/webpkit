@@ -14,7 +14,8 @@
 //! Fairness: encode is effort-matched (our Fast/Balanced/Best vs libwebp method
 //! 1/4/6) at quality 75 on identical pixels; decode is timed on each codec's own
 //! output (VP8 decode is bit-exact per RFC 6386, so cross-decoding is redundant);
-//! libwebp is called in-process, so there is no CLI startup or file-IO skew.
+//! lossy size compares the `VP8 ` payload on both sides; libwebp is called
+//! in-process, so there is no CLI startup or file-IO skew.
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
@@ -22,16 +23,19 @@
     clippy::cast_possible_wrap,
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::panic,
     clippy::print_stdout,
     clippy::print_stderr,
     reason = "developer measurement example (not shipped library code): it prints \
               its progress and the report path, unwraps on local file I/O, and casts \
-              image dimensions to the libwebp FFI's i32 — all fine for a demo binary"
+              image dimensions to the libwebp FFI's i32; an unexpected reference \
+              codec is a hard measurement failure — all fine for a demo binary"
 )]
 
 use std::hint::black_box;
 use std::time::Instant;
 
+use webpkit::container::reader::{ImageChunk, locate_image};
 use webpkit::lossy::{Dimensions, Effort, ImageRef, LossyConfig, PixelLayout};
 use webpkit_samples::{Content, render};
 
@@ -93,6 +97,10 @@ fn measure(content: Content) -> Row {
     let lw_container = libwebp_encode(&rgb, EDGE, EDGE, f32::from(QUALITY), 6);
     let (lw_rgba, _lww, _lwh) = libwebp_decode(&lw_container);
     let lossy_lw_psnr = psnr_rgb(rgba, &lw_rgba);
+    let lossy_lw_bytes = match locate_image(&lw_container).expect("valid libwebp WebP container") {
+        ImageChunk::Lossy(payload) => payload.len(),
+        ImageChunk::Lossless(_) => panic!("libwebp lossy output unexpectedly contains VP8L"),
+    };
 
     // ---- lossless size (ours deepest effort vs libwebp lossless) ----
     let ll_cfg = webpkit::lossless::EncoderConfig::default()
@@ -128,7 +136,7 @@ fn measure(content: Content) -> Row {
     Row {
         name: content.name(),
         lossy_ours_bytes: ours_payload.len(),
-        lossy_lw_bytes: lw_container.len(),
+        lossy_lw_bytes,
         lossy_ours_psnr,
         lossy_lw_psnr,
         ll_ours_bytes: ll_ours.len(),

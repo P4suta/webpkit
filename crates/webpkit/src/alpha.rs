@@ -278,13 +278,149 @@ pub fn filter_plane(filter: AlphaFilter, plane: &[u8], width: usize, height: usi
     out
 }
 
+/// Correction-table extent for the alpha smoothing fixed-point delta.
+const ALPHA_LEVEL_LUT_SIZE: usize = (1 << 10) - 1;
+
+/// Smooth a level-quantized alpha plane with libwebp's `WebPDequantizeLevels` kernel.
+///
+/// `strength` controls a square radius from `0..=4`.
+/// This keeps libwebp's 16-bit wrapping prefix sums, vertically replicated edge, horizontally mirrored edge, and delayed output rows exactly.
+/// Planes with at most two distinct levels, or whose selected radius is zero, are left unchanged.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the sliding-window state is kept in one function so its update order remains \
+              visibly identical to libwebp's VFilter/HFilter/ApplyFilter sequence"
+)]
+pub(crate) fn dequantize_levels(plane: &mut [u8], width: usize, height: usize, strength: u8) {
+    if width == 0 || height == 0 || width.checked_mul(height) != Some(plane.len()) {
+        return;
+    }
+    let mut radius = 4 * usize::from(strength.min(100)) / 100;
+    radius = radius.min((width - 1) / 2).min((height - 1) / 2);
+    if radius == 0 {
+        return;
+    }
+
+    let mut used = [false; 256];
+    for &value in plane.iter() {
+        used[usize::from(value)] = true;
+    }
+    let levels: Vec<usize> = used
+        .iter()
+        .enumerate()
+        .filter_map(|(level, &present)| present.then_some(level))
+        .collect();
+    if levels.len() <= 2 {
+        return;
+    }
+    let min = levels[0];
+    let max = *levels.last().unwrap_or(&min);
+    let min_dist = levels
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .min()
+        .unwrap_or(max - min);
+
+    // The reference correction LUT is indexed over `average - (value << 2)`, hence `-1023..=1023`.
+    let mut correction = vec![0i16; 1 + 2 * ALPHA_LEVEL_LUT_SIZE];
+    let threshold1 = min_dist << 2;
+    let threshold2 = (3 * threshold1) >> 2;
+    let delta = threshold1 - threshold2;
+    for i in 1..=ALPHA_LEVEL_LUT_SIZE {
+        let c = if i <= threshold2 {
+            i
+        } else if i < threshold1 {
+            threshold2 * (threshold1 - i) / delta
+        } else {
+            0
+        } >> 2;
+        let c = i16::try_from(c).unwrap_or(i16::MAX);
+        correction[ALPHA_LEVEL_LUT_SIZE + i] = c;
+        correction[ALPHA_LEVEL_LUT_SIZE - i] = -c;
+    }
+
+    // Port the reference sliding-window state directly.
+    // `scratch[..end]` is a ring of horizontal prefix rows; `scratch[end..]` is the current vertical sum.
+    // The C implementation intentionally performs all of these operations modulo 16 bits.
+    let source = plane.to_vec();
+    let side = 2 * radius + 1;
+    let scale = (1u32 << 18) / u32::try_from(side * side).unwrap_or(1);
+    let end = side * width;
+    let mut scratch = vec![0u16; (side + 1) * width];
+    let mut average = vec![0u16; width];
+    let mut cur = 0usize;
+    let mut top = end - width;
+    let mut src_y = 0usize;
+    let mut dst_y = 0usize;
+
+    for row in -(isize::try_from(radius).unwrap_or(0))..isize::try_from(height).unwrap_or(0) {
+        let mut sum = 0u16;
+        for x in 0..width {
+            sum = sum.wrapping_add(u16::from(source[src_y * width + x]));
+            let new_value = scratch[top + x].wrapping_add(sum);
+            scratch[end + x] = new_value.wrapping_sub(scratch[cur + x]);
+            scratch[cur + x] = new_value;
+        }
+        top = cur;
+        cur += width;
+        if cur == end {
+            cur = 0;
+        }
+        if row >= 0 && row < isize::try_from(height - 1).unwrap_or(0) {
+            src_y += 1;
+        }
+
+        if row < isize::try_from(radius).unwrap_or(0) {
+            continue;
+        }
+
+        // Horizontal prefix differencing, including the reference's mirrored boundary formulas.
+        let input = &scratch[end..end + width];
+        let mut x = 0usize;
+        while x <= radius {
+            let delta = input[x + radius - 1].wrapping_add(input[radius - x]);
+            average[x] = u16::try_from((u32::from(delta) * scale) >> 16).unwrap_or(u16::MAX);
+            x += 1;
+        }
+        while x < width - radius {
+            let delta = input[x + radius].wrapping_sub(input[x - radius - 1]);
+            average[x] = u16::try_from((u32::from(delta) * scale) >> 16).unwrap_or(u16::MAX);
+            x += 1;
+        }
+        while x < width {
+            let delta = input[width - 1]
+                .wrapping_mul(2)
+                .wrapping_sub(input[2 * width - 2 - radius - x])
+                .wrapping_sub(input[x - radius - 1]);
+            average[x] = u16::try_from((u32::from(delta) * scale) >> 16).unwrap_or(u16::MAX);
+            x += 1;
+        }
+
+        for x in 0..width {
+            let value = usize::from(plane[dst_y * width + x]);
+            if value <= min || value >= max {
+                continue;
+            }
+            let index =
+                isize::try_from(average[x]).unwrap_or(0) - isize::try_from(value << 2).unwrap_or(0);
+            let lut_index =
+                usize::try_from(isize::try_from(ALPHA_LEVEL_LUT_SIZE).unwrap_or(0) + index)
+                    .unwrap_or(ALPHA_LEVEL_LUT_SIZE)
+                    .min(2 * ALPHA_LEVEL_LUT_SIZE);
+            let corrected = i32::try_from(value).unwrap_or(0) + i32::from(correction[lut_index]);
+            plane[dst_y * width + x] = u8::try_from(corrected.clamp(0, 255)).unwrap_or(0);
+        }
+        dst_y += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
 
     use super::{
-        AlphaCompression, AlphaFilter, AlphaHeader, build_header, filter_plane, parse_header,
-        unfilter, unfilter_row,
+        AlphaCompression, AlphaFilter, AlphaHeader, build_header, dequantize_levels, filter_plane,
+        parse_header, unfilter, unfilter_row,
     };
     use crate::error::Error;
 
@@ -490,6 +626,28 @@ mod tests {
             build_header(AlphaCompression::Lossless, AlphaFilter::Gradient, 1) >> 6,
             0
         );
+    }
+
+    #[test]
+    fn dequantized_alpha_smoothing_is_gated_and_deterministic() {
+        let source = vec![
+            0, 0, 0, 0, 0, 0, 64, 64, 64, 0, 0, 64, 128, 64, 0, 0, 64, 64, 64, 0, 0, 0, 0, 0, 0,
+        ];
+        let mut off = source.clone();
+        dequantize_levels(&mut off, 5, 5, 0);
+        assert_eq!(off, source);
+
+        let mut smoothed_a = source.clone();
+        let mut smoothed_b = source.clone();
+        dequantize_levels(&mut smoothed_a, 5, 5, 100);
+        dequantize_levels(&mut smoothed_b, 5, 5, 100);
+        assert_eq!(smoothed_a, smoothed_b);
+        assert_ne!(smoothed_a, source);
+
+        let mut binary = vec![0, 255, 0, 255, 0, 255, 0, 255, 0];
+        let binary_source = binary.clone();
+        dequantize_levels(&mut binary, 3, 3, 100);
+        assert_eq!(binary, binary_source);
     }
 
     proptest! {
