@@ -74,30 +74,35 @@ fn cwebp_near_lossless_rejects_out_of_range() {
 /// column in the reconstructed command line.
 #[test]
 fn cwebp_points_a_caret_at_the_rejected_flag() {
-    // `-map` is a preprocessing knob that stays rejected (unlike `-sns`/`-crop`/`-pre`,
-    // now live).
-    let out = run("cwebp", &["-map", "2", "-o", "-"], vec![]);
+    // `-blend_alpha` composites onto a background color — a pixel-changing preprocessing step this encoder does not model, so it stays a hard error (unlike `-af`/`-map`, now accepted-as-noop).
+    // See ADR-0004.
+    let out = run("cwebp", &["-blend_alpha", "0xffffff", "-o", "-"], vec![]);
     assert_eq!(out.status.code(), Some(2));
     let err = stderr(&out);
 
     // Find the echoed command line and the caret line beneath it, and check the
-    // carets sit *exactly* under `-map`. A substring assertion would tolerate a
+    // carets sit *exactly* under `-blend_alpha`. A substring assertion would tolerate a
     // caret shifted one column right (the actual column becomes a substring of a
     // wider run of spaces), so this compares real offsets.
     let lines: Vec<&str> = err.lines().collect();
     let command = lines
         .iter()
-        .position(|l| l.contains("cwebp -map 2 -o -"))
+        .position(|l| l.contains("cwebp -blend_alpha 0xffffff -o -"))
         .expect("the command line is echoed");
     let caret_line = lines.get(command + 1).expect("a caret line follows");
 
-    let flag_col = lines[command].find("-map").expect("`-map` is in the echo");
+    let flag_col = lines[command]
+        .find("-blend_alpha")
+        .expect("`-blend_alpha` is in the echo");
     let caret_col = caret_line.find('^').expect("a caret is drawn");
-    assert_eq!(caret_col, flag_col, "the caret must start under `-map`");
+    assert_eq!(
+        caret_col, flag_col,
+        "the caret must start under `-blend_alpha`"
+    );
     assert_eq!(
         caret_line.trim(),
-        "^^^^",
-        "exactly four carets, one per character of `-map`: {caret_line:?}"
+        "^^^^^^^^^^^^",
+        "exactly twelve carets, one per character of `-blend_alpha`: {caret_line:?}"
     );
 }
 
@@ -358,6 +363,24 @@ fn pam_2x2_with_alpha() -> Vec<u8> {
     p
 }
 
+fn pam_with_quantizable_alpha(width: u32, height: u32) -> Vec<u8> {
+    let mut pam = format!(
+        "P7\nWIDTH {width}\nHEIGHT {height}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n"
+    )
+    .into_bytes();
+    for y in 0..height {
+        for x in 0..width {
+            pam.extend_from_slice(&[
+                40,
+                80,
+                120,
+                u8::try_from((x * 17 + y * 29) & 0xff).unwrap_or(0),
+            ]);
+        }
+    }
+    pam
+}
+
 /// The 16-byte RGBA body a `dwebp -pam` of a 2x2 image ends with.
 fn pam_alpha_bytes(pam: &[u8]) -> [u8; 4] {
     let body = &pam[pam.len() - 16..];
@@ -563,6 +586,42 @@ fn cwebp_rejects_a_bad_preset_name() {
     assert!(err.contains("preset"), "names the flag: {err:?}");
 }
 
+#[test]
+fn cwebp_image_hint_matches_the_libwebp_token_set() {
+    let ppm = gradient_ppm(16, 16);
+    let baseline = run("cwebp", &["-", "-o", "-", "-q", "80"], ppm.clone());
+    assert!(baseline.status.success(), "baseline failed: {baseline:?}");
+    for hint in ["picture", "photo", "graph"] {
+        let out = run(
+            "cwebp",
+            &["-", "-o", "-", "-q", "80", "-hint", hint],
+            ppm.clone(),
+        );
+        assert!(out.status.success(), "-hint {hint} failed: {out:?}");
+        assert_eq!(
+            out.stdout, baseline.stdout,
+            "-hint {hint} is typed metadata and byte-neutral"
+        );
+    }
+
+    let lossless = run("cwebp", &["-lossless", "-", "-o", "-"], ppm.clone());
+    let lossless_graph = run(
+        "cwebp",
+        &["-lossless", "-hint", "graph", "-", "-o", "-"],
+        ppm.clone(),
+    );
+    assert!(lossless.status.success() && lossless_graph.status.success());
+    assert_eq!(lossless_graph.stdout, lossless.stdout);
+
+    let default = run("cwebp", &["-hint", "default", "-", "-o", "-"], ppm.clone());
+    assert_eq!(default.status.code(), Some(2));
+    assert!(stderr(&default).contains("hint"), "{:?}", stderr(&default));
+
+    let bad = run("cwebp", &["-hint", "diagram", "-", "-o", "-"], ppm);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(stderr(&bad).contains("hint"), "{:?}", stderr(&bad));
+}
+
 /// `-jpeg_like` and `-partition_limit N` are accepted (were rejected) and bias the base
 /// quantizer, changing the output; the neutral `-partition_limit 0` is byte-identical.
 #[test]
@@ -643,37 +702,72 @@ fn cwebp_rejects_blend_alpha() {
     assert!(err.contains("-noalpha"), "{err:?}");
 }
 
-/// `dwebp -dither` is now accepted (not rejected): the strength is range-validated,
-/// and the flag is a documented no-op because this decoder reconstructs exact pixels.
-/// An out-of-range strength is a usage error.
+/// `dwebp -dither` and `-alpha_dither` reach their pixel reconstruction paths.
+/// Strength is range-validated and `-nodither` can explicitly restore the default.
 #[test]
 fn dwebp_dither_is_accepted_and_range_checked() {
-    // 2x2 image encoded, then decoded with `-dither 50`: parsing succeeds (the flag is
-    // no longer a hard rejection) and the decode completes.
-    let raw: Vec<u8> = (0..16u8).collect();
-    let webp = run(
-        "webp",
-        &[
-            "encode",
-            "-",
-            "-o",
-            "-",
-            "--input-format",
-            "raw",
-            "--width",
-            "2",
-            "--height",
-            "2",
-        ],
-        raw,
-    );
-    assert!(webp.status.success());
-    let ok = run(
+    let mut ppm = b"P6\n32 32\n255\n".to_vec();
+    let colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]];
+    for y in 0..32usize {
+        for x in 0..32usize {
+            ppm.extend_from_slice(&colors[(x / 16 + 2 * (y / 16)) % colors.len()]);
+        }
+    }
+    let webp = run("cwebp", &["-", "-o", "-", "-q", "100"], ppm);
+    assert!(webp.status.success(), "fixture encode failed: {webp:?}");
+    let plain = run("dwebp", &["-", "-o", "-", "-pam"], webp.stdout.clone());
+    let dithered = run(
         "dwebp",
-        &["-dither", "50", "-", "-o", "-", "-pam"],
+        &["-dither", "100", "-", "-o", "-", "-pam"],
+        webp.stdout.clone(),
+    );
+    assert!(plain.status.success() && dithered.status.success());
+    assert_ne!(
+        plain.stdout, dithered.stdout,
+        "-dither must change a rich-chroma fixture"
+    );
+    let yuv_plain = run("dwebp", &["-", "-o", "-", "-yuv"], webp.stdout.clone());
+    let yuv_dithered = run(
+        "dwebp",
+        &["-dither", "100", "-", "-o", "-", "-yuv"],
+        webp.stdout.clone(),
+    );
+    assert!(yuv_plain.status.success() && yuv_dithered.status.success());
+    assert_ne!(
+        yuv_plain.stdout, yuv_dithered.stdout,
+        "-dither must reach native YUV output"
+    );
+    let disabled = run(
+        "dwebp",
+        &["-dither", "100", "-nodither", "-", "-o", "-", "-pam"],
         webp.stdout,
     );
-    assert!(ok.status.success(), "-dither must be accepted: {ok:?}");
+    assert_eq!(
+        disabled.stdout, plain.stdout,
+        "-nodither restores strength zero"
+    );
+
+    let alpha_webp = run(
+        "cwebp",
+        &["-", "-o", "-", "-q", "90", "-alpha_q", "30"],
+        pam_with_quantizable_alpha(17, 19),
+    );
+    assert!(alpha_webp.status.success(), "alpha encode: {alpha_webp:?}");
+    let alpha_plain = run(
+        "dwebp",
+        &["-", "-o", "-", "-pam"],
+        alpha_webp.stdout.clone(),
+    );
+    let alpha_dithered = run(
+        "dwebp",
+        &["-alpha_dither", "-", "-o", "-", "-pam"],
+        alpha_webp.stdout,
+    );
+    assert!(alpha_plain.status.success() && alpha_dithered.status.success());
+    assert_ne!(
+        alpha_plain.stdout, alpha_dithered.stdout,
+        "-alpha_dither must smooth a level-quantized ALPH plane"
+    );
 
     // A strength above 100 is an honest usage error.
     let bad = run("dwebp", &["-dither", "200", "-", "-o", "-"], vec![0; 16]);

@@ -1,0 +1,5 @@
+feature = "mb-aligned-detail"
+level = "must"
+width = 64
+height = 64
+note = "64x64 synthetic source; input.vp8 via cwebp 1.6.0 `-q 30 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"

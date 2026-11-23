@@ -547,7 +547,11 @@ fn plan_segmentation(
         }
     }
     let (seg_ids, count, seg_a) = kmeans_segments(&activity, nb);
-    let seg_base_q = segment_base_qs(base_q, count, seg_a, tuning.sns_strength);
+    let mut pop = [0i64; 4];
+    for &s in &seg_ids {
+        pop[usize::from(s)] += 1;
+    }
+    let seg_base_q = segment_base_qs(base_q, count, seg_a, pop, tuning.sns_strength);
     // If the SNS deltas collapse every segment to the same quantizer (uniform activity,
     // or the deltas cancel), segmentation buys nothing but header bytes — fall back.
     if count <= 1 || seg_base_q[..count].iter().all(|&q| q == base_q) {
@@ -763,18 +767,49 @@ fn smooth_segment_map(seg_ids: &mut [u8], mb_w: usize, mb_h: usize) {
 }
 
 /// Map each of the `count` segments' representative activity to a base quantizer index
-/// by the zero-centered SNS delta ([`sns_quant_delta`]) at `sns_strength`: a flat
-/// (low-activity) segment is coded finer (negative delta), a busy one coarser (positive
-/// delta), anchored on `base_q` and clamped into `0..=127`. A mid-activity segment or a
-/// zero strength leaves the quantizer at `base_q`. Unused segments (`count..4`) keep
-/// `base_q`.
-fn segment_base_qs(base_q: i32, count: usize, seg_a: [i64; 4], sns_strength: u8) -> [i32; 4] {
-    let mut qs = [base_q; 4];
-    for (q, &a) in qs.iter_mut().take(count).zip(&seg_a) {
+/// by the zero-centered SNS delta ([`sns_quant_delta`]) at `sns_strength`, then subtract
+/// the `pop`-weighted mean delta so the allocation redistributes bits *around* `base_q`
+/// (mean-preserving) rather than dragging the whole frame finer or coarser. A flat
+/// (low-activity) segment is coded finer relative to the frame mean and a busy one
+/// coarser, anchored on `base_q` and clamped into `0..=127`. A zero strength, a
+/// single populated segment, or activities that share the mean leaves every quantizer at
+/// `base_q`. Unused segments (`count..4`) keep `base_q`.
+fn segment_base_qs(
+    base_q: i32,
+    count: usize,
+    seg_a: [i64; 4],
+    pop: [i64; 4],
+    sns_strength: u8,
+) -> [i32; 4] {
+    let mut deltas = [0i32; 4];
+    for (d, &a) in deltas.iter_mut().take(count).zip(&seg_a) {
         let activity = u8::try_from(a.clamp(0, 255)).unwrap_or(NEUTRAL_ACTIVITY);
-        *q = (base_q + sns_quant_delta(activity, sns_strength)).clamp(0, 127);
+        *d = sns_quant_delta(activity, sns_strength);
+    }
+    // Population-weighted mean delta: the neutral point is the frame's own mean macroblock, so segmentation only shifts bits between segments.
+    let mut wsum = 0i64;
+    let mut psum = 0i64;
+    for (&d, &p) in deltas.iter().take(count).zip(&pop) {
+        wsum += i64::from(d) * p;
+        psum += p;
+    }
+    let mean_delta = round_div(wsum, psum);
+    let mut qs = [base_q; 4];
+    for (q, &d) in qs.iter_mut().take(count).zip(&deltas) {
+        *q = (base_q + d - mean_delta).clamp(0, 127);
     }
     qs
+}
+
+/// Round-to-nearest signed integer division (ties away from zero), or `0` when `den <= 0`.
+/// Used to re-anchor the segment quantizer deltas on their population-weighted mean without floating point.
+fn round_div(num: i64, den: i64) -> i32 {
+    if den <= 0 {
+        return 0;
+    }
+    let half = den / 2;
+    let adjusted = if num >= 0 { num + half } else { num - half };
+    i32::try_from(adjusted / den).unwrap_or(0)
 }
 
 /// Derive the three segment-id decision-tree probabilities from the segment
@@ -3912,8 +3947,8 @@ gradient fast 190 fdbe0b6ce4ec645c
 gradient balanced 89 44cc4831e2b014b5
 gradient best 113 f507b9cd3a89366e
 noisy fast 7975 f970e253b081638d
-noisy balanced 3551 01eb533d4d1d4989
-noisy best 3157 2a63efd863fa841d
+noisy balanced 4357 d27ae40306795729
+noisy best 3913 1b804c5c8c70baaa
 flat fast 40 66b6a4ee87e184a3
 flat balanced 39 2f5a1f125c0a5180
 flat best 39 2f5a1f125c0a5180
@@ -3924,14 +3959,14 @@ stripe fast 1680 145aef26907ace38
 stripe balanced 322 d0284fcbb5c77800
 stripe best 118 00cc0a30e8a48b20
 diagonal fast 415 46ac66199192122b
-diagonal balanced 274 54c3293234733cd4
-diagonal best 337 462b55975bc359f2
+diagonal balanced 253 3c79a794ba1aa9ee
+diagonal best 337 684b11c7b468114e
 mixed fast 4363 13644d2cc4723cd5
 mixed balanced 1953 656fe4c084dd5c45
 mixed best 2044 c347fc85c019f5f0
 horizontal fast 667 81e58ac967acf023
-horizontal balanced 278 b98f0c9e1dfbcc25
-horizontal best 213 2e6a76a653010c3a";
+horizontal balanced 208 89cea00148cb7d12
+horizontal best 170 0432775a38b69227";
 
     /// Golden exact-encode test — THE high-leverage encoder-decision net. Encodes a
     /// diverse set of fixed images (smooth gradient, AC-rich noise, flat blocks,
@@ -4081,13 +4116,22 @@ horizontal best 213 2e6a76a653010c3a";
         // tree_prob(1, 2) = (1*255/2).clamp(1,255) = 127. Pins the `* 255 / total`
         // scaling and the constant-return mutants.
         assert_eq!(super::tree_prob(1, 2), 127, "tree_prob(1,2)");
-        // segment_base_qs: 2 segments with mean activity {64, 192} around base_q 40 at
-        // sns 100. sns_quant_delta = (activity-128)*100/512: flat 64 -> -12 (q 28),
-        // busy 192 -> +12 (q 52). Pins the zero-centered SNS delta end to end.
+        // segment_base_qs: 2 equal-population segments with mean activity {64, 192}
+        // around base_q 40 at sns 100.
+        // sns_quant_delta = (activity-128)*100/512: flat 64 -> -12, busy 192 -> +12; the pop-weighted mean delta is 0, so q = {28, 52}.
         assert_eq!(
-            super::segment_base_qs(40, 2, [64, 192, 0, 0], 100),
+            super::segment_base_qs(40, 2, [64, 192, 0, 0], [1, 1, 0, 0], 100),
             [28, 52, 40, 40],
-            "per-segment SNS base quantizers"
+            "per-segment SNS base quantizers (equal populations)"
+        );
+        // Unequal populations re-anchor on the frame mean: deltas {-12, +12}, pop {3, 1}
+        // → mean delta round(-24/4) = -6, so both segments shift +6 coarser to {34, 58},
+        // whose pop-weighted mean (34*3 + 58) / 4 = 40 = base_q.
+        // Pins mean preservation.
+        assert_eq!(
+            super::segment_base_qs(40, 2, [64, 192, 0, 0], [3, 1, 0, 0], 100),
+            [34, 58, 40, 40],
+            "mean-preserving per-segment SNS base quantizers"
         );
     }
 
@@ -4241,8 +4285,8 @@ horizontal best 213 2e6a76a653010c3a";
         };
         let (_p0, _t, default_total, optimized_total, _probas) =
             emit_best_partitions(&mb_plans, mb_w, mb_h, header, skip);
-        assert_eq!(default_total, 4979, "default candidate byte-length sum");
-        assert_eq!(optimized_total, 3538, "optimized candidate byte-length sum");
+        assert_eq!(default_total, 6378, "default candidate byte-length sum");
+        assert_eq!(optimized_total, 4343, "optimized candidate byte-length sum");
     }
 
     #[test]
@@ -4470,10 +4514,10 @@ horizontal best 213 2e6a76a653010c3a";
     /// under each of those mutations. Regenerate by running this test (it prints the
     /// actual table on mismatch) and pasting the block.
     const RD_GOLDEN_EXPECTED: &str = "\
-rd_rx0_ry5_d0_q48 c03bd74b0b752939
+rd_rx0_ry5_d0_q48 aa526e23c605dde9
 rd_rx1_ry0_d0_q8 2dbc60b6031d7af4
 rd_rx0_ry2_d0_q24 b6e5b4d5e6bc4ab2
-rd_rx0_ry5_d60_q24 a788b70bb1dfc28e";
+rd_rx0_ry5_d60_q24 9755bd280cef64b9";
 
     #[test]
     fn rd_cost_arithmetic_golden() {

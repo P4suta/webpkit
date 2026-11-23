@@ -1704,6 +1704,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "webpkit-libwebp-timing"
+version = "0.1.0"
+dependencies = [
+ "libwebp-sys",
+]
+
+[[package]]
 name = "webpkit-lossless-conformance"
 version = "0.1.0"
 dependencies = [
@@ -1820,6 +1827,8 @@ dependencies = [
  "anyhow",
  "cargo_metadata",
  "clap",
+ "image",
+ "png",
  "serde",
  "serde_json",
  "tempfile",
@@ -1827,6 +1836,7 @@ dependencies = [
  "webpkit",
  "webpkit-alloc-count",
  "webpkit-ci-core",
+ "webpkit-libwebp-timing",
  "webpkit-lossless-conformance",
  "webpkit-samples",
  "yaml-rust2",

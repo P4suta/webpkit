@@ -3,6 +3,8 @@
 //! `forward` ports libwebp `SubtractGreenFromBlueAndRed_C`; `inverse` ports
 //! `AddGreenToBlueAndRed_C`.
 
+use crate::lossless::work::work;
+
 /// Subtract-green forward: subtract the green channel from red and blue.
 ///
 /// Green and alpha are left unchanged. Each channel is subtracted independently
@@ -30,6 +32,7 @@ pub(crate) fn inverse(pixels: &mut [u32]) {
 /// the whole-buffer [`inverse`]. Because the transform is pointwise, looping
 /// this over every row reproduces [`inverse`] byte-for-byte (proven in tests).
 pub(crate) fn inverse_row(row: &mut [u32]) {
+    work!(Vp8lSubtractGreenPixel, row.len() as u64);
     for pixel in row.iter_mut() {
         let green = (*pixel >> 8) & 0xff;
         let red_blue = (*pixel & 0x00ff_00ff).wrapping_add((green << 16) | green) & 0x00ff_00ff;

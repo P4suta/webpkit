@@ -1,0 +1,5 @@
+feature = "col-edge"
+level = "must"
+width = 1
+height = 63
+note = "1x63 synthetic source; input.vp8 via cwebp 1.6.0 `-q 75 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"

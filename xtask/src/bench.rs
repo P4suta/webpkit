@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use crate::libwebp::{check_version, cwebp_bin, run_cwebp};
+use crate::libwebp::{check_version, cwebp_bin, run_cwebp, run_cwebp_resized};
 
 /// One real-image directory entry decoded to ARGB, ready for measurement.
 ///
@@ -92,6 +92,123 @@ pub(crate) fn prepare_real_images(
         }));
     }
     Ok(prepared)
+}
+
+/// Prepare real images with the longest dimension capped to `max_edge`.
+///
+/// Header-only readers establish native dimensions for supported source formats.
+/// Oversized landscape images are then width-capped and oversized portrait images are height-capped, with the other dimension left at zero so cwebp preserves aspect ratio.
+/// An unknown header format falls back to one native cwebp pass and,
+/// only when oversized, one resized pass.
+/// No source name is needed by the `surpass` consumer.
+pub(crate) fn prepare_real_images_max_edge(
+    cwebp: &str,
+    real: &Path,
+    max_edge: u32,
+) -> Result<Vec<RealPrep>> {
+    let directory =
+        std::fs::read_dir(real).with_context(|| format!("reading {}", real.display()))?;
+    let mut files = Vec::new();
+    for entry in directory {
+        let path = entry.context("reading real-image directory entry")?.path();
+        if path.is_file() && is_real_image_path(&path) {
+            files.push(path);
+        }
+    }
+    files.sort();
+
+    let tmp = tempfile::tempdir().context("creating tempdir for real-image preparation")?;
+    let out_webp = tmp.path().join("out.webp");
+    let mut prepared = Vec::with_capacity(files.len());
+    for path in &files {
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map_or_else(|| "<non-utf8>".to_owned(), str::to_owned);
+        let known_dimensions = source_dimensions(path);
+        let resize = known_dimensions
+            .and_then(|(width, height)| longest_edge_resize(width, height, max_edge));
+        if run_cwebp_resized(cwebp, path, &out_webp, resize).is_err() {
+            prepared.push(RealPrep::Skipped { name });
+            continue;
+        }
+        let mut webp_bytes = std::fs::read(&out_webp).context("reading anonymous prepared WebP")?;
+        let (mut dims, mut rgba) = webpkit::lossless::decode_rgba(&webp_bytes)?;
+        // Unknown formats retain the old two-pass fallback: cwebp establishes dimensions once, then only oversized inputs are encoded a second time.
+        if known_dimensions.is_none()
+            && let Some(target) = longest_edge_resize(dims.width(), dims.height(), max_edge)
+        {
+            if run_cwebp_resized(cwebp, path, &out_webp, Some(target)).is_err() {
+                prepared.push(RealPrep::Skipped { name });
+                continue;
+            }
+            webp_bytes = std::fs::read(&out_webp).context("reading anonymous resized WebP")?;
+            (dims, rgba) = webpkit::lossless::decode_rgba(&webp_bytes)?;
+        }
+        prepared.push(RealPrep::Ready(RealImage {
+            name,
+            dims,
+            rgba,
+            cwebp_size: u64::try_from(webp_bytes.len()).unwrap_or(u64::MAX),
+        }));
+    }
+    Ok(prepared)
+}
+
+fn is_real_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "jpg"
+                    | "jpeg"
+                    | "png"
+                    | "webp"
+                    | "tif"
+                    | "tiff"
+                    | "bmp"
+                    | "pam"
+                    | "pgm"
+                    | "ppm"
+                    | "pnm"
+            )
+        })
+}
+
+/// Read only source dimensions, avoiding a full-resolution lossless cwebp pass.
+fn source_dimensions(path: &Path) -> Option<(u32, u32)> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "webp" => {
+            let bytes = std::fs::read(path).ok()?;
+            let info = webpkit::probe(&bytes).ok()?;
+            Some((info.dimensions.width(), info.dimensions.height()))
+        },
+        "png" => {
+            let file = std::fs::File::open(path).ok()?;
+            let reader = png::Decoder::new(std::io::BufReader::new(file))
+                .read_info()
+                .ok()?;
+            Some((reader.info().width, reader.info().height))
+        },
+        _ => image::ImageReader::open(path)
+            .ok()?
+            .with_guessed_format()
+            .ok()?
+            .into_dimensions()
+            .ok(),
+    }
+}
+
+fn longest_edge_resize(width: u32, height: u32, max_edge: u32) -> Option<(u32, u32)> {
+    if max_edge == 0 || width.max(height) <= max_edge {
+        None
+    } else if width >= height {
+        Some((max_edge, 0))
+    } else {
+        Some((0, max_edge))
+    }
 }
 
 /// Run `op` `iters` times, returning the fastest wall-clock duration (min = least
@@ -240,4 +357,27 @@ pub(crate) fn bench_real(real: &Path, max_edge: u32, iters: u32, limit: usize) -
         println!("  (no comparable images in {})", real.display());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{is_real_image_path, longest_edge_resize};
+
+    #[test]
+    fn longest_edge_resize_selects_the_oversized_axis() {
+        assert_eq!(longest_edge_resize(2049, 1025, 1024), Some((1024, 0)));
+        assert_eq!(longest_edge_resize(1025, 2049, 1024), Some((0, 1024)));
+        assert_eq!(longest_edge_resize(17, 31, 1024), None);
+        assert_eq!(longest_edge_resize(2049, 1025, 0), None);
+    }
+
+    #[test]
+    fn real_image_filter_ignores_unrelated_directory_entries() {
+        assert!(is_real_image_path(Path::new("input.JPEG")));
+        assert!(is_real_image_path(Path::new("input.webp")));
+        assert!(!is_real_image_path(Path::new("notes.txt")));
+        assert!(!is_real_image_path(Path::new("README")));
+    }
 }

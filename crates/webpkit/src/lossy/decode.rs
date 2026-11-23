@@ -58,6 +58,8 @@ pub(crate) struct QuantMatrix {
     pub(crate) y2: [i32; 2],
     /// Chroma dequant factors.
     pub(crate) uv: [i32; 2],
+    /// Raw chroma AC quantizer index (`0..=127`), retained for dithering.
+    pub(crate) uv_quant: i32,
 }
 
 /// Frame-persistent entropy-coding probabilities (RFC §13, libwebp `VP8Proba`).
@@ -231,7 +233,16 @@ impl Frame {
 /// # Errors
 ///
 /// [`Error::Truncated`] / [`Error::InvalidBitstream`] for a malformed stream.
+#[cfg(any(test, feature = "oracle"))]
 pub(crate) fn reconstruct_to_planes(payload: &[u8]) -> Result<(Planes, usize, usize)> {
+    reconstruct_to_planes_with_dithering(payload, 0)
+}
+
+/// Like [`reconstruct_to_planes`], with deterministic libwebp-compatible chroma dithering applied after the in-loop filter.
+pub(crate) fn reconstruct_to_planes_with_dithering(
+    payload: &[u8],
+    dithering_strength: u8,
+) -> Result<(Planes, usize, usize)> {
     let fh = FrameHeader::parse_key_frame(payload)?;
     let (width, height) = (usize::from(fh.width), usize::from(fh.height));
     let mut frame = Frame::new(fh)?;
@@ -258,6 +269,7 @@ pub(crate) fn reconstruct_to_planes(payload: &[u8]) -> Result<(Planes, usize, us
     let fstrengths = reconstruct::compute_fstrengths(&frame.segment, &frame.filter);
     let use_skip = frame.proba.use_skip;
     let mut finfo = vec![FInfo::default(); frame.mb_w * frame.mb_h];
+    let mut dither = vec![0u8; frame.mb_w * frame.mb_h];
 
     // Walk the macroblock grid: parse each row's modes (partition 0) and residual
     // coefficients (the row's token partition), then reconstruct the row.
@@ -282,6 +294,11 @@ pub(crate) fn reconstruct_to_planes(payload: &[u8]) -> Result<(Planes, usize, us
             reconstruct::reconstruct_mb(&mut planes, block, mb_x, mb_y, frame.mb_w);
             finfo[mb_y * frame.mb_w + mb_x] =
                 reconstruct::resolve_finfo(fstrengths, block, use_skip);
+            dither[mb_y * frame.mb_w + mb_x] = reconstruct::chroma_dither_amplitude(
+                frame.dqm[usize::from(block.segment)].uv_quant,
+                block.non_zero_uv,
+                dithering_strength,
+            );
         }
         frame.init_scanline();
     }
@@ -293,6 +310,7 @@ pub(crate) fn reconstruct_to_planes(payload: &[u8]) -> Result<(Planes, usize, us
         frame.mb_h,
         frame.filter_type,
     );
+    reconstruct::dither_chroma(&mut planes, &dither, frame.mb_w, frame.mb_h);
     Ok((planes, width, height))
 }
 
@@ -302,8 +320,16 @@ pub(crate) fn reconstruct_to_planes(payload: &[u8]) -> Result<(Planes, usize, us
 /// # Errors
 ///
 /// [`Error::Truncated`] / [`Error::InvalidBitstream`] for a malformed stream.
+#[cfg(test)]
 pub(crate) fn decode_frame(payload: &[u8]) -> Result<Image> {
     let (planes, width, height) = reconstruct_to_planes(payload)?;
+    reconstruct::to_image(&planes, width, height)
+}
+
+/// Decode a VP8 key frame with explicit chroma dithering strength.
+pub(crate) fn decode_frame_with_dithering(payload: &[u8], dithering_strength: u8) -> Result<Image> {
+    let (planes, width, height) =
+        reconstruct_to_planes_with_dithering(payload, dithering_strength)?;
     reconstruct::to_image(&planes, width, height)
 }
 

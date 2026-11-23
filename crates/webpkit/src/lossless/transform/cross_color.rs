@@ -119,6 +119,7 @@ pub(crate) fn inverse_row(row: &mut [u32], y: usize, bits: u32, tile_data: &[u32
     if width == 0 {
         return;
     }
+    work!(Vp8lCrossColorPixel, u64::from(width));
     let tiles_per_row = subsample_size(width, bits) as usize;
     let tile_row = (y >> bits) * tiles_per_row;
     // All pixels in `[tx<<bits, (tx+1)<<bits)` share one tile code, so walk the row

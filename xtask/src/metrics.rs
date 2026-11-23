@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use webpkit::container::reader::{ImageChunk, locate_image};
 
 use crate::bench::{RealImage, RealPrep, prepare_real_images};
 use crate::common::{
@@ -14,7 +15,9 @@ use crate::common::{
 };
 use crate::fixtures::write_png;
 use crate::ledger::{FieldDelta, load_ledger, print_field_deltas};
-use crate::libwebp::{check_version, cwebp_bin, run_cwebp, run_cwebp_lossy};
+use crate::libwebp::{
+    check_version, cwebp_bin, run_cwebp, run_cwebp_lossy, verify_cwebp_image_hint,
+};
 
 /// One committed compression-metric row: the encoded size and integer
 /// compression ratio for one synthetic sample image at one encoder method.
@@ -710,7 +713,7 @@ fn explain_lossy_metrics(committed: &LossyMetricsLedger, fresh: &LossyMetricsLed
 /// crate forbids floating point (bit-determinism), but xtask is a CLI boundary,
 /// not the codec, so the `f64` PSNR math is allowed here (as in that test crate).
 /// `99.0` denotes an identical pair (the squared-error sum is integer-valued).
-fn psnr_rgb(a: &[u8], b: &[u8]) -> f64 {
+pub(crate) fn psnr_rgb(a: &[u8], b: &[u8]) -> f64 {
     let mut se = 0.0f64;
     let mut n = 0.0f64;
     for (pa, pb) in a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0) {
@@ -750,25 +753,11 @@ fn sse_rgb(a: &[u8], b: &[u8]) -> u64 {
 /// Extract the payload of the first `VP8 ` chunk from a RIFF/WEBP container, so a
 /// (container-wrapped) `cwebp` lossy file can be decoded by `webpkit::lossy::decode`,
 /// which consumes a bare VP8 key-frame payload. Chunks are padded to even size.
-fn extract_vp8_chunk(webp: &[u8]) -> Result<Vec<u8>> {
-    if webp.len() < 12 || &webp[0..4] != b"RIFF" || &webp[8..12] != b"WEBP" {
-        bail!("cwebp output is not a RIFF/WEBP container");
+pub(crate) fn extract_vp8_chunk(webp: &[u8]) -> Result<&[u8]> {
+    match locate_image(webp)? {
+        ImageChunk::Lossy(payload) => Ok(payload),
+        ImageChunk::Lossless(_) => bail!("cwebp lossy output contains VP8L, not VP8"),
     }
-    let mut off = 12;
-    while off + 8 <= webp.len() {
-        let size = u32::from_le_bytes([webp[off + 4], webp[off + 5], webp[off + 6], webp[off + 7]])
-            as usize;
-        let start = off + 8;
-        let end = start.checked_add(size).context("VP8 chunk size overflow")?;
-        if end > webp.len() {
-            bail!("truncated WEBP chunk");
-        }
-        if &webp[off..off + 4] == b"VP8 " {
-            return Ok(webp[start..end].to_vec());
-        }
-        off = end + (size & 1); // pad to the next even offset
-    }
-    bail!("no `VP8 ` chunk in cwebp output (unexpected extended container)")
 }
 
 /// Gate / bless / explain the committed lossy size+quality ledger
@@ -904,7 +893,7 @@ fn compare_lossy_vs_libwebp() -> Result<()> {
                 .with_context(|| format!("reading {}", out_webp.display()))?;
             let cwebp_vp8 = extract_vp8_chunk(&cwebp_file)?;
             let cwebp_bytes = cwebp_vp8.len() as u64;
-            let cwebp_psnr = psnr_rgb(&sample.rgba, webpkit::lossy::decode(&cwebp_vp8)?.as_bytes());
+            let cwebp_psnr = psnr_rgb(&sample.rgba, webpkit::lossy::decode(cwebp_vp8)?.as_bytes());
 
             println!(
                 "  {id:<14} {q:>3} {ours_bytes:>10} {ours_psnr:>8.2} {cwebp_bytes:>11} {cwebp_psnr:>9.2}"
@@ -980,7 +969,7 @@ fn classify_real(rgba: &[u8]) -> RealCategory {
 /// BT.601; alpha is ignored (the lossy codec drops it); pixels beyond the last full
 /// 8×8 block (a partial right/bottom strip) are not windowed. An image smaller than
 /// one window scores `1.0` (no measurable structural loss).
-fn ssim_rgb(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
+pub(crate) fn ssim_rgb(a: &[u8], b: &[u8], width: usize, height: usize) -> f64 {
     // Stabilizers from the standard SSIM definition at 8-bit dynamic range L = 255:
     // C1 = (0.01 L)^2, C2 = (0.03 L)^2.
     const C1: f64 = 6.5025;
@@ -1165,7 +1154,7 @@ fn compare_lossy_vs_libwebp_real(real: &Path, max_edge: u32) -> Result<()> {
             let cwebp_file = std::fs::read(&out_webp)
                 .with_context(|| format!("reading {}", out_webp.display()))?;
             let cwebp_vp8 = extract_vp8_chunk(&cwebp_file)?;
-            let cwebp_dec = webpkit::lossy::decode(&cwebp_vp8)?;
+            let cwebp_dec = webpkit::lossy::decode(cwebp_vp8)?;
 
             let a = &mut acc[qi][cat.idx()];
             a.n += 1;
@@ -1208,4 +1197,290 @@ fn compare_lossy_vs_libwebp_real(real: &Path, max_edge: u32) -> Result<()> {
         println!("  ({skipped} non-image file(s) skipped)");
     }
     Ok(())
+}
+
+/// Deep-effort lossless is capped to `edge <= 256` for the per-image `cwebp` shell-out runtime, mirroring the `--vs-libwebp` print aid's cap.
+const VS_LOSSLESS_MAX_EDGE: u32 = 256;
+
+/// PSNR (RGB dB) as a fixed-point centi-dB integer (`round(dB * 100)`), so the committed comparison ledger carries no float and renders identical bytes.
+#[expect(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    reason = "psnr_rgb is in [0.0, 99.0]; *100 rounds into [0, 9900] — non-negative, fits u64"
+)]
+fn psnr_centidb(a: &[u8], b: &[u8]) -> u64 {
+    (psnr_rgb(a, b) * 100.0).round() as u64
+}
+
+/// One committed cwebp/dwebp comparison row: our encoder vs libwebp at one `(sample, mode[, quality])`, all-integer so `corpus/vs-libwebp.json` is a pure textual diff of a fresh run (like `metrics.json`).
+/// Field order fixes JSON keys.
+///
+/// Both outputs are decoded by *our own* decoder for an apples-to-apples fidelity column: lossless rows compare full WebP file sizes, lossy rows compare bare `VP8 ` payloads (`cwebp -noalpha`, our alpha-dropping encoder).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct VsCase {
+    /// Stable sort key: `"{content}_{edge:03}/lossless"` or `".../lossy/q{quality:03}"`.
+    id: String,
+    /// Content archetype name (e.g. `"photo"`, `"gradient"`).
+    content: String,
+    /// Square edge length in pixels.
+    edge: u32,
+    /// `"lossless"` or `"lossy"`.
+    mode: String,
+    /// Encoder quality in `0..=100`; `0` on the lossless rows (no quality knob).
+    quality: u8,
+    /// Our encoded byte length (full WebP for lossless, `VP8 ` payload for lossy).
+    our_bytes: u64,
+    /// libwebp `cwebp` byte length on the same basis.
+    cwebp_bytes: u64,
+    /// `our_bytes * 1000 / cwebp_bytes`, integer floor (below 1000 = we are smaller).
+    size_permille: u64,
+    /// Our reconstruction PSNR (RGB) vs the source, centi-dB; `9900` = identical.
+    our_psnr_centidb: u64,
+    /// cwebp's reconstruction PSNR (RGB) vs the source, centi-dB (both decoded by our decoder).
+    cwebp_psnr_centidb: u64,
+}
+
+/// The committed cwebp/dwebp comparison ledger, sorted by `id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct VsLibwebpLedger {
+    /// Schema version (bump on any structural change).
+    version: u32,
+    /// The libwebp release every row was produced against (pinned, see `check_version`).
+    libwebp_version: String,
+    /// Per-(sample, mode[, quality]) rows, sorted by `id`.
+    cases: Vec<VsCase>,
+}
+
+/// Measure one lossless `(sample)` row: our deepest-effort (`l9`) full-WebP size and reconstruction PSNR vs single-threaded `cwebp -lossless -exact -m 6 -q 100` (`-mt` omitted), both decoded by our own lossless decoder.
+fn measure_vs_lossless(
+    sample: &webpkit_samples::Sample,
+    cwebp: &str,
+    src_png: &Path,
+    out_webp: &Path,
+    config: &webpkit::lossless::EncoderConfig,
+) -> Result<VsCase> {
+    let dims = webpkit::lossless::Dimensions::new(sample.edge, sample.edge)?;
+    let image = webpkit::lossless::ImageRef::new(
+        dims,
+        webpkit::lossless::PixelLayout::Rgba8,
+        &sample.rgba,
+    )?;
+    let ours = webpkit::lossless::encode(image, config)?;
+    let (_d, our_rgba) = webpkit::lossless::decode_rgba(&ours)?;
+
+    write_png(src_png, sample.edge, sample.edge, &sample.rgba)?;
+    run_cwebp(cwebp, src_png, out_webp, None)?;
+    let cwebp_file =
+        std::fs::read(out_webp).with_context(|| format!("reading {}", out_webp.display()))?;
+    let (_cd, cwebp_rgba) = webpkit::lossless::decode_rgba(&cwebp_file)?;
+
+    let our_bytes = ours.len() as u64;
+    let cwebp_bytes = cwebp_file.len() as u64;
+    Ok(VsCase {
+        id: format!(
+            "{}/lossless",
+            webpkit_samples::sample_id(sample.content, sample.edge)
+        ),
+        content: sample.content.name().to_owned(),
+        edge: sample.edge,
+        mode: "lossless".to_owned(),
+        quality: 0,
+        our_bytes,
+        cwebp_bytes,
+        size_permille: our_bytes
+            .saturating_mul(1000)
+            .checked_div(cwebp_bytes)
+            .unwrap_or(0),
+        our_psnr_centidb: psnr_centidb(&sample.rgba, &our_rgba),
+        cwebp_psnr_centidb: psnr_centidb(&sample.rgba, &cwebp_rgba),
+    })
+}
+
+/// Measure one lossy `(sample, quality)` row: our zero-knob `AUTO` `VP8 ` payload size and reconstruction PSNR vs `cwebp -q Q -noalpha`, both decoded by our own lossy decoder (container overhead excluded on both sides).
+fn measure_vs_lossy(
+    sample: &webpkit_samples::Sample,
+    quality: u8,
+    cwebp: &str,
+    src_png: &Path,
+    out_webp: &Path,
+) -> Result<VsCase> {
+    let dims = webpkit::lossy::Dimensions::new(sample.edge, sample.edge)?;
+    let image =
+        webpkit::lossy::ImageRef::new(dims, webpkit::lossy::PixelLayout::Rgba8, &sample.rgba)?;
+    let cfg = webpkit::lossy::LossyConfig::new()
+        .with_quality(quality)
+        .with_effort(webpkit::lossy::Effort::AUTO);
+    let (_d, ours) = webpkit::lossy::encode_vp8(image, &cfg)?;
+    let our_rgb = webpkit::lossy::decode(&ours)?;
+
+    write_png(src_png, sample.edge, sample.edge, &sample.rgba)?;
+    run_cwebp_lossy(cwebp, src_png, out_webp, quality)?;
+    let cwebp_file =
+        std::fs::read(out_webp).with_context(|| format!("reading {}", out_webp.display()))?;
+    let cwebp_vp8 = extract_vp8_chunk(&cwebp_file)?;
+    let cwebp_rgb = webpkit::lossy::decode(cwebp_vp8)?;
+
+    let our_bytes = ours.len() as u64;
+    let cwebp_bytes = cwebp_vp8.len() as u64;
+    Ok(VsCase {
+        id: format!(
+            "{}/lossy/q{quality:03}",
+            webpkit_samples::sample_id(sample.content, sample.edge)
+        ),
+        content: sample.content.name().to_owned(),
+        edge: sample.edge,
+        mode: "lossy".to_owned(),
+        quality,
+        our_bytes,
+        cwebp_bytes,
+        size_permille: our_bytes
+            .saturating_mul(1000)
+            .checked_div(cwebp_bytes)
+            .unwrap_or(0),
+        our_psnr_centidb: psnr_centidb(&sample.rgba, our_rgb.as_bytes()),
+        cwebp_psnr_centidb: psnr_centidb(&sample.rgba, cwebp_rgb.as_bytes()),
+    })
+}
+
+/// Compute a fresh cwebp/dwebp comparison ledger over the synthetic corpus: our `l9` lossless (capped to [`VS_LOSSLESS_MAX_EDGE`]) and our `AUTO` lossy at each of [`LOSSY_QUALITIES`], versus libwebp on the same inputs.
+/// Integer-only, so the serialized ledger is byte-reproducible; cases are sorted by `id`.
+fn compute_vs_libwebp(cwebp: &str) -> Result<VsLibwebpLedger> {
+    let tmp = tempfile::tempdir().context("creating tempdir for vs-libwebp ledger")?;
+    let src_png = tmp.path().join("src.png");
+    let out_webp = tmp.path().join("out.webp");
+    let lossless_cfg =
+        webpkit::lossless::EncoderConfig::new().with_effort(webpkit::lossless::Effort::level(9));
+
+    let mut cases = Vec::new();
+    for sample in webpkit_samples::matrix() {
+        if sample.edge <= VS_LOSSLESS_MAX_EDGE {
+            cases.push(measure_vs_lossless(
+                &sample,
+                cwebp,
+                &src_png,
+                &out_webp,
+                &lossless_cfg,
+            )?);
+        }
+        for &quality in &LOSSY_QUALITIES {
+            cases.push(measure_vs_lossy(
+                &sample, quality, cwebp, &src_png, &out_webp,
+            )?);
+        }
+    }
+    cases.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(VsLibwebpLedger {
+        version: 1,
+        libwebp_version: crate::libwebp::REQUIRED_LIBWEBP.to_owned(),
+        cases,
+    })
+}
+
+/// Describe the first case where a fresh comparison run diverges from the committed ledger (mirrors [`first_metrics_divergence`]).
+fn first_vs_divergence(committed: &VsLibwebpLedger, fresh: &VsLibwebpLedger) -> String {
+    if committed.version != fresh.version {
+        return format!(
+            "schema version {} (committed) != {} (fresh)",
+            committed.version, fresh.version
+        );
+    }
+    if committed.libwebp_version != fresh.libwebp_version {
+        return format!(
+            "libwebp version `{}` (committed) != `{}` (fresh)",
+            committed.libwebp_version, fresh.libwebp_version
+        );
+    }
+    for (i, fc) in fresh.cases.iter().enumerate() {
+        match committed.cases.get(i) {
+            Some(cc) if cc == fc => {},
+            Some(cc) if cc.id != fc.id => {
+                return format!(
+                    "case #{i}: committed id `{}` != fresh id `{}`",
+                    cc.id, fc.id
+                );
+            },
+            Some(_) => return format!("case `{}` values changed", fc.id),
+            None => return format!("case `{}` is new (not in committed ledger)", fc.id),
+        }
+    }
+    if let Some(extra) = committed.cases.get(fresh.cases.len()) {
+        return format!("committed ledger has extra case `{}`", extra.id);
+    }
+    "textual formatting only (no structural difference)".to_owned()
+}
+
+/// Gate / bless the committed cwebp/dwebp comparison ledger `corpus/vs-libwebp.json` over the synthetic corpus.
+///
+/// Unlike the print-only `--vs-libwebp` aid, this is a committed, byte-golden drift-gated artifact (like `corpus/metrics.json`): every field is an integer (sizes and centi-dB PSNR) and cwebp is pinned to [`crate::libwebp::REQUIRED_LIBWEBP`].
+/// It NEEDS the pinned libwebp reference.
+/// A missing `cwebp` or version mismatch is a hard error: silently skipping the comparison would make a green gate unauditable.
+pub(crate) fn vs_libwebp(bless: bool) -> Result<()> {
+    let cwebp = cwebp_bin();
+    check_version(&cwebp, "cwebp", "WEBPKIT_CWEBP")?;
+    verify_cwebp_image_hint(&cwebp)?;
+
+    let root = workspace_root()?;
+    let dir = corpus_dir(&root);
+    let path = dir.join("vs-libwebp.json");
+
+    let fresh = compute_vs_libwebp(&cwebp)?;
+    let fresh_json = format!("{}\n", serde_json::to_string_pretty(&fresh)?);
+
+    if bless {
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        std::fs::write(&path, &fresh_json)
+            .with_context(|| format!("writing {}", path.display()))?;
+        println!(
+            "vs-libwebp: blessed {} case(s) -> {}",
+            fresh.cases.len(),
+            path.display()
+        );
+        return Ok(());
+    }
+
+    let committed = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => bail!(
+            "no vs-libwebp ledger at {} — run `just vs-libwebp-bless` and commit it first",
+            path.display()
+        ),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("reading {}", path.display())));
+        },
+    };
+    if committed != fresh_json {
+        let detail = serde_json::from_str::<VsLibwebpLedger>(&committed).map_or_else(
+            |_| "committed ledger is not valid JSON".to_owned(),
+            |committed_ledger| first_vs_divergence(&committed_ledger, &fresh),
+        );
+        bail!(
+            "vs-libwebp: ledger at {} is stale (first divergence: {}). \
+             Run `just vs-libwebp-bless` and commit the updated file.",
+            path.display(),
+            detail
+        );
+    }
+    println!("vs-libwebp: {} case(s) stable", fresh.cases.len());
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_vp8_chunk;
+    use webpkit::container::fourcc::FourCc;
+    use webpkit::container::writer::{push_chunk, riff_envelope};
+
+    #[test]
+    fn vp8_extraction_uses_the_shared_container_policy() {
+        let payload = [1, 2, 3, 4, 5];
+        let mut body = Vec::new();
+        push_chunk(&mut body, FourCc::VP8, &payload);
+        let lossy = riff_envelope(&body);
+        assert_eq!(extract_vp8_chunk(&lossy).unwrap(), payload);
+
+        body.clear();
+        push_chunk(&mut body, FourCc::VP8L, &[0x2f, 0, 0, 0, 0]);
+        let lossless = riff_envelope(&body);
+        assert!(extract_vp8_chunk(&lossless).is_err());
+    }
 }

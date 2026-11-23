@@ -80,6 +80,7 @@ pub(crate) fn compress_alpha(
     let (w, h) = (width as usize, height as usize);
     let mut plane = plane.to_vec();
     quantize_levels(&mut plane, levels_for_quality(tuning.quality));
+    let preprocessing = u8::from(tuning.quality < 100);
     let mut best: Option<Vec<u8>> = None;
     for filter in filter_candidates(tuning.filter, &plane, w, h) {
         let filtered = alpha::filter_plane(filter, &plane, w, h);
@@ -88,17 +89,24 @@ pub(crate) fn compress_alpha(
             let lossless = crate::lossless::encode_alpha(&filtered, width, height);
             consider(
                 &mut best,
-                assemble(AlphaCompression::Lossless, filter, &lossless),
+                assemble(AlphaCompression::Lossless, filter, preprocessing, &lossless),
             );
         }
         // method 0: the filtered plane stored raw.
         consider(
             &mut best,
-            assemble(AlphaCompression::None, filter, &filtered),
+            assemble(AlphaCompression::None, filter, preprocessing, &filtered),
         );
     }
     // width*height >= 1 guarantees at least one candidate (`None`/raw always fits).
-    best.unwrap_or_else(|| assemble(AlphaCompression::None, AlphaFilter::None, &plane))
+    best.unwrap_or_else(|| {
+        assemble(
+            AlphaCompression::None,
+            AlphaFilter::None,
+            preprocessing,
+            &plane,
+        )
+    })
 }
 
 /// The spatial filters [`compress_alpha`] trials for `mode`: every filter for
@@ -247,10 +255,15 @@ pub(crate) fn alph_chunk(
 }
 
 /// Build one `ALPH` payload: the 1-byte header (`compression`, `filter`,
-/// pre-processing = 0) followed by the stored `data`.
-fn assemble(compression: AlphaCompression, filter: AlphaFilter, data: &[u8]) -> Vec<u8> {
+/// pre-processing marker followed by the stored `data`.
+fn assemble(
+    compression: AlphaCompression,
+    filter: AlphaFilter,
+    preprocessing: u8,
+    data: &[u8],
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + data.len());
-    out.push(alpha::build_header(compression, filter, 0));
+    out.push(alpha::build_header(compression, filter, preprocessing));
     out.extend_from_slice(data);
     out
 }
@@ -313,11 +326,11 @@ mod tests {
             let lossless = crate::lossless::encode_alpha(&filtered, width, height);
             super::consider(
                 &mut best,
-                super::assemble(AlphaCompression::Lossless, filter, &lossless),
+                super::assemble(AlphaCompression::Lossless, filter, 0, &lossless),
             );
             super::consider(
                 &mut best,
-                super::assemble(AlphaCompression::None, filter, &filtered),
+                super::assemble(AlphaCompression::None, filter, 0, &filtered),
             );
         }
         best.unwrap()

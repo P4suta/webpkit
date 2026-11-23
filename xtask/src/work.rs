@@ -1,7 +1,8 @@
 //! Work-cost ledger (`corpus/work.json`): committed per-(codec, sample, method)
-//! deterministic algorithmic-work counters — the toolchain-independent third
-//! measurement plane. Available only with the `work-count` feature; a stub bails
-//! otherwise so the ordinary `metrics` job stays free of counter code.
+//! deterministic encode/decode algorithmic-work counters — the
+//! toolchain-independent third measurement plane. Available only with the
+//! `work-count` feature; a stub bails otherwise so the ordinary `metrics` job
+//! stays free of counter code.
 
 #[cfg(feature = "work-count")]
 use anyhow::Context;
@@ -17,7 +18,7 @@ use crate::common::{
 use crate::ledger::{FieldDelta, load_ledger, print_field_deltas};
 
 /// One committed work-cost row: the integer algorithmic-work counters recorded
-/// while encoding one synthetic sample with one codec+method.
+/// while encoding or decoding one synthetic sample.
 ///
 /// The `counts` map is keyed by [`webpkit::work_count::field_names`], so it renders
 /// as a deterministic (BTreeMap-sorted) JSON object and auto-tracks the counter
@@ -30,13 +31,14 @@ use crate::ledger::{FieldDelta, load_ledger, print_field_deltas};
 struct WorkCase {
     /// Stable sort key: `"{codec}/{content}_{edge:03}/{method}"`.
     id: String,
-    /// Codec label (`"lossless"` = webpkit-lossless | `"lossy"` = webpkit-lossy).
+    /// Codec/operation label (`"lossless"`, `"lossless-decode"`, `"lossy"`,
+    /// or `"lossy-decode"`).
     codec: String,
     /// Content archetype name (e.g. `"photo"`, `"gradient"`).
     content: String,
     /// Square edge length in pixels.
     edge: u32,
-    /// Encoder method label (`"fast"` | `"balanced"` | `"best"`).
+    /// Encoder method label, or `"decode"` for a decoder row.
     method: String,
     /// Per-hot-path work counts, keyed by [`webpkit::work_count::field_names`].
     counts: std::collections::BTreeMap<String, u64>,
@@ -51,6 +53,14 @@ struct WorkLedger {
     /// Per-(codec, sample, method) rows, sorted by `id`.
     cases: Vec<WorkCase>,
 }
+
+/// Schema-3 shape over the fixed six-archetype × three-edge matrix.
+#[cfg(feature = "work-count")]
+const WORK_SCHEMA_VERSION: u32 = 3;
+#[cfg(feature = "work-count")]
+const WORK_EXPECTED_CASES: usize = 132;
+#[cfg(feature = "work-count")]
+const WORK_EXPECTED_DECODE_CASES_PER_CODEC: usize = 18;
 
 /// Describe the first case where a fresh work run diverges from the committed
 /// ledger (mirrors `first_metrics_divergence`).
@@ -112,7 +122,7 @@ fn explain_work(committed: &WorkLedger, fresh: &WorkLedger) {
 
 /// Turn a raw counter snapshot into a name-keyed map for the ledger.
 #[cfg(feature = "work-count")]
-fn counts_map(snapshot: [u64; webpkit::work_count::N]) -> std::collections::BTreeMap<String, u64> {
+fn counts_map(snapshot: &[u64; webpkit::work_count::N]) -> std::collections::BTreeMap<String, u64> {
     webpkit::work_count::field_names()
         .iter()
         .zip(snapshot.iter())
@@ -129,7 +139,7 @@ fn counts_map(snapshot: [u64; webpkit::work_count::N]) -> std::collections::BTre
 fn measure_work_lossless(
     sample: &webpkit_samples::Sample,
     method: webpkit::lossless::Effort,
-) -> Result<WorkCase> {
+) -> Result<(WorkCase, Vec<u8>)> {
     let dims = webpkit::lossless::Dimensions::new(sample.edge, sample.edge)?;
     let image = webpkit::lossless::ImageRef::new(
         dims,
@@ -139,21 +149,24 @@ fn measure_work_lossless(
     let config = webpkit::lossless::EncoderConfig::new().with_effort(method);
 
     webpkit::work_count::reset();
-    let _webp = webpkit::lossless::encode(image, &config)?;
-    let counts = counts_map(webpkit::work_count::snapshot());
+    let webp = webpkit::lossless::encode(image, &config)?;
+    let counts = counts_map(&webpkit::work_count::snapshot());
 
-    Ok(WorkCase {
-        id: format!(
-            "lossless/{}/{}",
-            webpkit_samples::sample_id(sample.content, sample.edge),
-            method_name(method)
-        ),
-        codec: "lossless".to_owned(),
-        content: sample.content.name().to_owned(),
-        edge: sample.edge,
-        method: method_name(method).to_owned(),
-        counts,
-    })
+    Ok((
+        WorkCase {
+            id: format!(
+                "lossless/{}/{}",
+                webpkit_samples::sample_id(sample.content, sample.edge),
+                method_name(method)
+            ),
+            codec: "lossless".to_owned(),
+            content: sample.content.name().to_owned(),
+            edge: sample.edge,
+            method: method_name(method).to_owned(),
+            counts,
+        },
+        webp,
+    ))
 }
 
 /// Encode one sample lossily (default quality) with the counters reset, and
@@ -171,7 +184,7 @@ fn measure_work_lossy(
 
     webpkit::work_count::reset();
     let _ = webpkit::lossy::encode_vp8(image, &cfg)?;
-    let counts = counts_map(webpkit::work_count::snapshot());
+    let counts = counts_map(&webpkit::work_count::snapshot());
 
     Ok(WorkCase {
         id: format!(
@@ -215,7 +228,7 @@ fn measure_work_lossy_decode(sample: &webpkit_samples::Sample) -> Result<WorkCas
 
     webpkit::work_count::reset();
     let _ = webpkit::lossy::decode(&payload)?;
-    let counts = counts_map(webpkit::work_count::snapshot());
+    let counts = counts_map(&webpkit::work_count::snapshot());
 
     Ok(WorkCase {
         id: format!(
@@ -223,6 +236,27 @@ fn measure_work_lossy_decode(sample: &webpkit_samples::Sample) -> Result<WorkCas
             webpkit_samples::sample_id(sample.content, sample.edge),
         ),
         codec: "lossy-decode".to_owned(),
+        content: sample.content.name().to_owned(),
+        edge: sample.edge,
+        method: "decode".to_owned(),
+        counts,
+    })
+}
+
+/// Decode one sample's complete lossless WebP with the counters reset and snapshot the VP8L work.
+/// The input is the exact `AUTO` output already produced for the sample's lossless encode row, matching the one-shot decode benchmark without paying for (or accidentally retaining counters from) a second encode.
+#[cfg(feature = "work-count")]
+fn measure_work_lossless_decode(sample: &webpkit_samples::Sample, webp: &[u8]) -> Result<WorkCase> {
+    webpkit::work_count::reset();
+    let _ = webpkit::lossless::decode(webp)?;
+    let counts = counts_map(&webpkit::work_count::snapshot());
+
+    Ok(WorkCase {
+        id: format!(
+            "lossless-decode/{}/decode",
+            webpkit_samples::sample_id(sample.content, sample.edge),
+        ),
+        codec: "lossless-decode".to_owned(),
         content: sample.content.name().to_owned(),
         edge: sample.edge,
         method: "decode".to_owned(),
@@ -246,12 +280,23 @@ const WORK_BEST_MAX_EDGE: u32 = 256;
 fn compute_work() -> Result<WorkLedger> {
     let mut cases = Vec::new();
     for sample in webpkit_samples::matrix() {
+        let mut lossless_decode_input = None;
         for &method in &ALL_METHODS {
             if method == webpkit::lossless::Effort::level(9) && sample.edge > WORK_BEST_MAX_EDGE {
                 continue;
             }
-            cases.push(measure_work_lossless(&sample, method)?);
+            let (case, webp) = measure_work_lossless(&sample, method)?;
+            if method == webpkit::lossless::Effort::AUTO {
+                lossless_decode_input = Some(webp);
+            }
+            cases.push(case);
         }
+        let lossless_decode_input =
+            lossless_decode_input.context("ALL_METHODS must contain lossless Effort::AUTO")?;
+        cases.push(measure_work_lossless_decode(
+            &sample,
+            &lossless_decode_input,
+        )?);
         for &method in &LOSSY_METHODS {
             if method == webpkit::lossy::Effort::level(9) && sample.edge > WORK_BEST_MAX_EDGE {
                 continue;
@@ -262,7 +307,33 @@ fn compute_work() -> Result<WorkLedger> {
         cases.push(measure_work_lossy_decode(&sample)?);
     }
     cases.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(WorkLedger { version: 2, cases })
+    let lossless_decode_cases = cases
+        .iter()
+        .filter(|case| case.codec == "lossless-decode")
+        .count();
+    let lossy_decode_cases = cases
+        .iter()
+        .filter(|case| case.codec == "lossy-decode")
+        .count();
+    if cases.len() != WORK_EXPECTED_CASES
+        || lossless_decode_cases != WORK_EXPECTED_DECODE_CASES_PER_CODEC
+        || lossy_decode_cases != WORK_EXPECTED_DECODE_CASES_PER_CODEC
+    {
+        bail!(
+            "internal work-ledger shape drift: {} total, {} lossless-decode, {} lossy-decode \
+             (expected {}, {}, {})",
+            cases.len(),
+            lossless_decode_cases,
+            lossy_decode_cases,
+            WORK_EXPECTED_CASES,
+            WORK_EXPECTED_DECODE_CASES_PER_CODEC,
+            WORK_EXPECTED_DECODE_CASES_PER_CODEC,
+        );
+    }
+    Ok(WorkLedger {
+        version: WORK_SCHEMA_VERSION,
+        cases,
+    })
 }
 
 /// Gate (or `--bless`) the committed `corpus/work.json` deterministic work-cost
@@ -338,4 +409,24 @@ pub(crate) fn work(_bless: bool, _explain: bool) -> Result<()> {
         "the `work` command needs the algorithmic-work counters: rebuild with \
          `--features work-count` (or run `just work` / `just work-bless`)"
     )
+}
+
+#[cfg(all(test, feature = "work-count"))]
+mod tests {
+    use super::{
+        WORK_EXPECTED_CASES, WORK_EXPECTED_DECODE_CASES_PER_CODEC, WORK_SCHEMA_VERSION, counts_map,
+    };
+
+    #[test]
+    fn schema_three_shape_and_counter_vocabulary_are_pinned() {
+        assert_eq!(WORK_SCHEMA_VERSION, 3);
+        assert_eq!(WORK_EXPECTED_CASES, 132);
+        assert_eq!(WORK_EXPECTED_DECODE_CASES_PER_CODEC, 18);
+
+        let counts = counts_map(&[0; webpkit::work_count::N]);
+        assert_eq!(webpkit::work_count::N, 43);
+        assert_eq!(counts.len(), 43);
+        assert!(counts.contains_key("vp8l_bit_refill"));
+        assert!(counts.contains_key("vp8l_pack_pixel"));
+    }
 }

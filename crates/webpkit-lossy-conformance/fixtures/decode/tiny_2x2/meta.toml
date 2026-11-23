@@ -1,0 +1,5 @@
+feature = "tiny"
+level = "must"
+width = 2
+height = 2
+note = "2x2 synthetic source; input.vp8 via cwebp 1.6.0 `-q 50 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"

@@ -6,8 +6,134 @@
     "passed": true
   },
   {
+    "case": "chromah_vgrad_32x32",
+    "feature": "chroma-mode-h",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "chromav_hgrad_32x32",
+    "feature": "chroma-mode-v",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "col_1x63",
+    "feature": "col-edge",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "edge_17x9_color",
+    "feature": "chroma-edge",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "edge_23x31_color",
+    "feature": "chroma-edge",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "filter_none_48x48",
+    "feature": "no-filter",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "filter_sharp_48x48",
+    "feature": "loop-filter-sharp",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "filter_simple_48x48",
+    "feature": "loop-filter-simple",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "filter_strong_48x48",
+    "feature": "loop-filter-normal",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "full_gradient_64x64",
+    "feature": "mb-aligned",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "full_noise_64x64",
+    "feature": "mb-aligned-detail",
+    "level": "must",
+    "passed": true
+  },
+  {
     "case": "gradient_17x13_q80",
     "feature": "chroma-edge",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "i4x4_noise_32x32",
+    "feature": "intra-4x4",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "i4x4_stripe_48x48",
+    "feature": "intra-4x4",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "intra16dc_solid_32x32",
+    "feature": "intra16-dc",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "intra16h_vgrad_32x32",
+    "feature": "intra16-h",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "intra16tm_dgrad_32x32",
+    "feature": "intra16-tm",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "intra16v_hgrad_32x32",
+    "feature": "intra16-v",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "method0_fast_32x32",
+    "feature": "fast-method",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "method6_trellis_32x32",
+    "feature": "trellis",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "narrow_3x64",
+    "feature": "narrow",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "narrow_64x3",
+    "feature": "narrow",
     "level": "must",
     "passed": true
   },
@@ -20,6 +146,78 @@
   {
     "case": "noise_5x9_q50",
     "feature": "tiny-odd",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "q100_color_32x32",
+    "feature": "quantizer",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "q10_color_32x32",
+    "feature": "quantizer",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "q30_color_32x32",
+    "feature": "quantizer",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "q50_color_32x32",
+    "feature": "quantizer",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "q75_color_32x32",
+    "feature": "quantizer",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "q90_color_32x32",
+    "feature": "quantizer",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "row_63x1",
+    "feature": "row-edge",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "seg_multi_64x48",
+    "feature": "segmentation-multi",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "seg_single_64x48",
+    "feature": "segmentation-single",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "tiny_1x1",
+    "feature": "tiny",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "tiny_2x2",
+    "feature": "tiny",
+    "level": "must",
+    "passed": true
+  },
+  {
+    "case": "tiny_5x5",
+    "feature": "tiny",
     "level": "must",
     "passed": true
   }

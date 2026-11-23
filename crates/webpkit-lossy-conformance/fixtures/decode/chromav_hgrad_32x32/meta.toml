@@ -1,0 +1,5 @@
+feature = "chroma-mode-v"
+level = "must"
+width = 32
+height = 32
+note = "32x32 synthetic source; input.vp8 via cwebp 1.6.0 `-q 92 -noalpha`, expected.rgba via dwebp 1.6.0 `-pam` (header stripped)"
