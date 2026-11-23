@@ -1,58 +1,54 @@
-# Native dev toolchain (mirrors what CI installs). The Rust toolchain itself is
-# owned by rust-toolchain.toml. Install with `mise install`, then `just doctor`.
+# rust-toolchain.toml selects the Rust compiler.
+# Install developer tools with mise, then run just doctor.
 
 [tools]
 # Task runner, git hooks, and the format/lint tools the recipes shell out to.
-just = "latest"
-lefthook = "latest"
-taplo = "latest"
-biome = "latest"
+just = "1.59.0"
+lefthook = "2.2.2"
+taplo = "0.10.0"
+biome = "2.6.2"
 yamlfmt = "0.21.0"    # pinned for format stability
-actionlint = "latest"
-typos = "latest"
-jq = "latest"
+actionlint = "1.7.12"
+typos = "1.52.0"
+jq = "1.8.2"
 
 # Lets the cargo: backend fetch prebuilt binaries instead of compiling.
-cargo-binstall = "latest"
+cargo-binstall = "1.26.2"
 
 # Cargo subcommands via the cargo: backend (no mise registry short names exist).
-"cargo:cargo-nextest" = "latest"
-"cargo:cargo-deny" = "latest"
-"cargo:cargo-sort" = "latest"
-"cargo:cargo-fuzz" = "latest"
-"cargo:cargo-insta" = "latest"
-"cargo:cargo-llvm-cov" = "latest"
-# Conventional-Commits linter for the lefthook commit-msg hook — the local guard
-# that keeps release tooling fed with well-formed commit messages. cargo backend,
-# binstalled.
-"cargo:committed" = "1"
+"cargo:cargo-nextest" = "0.9.151"
+"cargo:cargo-deny" = "0.20.2"
+"cargo:cargo-sort" = "2.1.4"
+"cargo:cargo-fuzz" = "0.13.2"
+"cargo:cargo-insta" = "1.49.0"
+"cargo:cargo-llvm-cov" = "0.9.1"
+# Validate commit messages with Conventional Commits.
+"cargo:committed" = "1.1.12"
 # Pinned (not `latest`): cargo-mutants gates PRs, and its generated mutants and output can shift across releases, so reproducibility beats an implicit floating version.
 # Review Renovate proposals for this pin deliberately against the mutation suite, as with yamlfmt and libwebp.
 "cargo:cargo-mutants" = "27.1.0"
 
-# libwebp's `cwebp` / `dwebp` — the conformance oracle used to generate and
-# verify golden fixtures. webmproject/libwebp publishes NO GitHub release assets
-# (only git tags), so the ubi / github / aqua backends cannot fetch binaries;
-# the official prebuilt archives on Google storage are pulled via the `http`
-# backend instead. `strip_components = 1` drops the top-level
-# `libwebp-<ver>-<platform>/` directory so `bin/` (cwebp, dwebp, ...) is what
-# lands on PATH. Verified working on this host (cwebp/dwebp resolve to 1.6.0).
+# Official libwebp archives provide the reference executables.
+# Drop the archive's top-level directory before exposing bin/.
 [tools."http:libwebp"]
 version = "1.6.0"
+version_list_url = "https://api.github.com/repos/webmproject/libwebp/tags"
+version_json_path = ".[].name"
+version_order = "semver"
 strip_components = 1
 bin_path = "bin"
 
 [tools."http:libwebp".platforms.windows-x64]
-url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-windows-x64.zip"
+url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-{{ version }}-windows-x64.zip"
 
 [tools."http:libwebp".platforms.linux-x64]
-url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-linux-x86-64.tar.gz"
+url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-{{ version }}-linux-x86-64.tar.gz"
 
 [tools."http:libwebp".platforms.macos-arm64]
-url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-mac-arm64.tar.gz"
+url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-{{ version }}-mac-arm64.tar.gz"
 
 [tools."http:libwebp".platforms.macos-x64]
-url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-mac-x86-64.tar.gz"
+url = "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-{{ version }}-mac-x86-64.tar.gz"
 
 [settings.cargo]
 # Use cargo-binstall (prebuilt binaries) for cargo: backend tools, not source builds.

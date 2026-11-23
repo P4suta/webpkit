@@ -69,7 +69,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
-          tool: cargo-nextest@0.9.149,cargo-deny@0.20.2,taplo-cli@0.10.0
+          tool: cargo-nextest@0.9.151,cargo-deny@0.20.2,taplo-cli@0.10.0
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: just@1.59.0
@@ -92,7 +92,7 @@ jobs:
           echo /tmp >> "$GITHUB_PATH"
       - name: install pinned typos
         env:
-          TYPOS_VERSION: 1.51.1
+          TYPOS_VERSION: 1.52.0
         run: |
           curl -fsSL "https://github.com/crate-ci/typos/releases/download/v${TYPOS_VERSION}/typos-v${TYPOS_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
             | tar xz -C /tmp ./typos
@@ -130,7 +130,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
-          tool: cargo-nextest@0.9.149
+          tool: cargo-nextest@0.9.151
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: just@1.59.0
@@ -169,7 +169,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
-          tool: cargo-nextest@0.9.149
+          tool: cargo-nextest@0.9.151
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
           tool: just@1.59.0
@@ -402,7 +402,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
-          tool: cargo-llvm-cov@0.9.1,cargo-nextest@0.9.149
+          tool: cargo-llvm-cov@0.9.1,cargo-nextest@0.9.151
       - name: install pinned Just
         uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
@@ -445,7 +445,7 @@ jobs:
         run: cargo run --locked --quiet -p xtask -- ci source --revision "$CANDIDATE_SHA" --output "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
         with:
-          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.149
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.151
       - name: confirm the committed full mutation inventory
         env:
           MUTANT_SHARD: ${{ matrix.shard }}
@@ -580,14 +580,26 @@ jobs:
   release-plz-release:
     name: release-plz release
     needs: [candidate, qualify]
-    if: needs.candidate.outputs.candidate == 'true' && needs.qualify.result == 'success' && needs.qualify.outputs.revision == needs.candidate.outputs.revision
+    if: >-
+      github.event_name == 'push' &&
+      github.repository_id == '1300766683' &&
+      github.ref == 'refs/heads/main' &&
+      needs.candidate.outputs.candidate == 'true' &&
+      needs.qualify.result == 'success' &&
+      needs.qualify.outputs.revision == needs.candidate.outputs.revision
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
     permissions:
-      contents: write # Create the git tag, GitHub release, and package release commit.
+      contents: read # The App token authorizes publication under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
       pull-requests: read # Revalidate the associated release pull request.
-      id-token: write # Authenticate to the automation credential source.
+      id-token: write # Keep registry authentication under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
+    env:
+      APP_INPUTS_VALID: >-
+        ${{ secrets.RELEASE_APP_CLIENT_ID != '' &&
+        !startsWith(secrets.RELEASE_APP_CLIENT_ID, '${') &&
+        secrets.RELEASE_APP_PRIVATE_KEY != '' &&
+        !startsWith(secrets.RELEASE_APP_PRIVATE_KEY, '${') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -604,30 +616,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_CONFIG: ${{ runner.temp }}/qualified-release-plz.toml
         run: cargo run --locked --quiet -p xtask -- ci publish-source --repository "$GH_REPO" --revision "$CANDIDATE_SHA" --config "$RELEASE_CONFIG" --output "$GITHUB_OUTPUT"
-      - name: Fetch automation credentials
-        id: doppler_automation_0
-        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534
-        with:
-          auth-method: oidc
-          doppler-identity-id: ${{ vars.DOPPLER_AUTOMATION_IDENTITY_ID }}
-          doppler-project: webpkit
-          doppler-config: automation
-          inject-env-vars: false
       - name: Reject missing or unresolved automation credentials
-        if: >-
-          ${{ steps.doppler_automation_0.outcome == 'success' && (
-          steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') ||
-          steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')
-          ) }}
+        if: env.APP_INPUTS_VALID != 'true'
         shell: bash
         run: exit 1
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         id: app-token
         with:
-          client-id: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID }}
-          private-key: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY }}
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: webpkit
           permission-contents: write
           permission-pull-requests: read
       - name: verify the publisher source immediately before release
@@ -644,50 +643,44 @@ jobs:
 
   release-plz-pr:
     name: release-plz pr
+    if: >-
+      github.event_name == 'push' &&
+      github.repository_id == '1300766683' &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: release
     permissions:
-      contents: write # Open and update the release pull request.
-      pull-requests: write # Create and update the release pull request.
-      id-token: write # Authenticate to the automation credential source.
+      contents: read # The App token authorizes proposals under docs/adr/sync-release-app-credentials-to-the-protected-environment.md.
+    env:
+      APP_INPUTS_VALID: >-
+        ${{ secrets.RELEASE_APP_CLIENT_ID != '' &&
+        !startsWith(secrets.RELEASE_APP_CLIENT_ID, '${') &&
+        secrets.RELEASE_APP_PRIVATE_KEY != '' &&
+        !startsWith(secrets.RELEASE_APP_PRIVATE_KEY, '${') }}
     concurrency:
       group: release-plz-pr
       cancel-in-progress: false
     steps:
-      - name: Fetch automation credentials
-        id: doppler_automation_0
-        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534
-        with:
-          auth-method: oidc
-          doppler-identity-id: ${{ vars.DOPPLER_AUTOMATION_IDENTITY_ID }}
-          doppler-project: webpkit
-          doppler-config: automation
-          inject-env-vars: false
       - name: Reject missing or unresolved automation credentials
-        if: >-
-          ${{ steps.doppler_automation_0.outcome == 'success' && (
-          steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID, '${') ||
-          steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY == '' ||
-          startsWith(steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY, '${')
-          ) }}
+        if: env.APP_INPUTS_VALID != 'true'
         shell: bash
         run: exit 1
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        id: app-token
-        with:
-          client-id: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_CLIENT_ID }}
-          private-key: ${{ steps.doppler_automation_0.outputs.GITHUB_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
           persist-credentials: false
       - name: install the repository Rust toolchain
         run: rustup toolchain install "$RUST_VERSION" --profile minimal --no-self-update
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: webpkit
+          permission-contents: write
+          permission-pull-requests: write
       - uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c # v0.5.147
         with:
           command: release-pr
