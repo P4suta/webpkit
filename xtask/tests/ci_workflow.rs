@@ -6,6 +6,9 @@ use std::path::Path;
 use anyhow::{Context, Result, ensure};
 use yaml_rust2::{Yaml, YamlLoader};
 
+/// renovate: datasource=github-tags depName=release-plz/action currentValue=v0.5.147
+const PUBLISHER_ACTION: &str = "release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c";
+
 fn workflow(name: &str) -> Result<Yaml> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -244,10 +247,7 @@ fn release_contract(source: &Yaml) -> Result<()> {
     let steps = publisher["steps"].as_vec().context("publisher steps")?;
     let action = steps
         .iter()
-        .find(|step| {
-            step["uses"].as_str()
-                == Some("release-plz/action@8b5bf233ecb5779f63508db7cd050e948ee77cc2")
-        })
+        .find(|step| step["uses"].as_str() == Some(PUBLISHER_ACTION))
         .context("immutable publisher action")?;
     ensure!(
         action["with"]["version"].as_str() == Some("0.3.174"),
@@ -750,6 +750,41 @@ fn publication_requires_complete_same_source_qualification() {
             .iter()
             .any(|run| run.contains("ci publish-source"))
     );
+}
+
+#[test]
+fn publisher_requires_the_reviewed_immutable_action_and_settings() {
+    let original = workflow("release-plz.yml").unwrap();
+    release_contract(&original).unwrap();
+    for reference in [
+        "release-plz/action@8b5bf233ecb5779f63508db7cd050e948ee77cc2",
+        "release-plz/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "release-plz/action@v0.5",
+        "another/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c",
+    ] {
+        let mut changed = original.clone();
+        let Yaml::Array(steps) = &mut changed["jobs"]["release-plz-release"]["steps"] else {
+            unreachable!()
+        };
+        let action = steps
+            .iter_mut()
+            .find(|step| step["uses"].as_str() == Some(PUBLISHER_ACTION))
+            .unwrap();
+        action["uses"] = Yaml::String(reference.to_owned());
+        assert!(release_contract(&changed).is_err(), "publisher {reference}");
+    }
+    for (setting, value) in [("version", "0.4.2"), ("command", "release-pr")] {
+        let mut changed = original.clone();
+        let Yaml::Array(steps) = &mut changed["jobs"]["release-plz-release"]["steps"] else {
+            unreachable!()
+        };
+        let action = steps
+            .iter_mut()
+            .find(|step| step["uses"].as_str() == Some(PUBLISHER_ACTION))
+            .unwrap();
+        action["with"][setting] = Yaml::String(value.to_owned());
+        assert!(release_contract(&changed).is_err(), "publisher {setting}");
+    }
 }
 
 #[test]
